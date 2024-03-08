@@ -8,7 +8,10 @@
 # Setup
 ```
 pip install -U pip
+pip install wheel
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
+pip install torch_geometric
 ```
 
 # Prepairing Bounding Boxes and Keypoints
