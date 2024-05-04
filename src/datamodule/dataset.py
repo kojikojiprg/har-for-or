@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 from scipy.stats import norm
+from torch import tensor
 from torch_geometric.data import InMemoryDataset
 from tqdm import tqdm
 
@@ -149,15 +150,13 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 # create graph
                 fs = self._get_feature_shape()
                 graph = SpatialTemporalData(
-                    torch.tensor(seq_features, dtype=torch.float).view(
-                        -1, fs[0], fs[1]
-                    ),
-                    torch.tensor(edge_index_s, dtype=torch.float).t().contiguous(),
-                    torch.tensor(edge_attr_s, dtype=torch.float).contiguous(),
-                    torch.tensor(edge_index_t, dtype=torch.float).t().contiguous(),
-                    torch.tensor(edge_attr_t, dtype=torch.float).contiguous(),
-                    torch.tensor(seq_ids, dtype=torch.int).view(-1),
-                    torch.tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
+                    tensor(seq_features, dtype=torch.float).view(-1, fs[0], fs[1]),
+                    tensor(seq_ids, dtype=torch.int).view(-1),
+                    tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
+                    tensor(edge_index_s, dtype=torch.float).t().contiguous(),
+                    tensor(edge_attr_s, dtype=torch.float).contiguous(),
+                    tensor(edge_index_t, dtype=torch.float).t().contiguous(),
+                    tensor(edge_attr_t, dtype=torch.float).contiguous(),
                 )
                 data_list.append(graph)
 
