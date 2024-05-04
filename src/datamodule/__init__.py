@@ -1,1 +1,1 @@
-from .dataset import GroupActivityDataset
+from .dataset import DynamicSpatialTemporalGraphDataset

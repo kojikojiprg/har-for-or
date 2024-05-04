@@ -13,7 +13,7 @@ sys.path.append("src")
 from utils import json_handler
 
 
-class GroupActivityDataset(InMemoryDataset):
+class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
     def __init__(
         self,
         data_root,
