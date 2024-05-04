@@ -6,8 +6,10 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 from scipy.stats import norm
-from torch_geometric.data import Data, InMemoryDataset
+from torch_geometric.data import InMemoryDataset
 from tqdm import tqdm
+
+from .data import SpatialTemporalData
 
 sys.path.append("src")
 from utils import json_handler
@@ -22,11 +24,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
         transform=None,
         pre_transform=None,
         pre_filter=None,
+        force_reload=False,
     ):
         self._feature_type = feature_type
         self._config = config
-        super().__init__(data_root, transform, pre_transform, pre_filter)
-        self.load(self.processed_paths[0])
+        super().__init__(
+            data_root, transform, pre_transform, pre_filter, force_reload=force_reload
+        )
+        self.load(self.processed_paths[0], SpatialTemporalData)
 
     @property
     def processed_file_names(self):
@@ -68,8 +73,10 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
             seq_ids = []
             seq_n_frames = []
             edge_offsets = []
-            edge_index = []
-            edge_attr = []
+            edge_index_s = []
+            edge_attr_s = []
+            edge_index_t = []
+            edge_attr_t = []
             for n_frame in tqdm(range(1, max_frame + 1), leave=False, ncols=100):
                 pose_data_frame = [
                     data for data in pose_data_lst if data["n_frame"] == n_frame
@@ -107,11 +114,11 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 # add spatial edge
                 adj = np.full((len(ids), len(ids)), 1) - np.eye(len(ids))
                 cur_edge_index = (np.array(np.where(adj == 1)).T + edge_offset).tolist()
-                edge_index += cur_edge_index
+                edge_index_s += cur_edge_index
                 bc_arr = np.array(seq_bbox_centers)
                 for idx in cur_edge_index:
                     diff = np.abs(bc_arr[idx[0]] - bc_arr[idx[1]]) + 1e-10
-                    edge_attr.append(np.clip(1 / diff, 0, 1).tolist())
+                    edge_attr_s.append(np.clip(1 / diff, 0, 1).tolist())
 
                 # add temporal edge
                 if seq_len > 0:
@@ -125,7 +132,7 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                                 pre_id_idx = pre_ids.index(_id)
                                 pre_idx = pre_eo + pre_id_idx
                                 cur_idx = edge_offset + cur_id_idx
-                                edge_index += [[pre_idx, cur_idx], [cur_idx, pre_idx]]
+                                edge_index_t += [[pre_idx, cur_idx], [cur_idx, pre_idx]]
                                 # temporal edge_attr
                                 pre_bc_arr = np.array(seq_bbox_centers)[pre_idx]
                                 cur_bc_arr = np.array(seq_bbox_centers)[cur_idx]
@@ -134,19 +141,21 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                                     abs(n_frame - pre_n_frame), 0, seq_len / 2
                                 )
                                 attr = (ws * wt).tolist()
-                                edge_attr += [attr, attr]
+                                edge_attr_t += [attr, attr]
 
                 if n_frame < seq_len:
                     continue  # wait for saving seauential data
 
                 # create graph
                 fs = self._get_feature_shape()
-                graph = Data(
+                graph = SpatialTemporalData(
                     torch.tensor(seq_features, dtype=torch.float).view(
                         -1, fs[0], fs[1]
                     ),
-                    torch.tensor(edge_index, dtype=torch.float).t().contiguous(),
-                    torch.tensor(edge_attr, dtype=torch.float),
+                    torch.tensor(edge_index_s, dtype=torch.float).t().contiguous(),
+                    torch.tensor(edge_attr_s, dtype=torch.float).contiguous(),
+                    torch.tensor(edge_index_t, dtype=torch.float).t().contiguous(),
+                    torch.tensor(edge_attr_t, dtype=torch.float).contiguous(),
                     torch.tensor(seq_ids, dtype=torch.int).view(-1),
                     torch.tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
                 )
@@ -157,10 +166,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 first_edge_offset = edge_offsets[0]
                 edge_offsets = list(map(lambda x: x - first_edge_offset, edge_offsets))
                 for ei in range(first_edge_offset):
-                    rm_idxs = np.any(np.array(edge_index) == ei, axis=1)
-                    edge_index = np.array(edge_index)[~rm_idxs]
-                    edge_attr = np.array(edge_attr)[~rm_idxs].tolist()
-                edge_index = (edge_index - first_edge_offset).tolist()
+                    rm_idxs_s = np.any(np.array(edge_index_s) == ei, axis=1)
+                    edge_index_s = np.array(edge_index_s)[~rm_idxs_s]
+                    edge_attr_s = np.array(edge_attr_s)[~rm_idxs_s].tolist()
+                    rm_idxs_t = np.any(np.array(edge_index_t) == ei, axis=1)
+                    edge_index_t = np.array(edge_index_t)[~rm_idxs_t]
+                    edge_attr_t = np.array(edge_attr_t)[~rm_idxs_t].tolist()
+                edge_index_s = (edge_index_s - first_edge_offset).tolist()
+                edge_index_t = (edge_index_t - first_edge_offset).tolist()
                 # update data
                 seq_features = seq_features[first_edge_offset:]
                 seq_bbox_centers = seq_bbox_centers[first_edge_offset:]
@@ -169,7 +182,7 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
 
             del pose_data_lst
             del seq_features, seq_bbox_centers, seq_ids, seq_n_frames
-            del edge_offsets, edge_index, edge_attr
+            del edge_offsets, edge_index_s, edge_index_t, edge_attr_s, edge_attr_t
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]

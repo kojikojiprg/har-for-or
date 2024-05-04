@@ -14,4 +14,4 @@ parser.add_argument(
 args = parser.parse_args()
 
 config = yaml_handler.load(args.config)
-DynamicSpatialTemporalGraphDataset(args.data_root, args.feature_type, config)
+DynamicSpatialTemporalGraphDataset(args.data_root, args.feature_type, config, force_reload=True)
