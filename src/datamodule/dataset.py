@@ -69,25 +69,21 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
             max_frame = pose_data_lst[-1]["n_frame"]
             pose_data_lst = sorted(pose_data_lst, key=lambda x: x["id"])
 
-            seq_features = []
-            seq_bbox_centers = []
-            seq_ids = []
-            seq_n_frames = []
-            edge_offsets = []
-            edge_index_s = []
-            edge_attr_s = []
-            edge_index_t = []
-            edge_attr_t = []
+            # initialize sequential queue
+            seq_features = seq_bbox_centers = seq_ids = seq_n_frames = []
+            n_vertax_offsets = []
+            edge_index_s = edge_attr_s = edge_index_t = edge_attr_t = []
+
             for n_frame in tqdm(range(1, max_frame + 1), leave=False, ncols=100):
                 pose_data_frame = [
                     data for data in pose_data_lst if data["n_frame"] == n_frame
                 ]
                 if len(pose_data_frame) == 0:
                     seq_n_frames.append(n_frame)
-                    if len(edge_offsets) > 0:
-                        edge_offsets.append(edge_offsets[-1])
+                    if len(n_vertax_offsets) > 0:
+                        n_vertax_offsets.append(n_vertax_offsets[-1])
                     else:
-                        edge_offsets.append(0)
+                        n_vertax_offsets.append(0)
                     continue
 
                 # append data
@@ -107,14 +103,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 seq_bbox_centers += bbox_centers
 
                 ids = [data["id"] for data in pose_data_frame]
-                edge_offset = len(seq_ids)
-                edge_offsets.append(edge_offset)
+                nv = len(seq_ids)
+                n_vertax_offsets.append(nv)
                 seq_ids += ids
                 seq_n_frames.append(n_frame)
 
                 # add spatial edge
                 adj = np.full((len(ids), len(ids)), 1) - np.eye(len(ids))
-                cur_edge_index = (np.array(np.where(adj == 1)).T + edge_offset).tolist()
+                cur_edge_index = (np.array(np.where(adj == 1)).T + nv).tolist()
                 edge_index_s += cur_edge_index
                 bc_arr = np.array(seq_bbox_centers)
                 for idx in cur_edge_index:
@@ -125,14 +121,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 if seq_len > 0:
                     for j, pre_n_frame in enumerate(seq_n_frames[:-1]):
                         for cur_id_idx, _id in enumerate(ids):
-                            pre_eo = edge_offsets[j]
-                            nxt_eo = edge_offsets[j + 1]
-                            pre_ids = seq_ids[pre_eo : pre_eo + nxt_eo]
+                            pre_nvo = n_vertax_offsets[j]
+                            nxt_nvo = n_vertax_offsets[j + 1]
+                            pre_ids = seq_ids[pre_nvo : pre_nvo + nxt_nvo]
                             if _id in pre_ids:
                                 # temporal edge_index
                                 pre_id_idx = pre_ids.index(_id)
-                                pre_idx = pre_eo + pre_id_idx
-                                cur_idx = edge_offset + cur_id_idx
+                                pre_idx = pre_nvo + pre_id_idx
+                                cur_idx = nv + cur_id_idx
                                 edge_index_t += [[pre_idx, cur_idx], [cur_idx, pre_idx]]
                                 # temporal edge_attr
                                 pre_bc_arr = np.array(seq_bbox_centers)[pre_idx]
@@ -151,37 +147,38 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 fs = self._get_feature_shape()
                 graph = SpatialTemporalData(
                     tensor(seq_features, dtype=torch.float).view(-1, fs[0], fs[1]),
-                    tensor(seq_ids, dtype=torch.int).view(-1),
+                    tensor(seq_ids, dtype=torch.int),
                     tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
-                    tensor(edge_index_s, dtype=torch.float).t().contiguous(),
+                    tensor(n_vertax_offsets, dtype=torch.int),
+                    tensor(edge_index_s, dtype=torch.long).t().contiguous(),
                     tensor(edge_attr_s, dtype=torch.float).contiguous(),
-                    tensor(edge_index_t, dtype=torch.float).t().contiguous(),
+                    tensor(edge_index_t, dtype=torch.long).t().contiguous(),
                     tensor(edge_attr_t, dtype=torch.float).contiguous(),
                 )
                 data_list.append(graph)
 
                 # update edge
-                edge_offsets = edge_offsets[1:]
-                first_edge_offset = edge_offsets[0]
-                edge_offsets = list(map(lambda x: x - first_edge_offset, edge_offsets))
-                for ei in range(first_edge_offset):
+                n_vertax_offsets = n_vertax_offsets[1:]
+                first_nvo = n_vertax_offsets[0]
+                n_vertax_offsets = list(map(lambda x: x - first_nvo, n_vertax_offsets))
+                for ei in range(first_nvo):
                     rm_idxs_s = np.any(np.array(edge_index_s) == ei, axis=1)
                     edge_index_s = np.array(edge_index_s)[~rm_idxs_s]
                     edge_attr_s = np.array(edge_attr_s)[~rm_idxs_s].tolist()
                     rm_idxs_t = np.any(np.array(edge_index_t) == ei, axis=1)
                     edge_index_t = np.array(edge_index_t)[~rm_idxs_t]
                     edge_attr_t = np.array(edge_attr_t)[~rm_idxs_t].tolist()
-                edge_index_s = (edge_index_s - first_edge_offset).tolist()
-                edge_index_t = (edge_index_t - first_edge_offset).tolist()
+                edge_index_s = (edge_index_s - first_nvo).tolist()
+                edge_index_t = (edge_index_t - first_nvo).tolist()
                 # update data
-                seq_features = seq_features[first_edge_offset:]
-                seq_bbox_centers = seq_bbox_centers[first_edge_offset:]
-                seq_ids = seq_ids[first_edge_offset:]
+                seq_features = seq_features[first_nvo:]
+                seq_bbox_centers = seq_bbox_centers[first_nvo:]
+                seq_ids = seq_ids[first_nvo:]
                 seq_n_frames = seq_n_frames[1:]
 
             del pose_data_lst
             del seq_features, seq_bbox_centers, seq_ids, seq_n_frames
-            del edge_offsets, edge_index_s, edge_index_t, edge_attr_s, edge_attr_t
+            del n_vertax_offsets, edge_index_s, edge_index_t, edge_attr_s, edge_attr_t
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
