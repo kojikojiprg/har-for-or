@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
-from scipy.stats import norm
 from torch import tensor
 from torch_geometric.data import InMemoryDataset
 from tqdm import tqdm
@@ -20,14 +19,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
     def __init__(
         self,
         data_root,
-        feature_type,
         config: SimpleNamespace,
         transform=None,
         pre_transform=None,
         pre_filter=None,
         force_reload=False,
     ):
-        self._feature_type = feature_type
+        self._feature_type = config.feature_type
+        self._img_size = (config.img_size.w, config.img_size.h)
         self._config = config
         super().__init__(
             data_root, transform, pre_transform, pre_filter, force_reload=force_reload
@@ -40,9 +39,11 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
 
     def _get_feature_shape(self):
         if self._feature_type == "keypoints":
-            return (17, 2)
+            return 17 * 2
         elif self._feature_type == "bbox":
-            return (2, 2)
+            return 2 * 2
+        elif self._feature_type == "i3d":
+            raise NotImplementedError
         else:
             raise ValueError
 
@@ -54,7 +55,8 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
     def process(self):
         # get config
         seq_len = self._config.seq_len
-        feature_type = self._feature_type
+        stride = self._config.stride
+        th_cut_interval = self._config.th_cut_interval
 
         dirs = glob(os.path.join(self.root, "*/"))
         dirs = dirs[:1]
@@ -70,10 +72,14 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
             pose_data_lst = sorted(pose_data_lst, key=lambda x: x["id"])
 
             # initialize sequential queue
-            seq_features = seq_bbox_centers = seq_ids = seq_n_frames = []
+            seq_features = []
+            seq_bbox_centers = []
+            seq_ids = []
+            seq_times = []
+            seq_n_frames = []
             n_vertax_offsets = []
-            edge_index_s = edge_attr_s = edge_index_t = edge_attr_t = []
-
+            edge_index_s = []
+            edge_index_t = []
             for n_frame in tqdm(range(1, max_frame + 1), leave=False, ncols=100):
                 pose_data_frame = [
                     data for data in pose_data_lst if data["n_frame"] == n_frame
@@ -87,13 +93,13 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                     continue
 
                 # append data
-                if feature_type == "keypoints":
+                if self._feature_type == "keypoints":
                     features = [
-                        np.array(data[feature_type])[:, :2].tolist()
+                        np.array(data[self._feature_type])[:, :2].tolist()
                         for data in pose_data_frame
                     ]
-                elif feature_type == "bbox":
-                    features = [data[feature_type] for data in pose_data_frame]
+                elif self._feature_type == "bbox":
+                    features = [data[self._feature_type] for data in pose_data_frame]
                 seq_features += features
 
                 bbox_centers = [
@@ -102,83 +108,98 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 ]
                 seq_bbox_centers += bbox_centers
 
-                ids = [data["id"] for data in pose_data_frame]
+                cur_ids = [data["id"] for data in pose_data_frame]
+                min_n_frame = min(seq_n_frames) if len(seq_n_frames) > 0 else 0
+                cur_times = [n_frame - min_n_frame for _ in range(len(pose_data_frame))]
+
+                # append n_vertax_offsets
                 nv = len(seq_ids)
                 n_vertax_offsets.append(nv)
-                seq_ids += ids
-                seq_n_frames.append(n_frame)
 
                 # add spatial edge
-                adj = np.full((len(ids), len(ids)), 1) - np.eye(len(ids))
+                adj = np.full((len(cur_ids), len(cur_ids)), 1) - np.eye(len(cur_ids))
                 cur_edge_index = (np.array(np.where(adj == 1)).T + nv).tolist()
                 edge_index_s += cur_edge_index
-                bc_arr = np.array(seq_bbox_centers)
-                for idx in cur_edge_index:
-                    diff = np.abs(bc_arr[idx[0]] - bc_arr[idx[1]]) + 1e-10
-                    edge_attr_s.append(np.clip(1 / diff, 0, 1).tolist())
 
                 # add temporal edge
-                if seq_len > 0:
-                    for j, pre_n_frame in enumerate(seq_n_frames[:-1]):
-                        for cur_id_idx, _id in enumerate(ids):
-                            pre_nvo = n_vertax_offsets[j]
-                            nxt_nvo = n_vertax_offsets[j + 1]
-                            pre_ids = seq_ids[pre_nvo : pre_nvo + nxt_nvo]
-                            if _id in pre_ids:
-                                # temporal edge_index
-                                pre_id_idx = pre_ids.index(_id)
-                                pre_idx = pre_nvo + pre_id_idx
-                                cur_idx = nv + cur_id_idx
-                                edge_index_t += [[pre_idx, cur_idx], [cur_idx, pre_idx]]
-                                # temporal edge_attr
-                                pre_bc_arr = np.array(seq_bbox_centers)[pre_idx]
-                                cur_bc_arr = np.array(seq_bbox_centers)[cur_idx]
-                                ws = norm.pdf(pre_bc_arr - cur_bc_arr, 0, 1)
-                                wt = norm.pdf(
-                                    abs(n_frame - pre_n_frame), 0, seq_len / 2
-                                )
-                                attr = (ws * wt).tolist()
-                                edge_attr_t += [attr, attr]
+                if n_frame > 1:
+                    rev_nvos = list(reversed(n_vertax_offsets))
+                    for cur_idx, cur_id in enumerate(cur_ids):
+                        cut_interval_idx = min(n_vertax_offsets[-th_cut_interval:])
+                        if cur_id not in set(seq_ids[cut_interval_idx:]):
+                            continue  # n_frame is the start frame of this _id
+                        for j, pre_n_frame in enumerate(
+                            reversed(seq_n_frames[-th_cut_interval:])
+                        ):
+                            pre_nvo = rev_nvos[j + 1]
+                            nxt_nvo = rev_nvos[j]
+                            pre_ids = seq_ids[pre_nvo:nxt_nvo]
+                            if cur_id in pre_ids:
+                                pre_idx = pre_ids.index(cur_id)
+                                break  # get previous frame num
+                        else:
+                            print(seq_ids[pre_nvo:], pre_ids, cur_id)
+                            print(j, pre_n_frame, pre_nvo, nxt_nvo)
+                            raise ValueError  # debug
+                        # temporal edge_index
+                        cur_idx = nv + cur_idx
+                        edge_index_t.append([pre_idx, cur_idx])
+
+                # append sequential data
+                seq_ids += cur_ids
+                seq_times += cur_times
+                seq_n_frames.append(n_frame)
 
                 if n_frame < seq_len:
                     continue  # wait for saving seauential data
 
-                # create graph
-                fs = self._get_feature_shape()
-                graph = SpatialTemporalData(
-                    tensor(seq_features, dtype=torch.float).view(-1, fs[0], fs[1]),
-                    tensor(seq_ids, dtype=torch.int),
-                    tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
-                    tensor(n_vertax_offsets, dtype=torch.int),
-                    tensor(edge_index_s, dtype=torch.long).t().contiguous(),
-                    tensor(edge_attr_s, dtype=torch.float).contiguous(),
-                    tensor(edge_index_t, dtype=torch.long).t().contiguous(),
-                    tensor(edge_attr_t, dtype=torch.float).contiguous(),
-                )
-                data_list.append(graph)
+                if (n_frame - 1) % stride == 0:
+                    # create graph
+                    fs = self._get_feature_shape()
+                    graph = SpatialTemporalData(
+                        tensor(seq_features, dtype=torch.float).view(-1, fs),
+                        tensor(seq_ids, dtype=torch.int),
+                        tensor(seq_bbox_centers, dtype=torch.float).view(-1, 2),
+                        tensor(seq_times, dtype=torch.int),
+                        tensor(n_vertax_offsets, dtype=torch.int),
+                        tensor(edge_index_s, dtype=torch.long).t().contiguous(),
+                        None,
+                        tensor(edge_index_t, dtype=torch.long).t().contiguous(),
+                        None,
+                    )
+                    data_list.append(graph)
 
-                # update edge
-                n_vertax_offsets = n_vertax_offsets[1:]
-                first_nvo = n_vertax_offsets[0]
-                n_vertax_offsets = list(map(lambda x: x - first_nvo, n_vertax_offsets))
-                for ei in range(first_nvo):
-                    rm_idxs_s = np.any(np.array(edge_index_s) == ei, axis=1)
+                    # get next tail index and next vertax offset
+                    tail_idx = np.where(np.array(seq_n_frames) % stride == 0)[0][0] + 1
+                    tail_nvo = n_vertax_offsets[tail_idx]
+
+                    # update vertax offsets
+                    n_vertax_offsets = n_vertax_offsets[tail_idx:]
+                    n_vertax_offsets = list(
+                        map(lambda x: x - tail_nvo, n_vertax_offsets)
+                    )
+
+                    # update edges
+                    rm_idxs_s = np.any(np.array(edge_index_s) < tail_nvo, axis=1)
                     edge_index_s = np.array(edge_index_s)[~rm_idxs_s]
-                    edge_attr_s = np.array(edge_attr_s)[~rm_idxs_s].tolist()
-                    rm_idxs_t = np.any(np.array(edge_index_t) == ei, axis=1)
+                    edge_index_s = (edge_index_s - tail_nvo).tolist()
+
+                    rm_idxs_t = np.any(np.array(edge_index_t) < tail_nvo, axis=1)
                     edge_index_t = np.array(edge_index_t)[~rm_idxs_t]
-                    edge_attr_t = np.array(edge_attr_t)[~rm_idxs_t].tolist()
-                edge_index_s = (edge_index_s - first_nvo).tolist()
-                edge_index_t = (edge_index_t - first_nvo).tolist()
-                # update data
-                seq_features = seq_features[first_nvo:]
-                seq_bbox_centers = seq_bbox_centers[first_nvo:]
-                seq_ids = seq_ids[first_nvo:]
-                seq_n_frames = seq_n_frames[1:]
+                    edge_index_t = (edge_index_t - tail_nvo).tolist()
+
+                    # update vertax feature, pos, id and n_frames in sequential data
+                    seq_features = seq_features[tail_nvo:]
+                    seq_bbox_centers = seq_bbox_centers[tail_nvo:]
+                    seq_ids = seq_ids[tail_nvo:]
+                    seq_times = (
+                        np.array(seq_times[tail_nvo:]) - seq_n_frames[tail_idx - 1]
+                    ).tolist()
+                    seq_n_frames = seq_n_frames[tail_idx:]
 
             del pose_data_lst
             del seq_features, seq_bbox_centers, seq_ids, seq_n_frames
-            del n_vertax_offsets, edge_index_s, edge_index_t, edge_attr_s, edge_attr_t
+            del n_vertax_offsets, edge_index_s, edge_index_t
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
@@ -186,4 +207,6 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
         if self.pre_transform is not None:
             data_list = [self.pre_transform(data) for data in data_list]
 
+        if os.path.exists(self.processed_paths[0]):
+            os.remove(self.processed_paths[0])
         self.save(data_list, self.processed_paths[0])

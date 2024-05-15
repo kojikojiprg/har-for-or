@@ -15,6 +15,8 @@ def _get_reccursive(config: dict) -> SimpleNamespace:
     for name, values in new_config.__dict__.items():
         if type(values) is dict:
             new_config.__setattr__(name, _get_reccursive(values))
+        elif type(values) is list:
+            new_config.__setattr__(name, [_get_reccursive(v) for v in values])
         else:
             continue
     return new_config
