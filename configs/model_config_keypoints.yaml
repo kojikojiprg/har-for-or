@@ -1,0 +1,24 @@
+dataset:
+  seq_len: 1800  # total length of each graph
+  stride: 30  # stride length of start frame number
+  th_cut_interval: 30  # thresh of cutting temporal edge between each individuals
+  feature_type: keypoints
+  img_size:
+    w: 940
+    h: 720
+
+gnn:
+  spatial:
+    th_cut_edge: 0.5
+
+  temporal:
+    -  # conv 1
+      seq_len: 1800
+      stride: 1
+      n_dims: 16
+      n_heads: 8
+    -  # conv 2
+      seq_len: 30
+      stride: 15
+      n_dims: 16
+      n_heads: 8
