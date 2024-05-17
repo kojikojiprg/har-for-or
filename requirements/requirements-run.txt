@@ -3,9 +3,9 @@ scipy
 matplotlib
 opencv-python
 PyYAML
-ml-pyxis
 
 torch
 torchvision
 lightning
 torch_geometric
+webdataset
