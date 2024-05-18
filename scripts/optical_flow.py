@@ -35,9 +35,11 @@ def main():
     clip_paths = sorted(glob(os.path.join(dataset_dir, "*.mp4")))
 
     for clip_path in tqdm(clip_paths[:1], ncols=100):
-        flows = video.optical_flow(clip_path, th_cutoff, is_half)
+        cap = video.Capture(clip_path)
+        flows = cap.optical_flow(th_cutoff, is_half)
 
-        clip_dir = clip_paths.split(".")[0]
+        clip_num = os.path.basename(clip_path).split(".")[0]
+        clip_dir = os.path.join(os.path.dirname(clip_path), clip_num)
         os.makedirs(clip_dir, exist_ok=True)
         output_path = os.path.join(clip_dir, "flow.npz")
         np.savez_compressed(output_path, flows)

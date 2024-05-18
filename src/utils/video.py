@@ -57,6 +57,29 @@ class Capture:
         else:
             return False, None
 
+    def optical_flow(
+        self,
+        th_cutoff: float = 0.05,
+        is_half: bool = True,
+        verbose: bool = True,
+        tqdm_leave: bool = False,
+    ) -> NDArray:
+        flows = []
+        prev_img = self.read()[1]
+        if verbose:
+            pbar = tqdm(total=self.frame_count, ncols=100, leave=tqdm_leave)
+        for n_frame in range(self.frame_count):
+            next_img = self.read()[1]
+            flow = optical_flow(prev_img, next_img, th_cutoff, is_half)
+            flows.append(flow)
+            if verbose:
+                pbar.update()
+        if verbose:
+            pbar.close()
+
+        flows = [np.zeros_like(flow)] + flows
+        return np.array(flows)
+
 
 class Writer:
     def __init__(self, output_path, fps, size, fmt="mp4v"):
@@ -100,39 +123,19 @@ def get_concat_frame_size(frame: NDArray, field: NDArray) -> Tuple[int, ...]:
 
 
 def optical_flow(
-    video_path: str,
-    th_cutoff: float = 0.05,
-    is_half: bool = True,
-    verbose: bool = True,
-    tqdm_leave: bool = False,
+    prev_img: NDArray, next_img: NDArray, th_cutoff: float = 0.05, is_half: bool = True
 ):
-    cap = Capture(video_path)
+    prev_gray = cv2.cvtColor(prev_img, cv2.COLOR_BGRA2GRAY)
+    next_gray = cv2.cvtColor(next_img, cv2.COLOR_BGRA2GRAY)
 
-    flows = []
-    pre_gray = cv2.cvtColor(cap.read()[1], cv2.COLOR_BGRA2GRAY)
-    if verbose:
-        pbar = tqdm(total=cap.frame_count, ncols=100, leave=tqdm_leave)
-    for n_frame in range(cap.frame_count):
-        gray = cv2.cvtColor(cap.read()[1], cv2.COLOR_BGRA2GRAY)
+    flow = cv2.calcOpticalFlowFarneback(
+        prev_gray, next_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0
+    )
+    flow[flow[:, :, 0] < th_cutoff] = 0.0
+    if is_half:
+        flow = flow.astype(np.float16)
 
-        flow = cv2.calcOpticalFlowFarneback(
-            pre_gray, gray, None, 0.5, 3, 15, 3, 5, 1.2, 0
-        )
-        flow[flow[:, :, 0] < th_cutoff] = 0.0
-        if is_half:
-            flow = flow.astype(np.float16)
-
-        flows.append(flow)
-        pre_gray = gray
-
-        if verbose:
-            pbar.update()
-    if verbose:
-        pbar.close()
-    del cap
-
-    flows = [np.zeros_like(flow)] + flows
-    return np.array(flows)
+    return flow
 
 
 def _adjust_ang(ang_min, ang_max):
