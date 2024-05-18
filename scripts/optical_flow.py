@@ -34,7 +34,7 @@ def main():
 
     clip_paths = sorted(glob(os.path.join(dataset_dir, "*.mp4")))
 
-    for clip_path in tqdm(clip_paths[:1], ncols=100):
+    for clip_path in tqdm(clip_paths, ncols=100):
         cap = video.Capture(clip_path)
         flows = cap.optical_flow(th_cutoff, is_half)
 
