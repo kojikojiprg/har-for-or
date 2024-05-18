@@ -125,6 +125,7 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                 if n_frame > 1:
                     rev_nvos = list(reversed(n_vertax_offsets))
                     for cur_idx, cur_id in enumerate(cur_ids):
+                        cur_idx = nv + cur_idx
                         cut_interval_idx = min(n_vertax_offsets[-th_cut_interval:])
                         if cur_id not in set(seq_ids[cut_interval_idx:]):
                             continue  # n_frame is the start frame of this _id
@@ -141,8 +142,7 @@ class DynamicSpatialTemporalGraphDataset(InMemoryDataset):
                             print(seq_ids[pre_nvo:], pre_ids, cur_id)
                             print(j, pre_n_frame, pre_nvo, nxt_nvo)
                             raise ValueError  # debug
-                        # temporal edge_index
-                        cur_idx = nv + cur_idx
+
                         edge_index_t.append([pre_idx, cur_idx])
 
                 # append sequential data
