@@ -4,6 +4,7 @@ import os
 import sys
 from multiprocessing import Pool
 from multiprocessing.managers import SyncManager
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import numpy as np
@@ -22,7 +23,7 @@ from .functional import (
 from .transform import FlowToTensor, FrameToTensor, NormalizeX
 
 sys.path.append("src")
-from utils import json_handler, video, yaml_handler
+from utils import json_handler, video
 
 
 class ShardManager(SyncManager):
@@ -71,12 +72,10 @@ def _write_async(
             pbar.write(f"Complete writing n_frame:{n_frame}", end="", nolock=True)
 
 
-def create_shards(video_path: str, config_path: str):
+def create_shards(video_path: str, config: SimpleNamespace):
     data_root = os.path.dirname(video_path)
     video_num = os.path.basename(video_path).split(".")[0]
     dir_path = os.path.join(data_root, video_num)
-
-    config = yaml_handler.load(config_path)
 
     maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
@@ -102,6 +101,7 @@ def create_shards(video_path: str, config_path: str):
         write_async_partial = functools.partial(
             _write_async, lock=lock, sink=sink, pbar=pbar
         )
+        async_results = []
 
         seq_frames = []
         seq_optflows = []
@@ -123,10 +123,11 @@ def create_shards(video_path: str, config_path: str):
                 continue
 
             if (n_frame - (seq_len - 1)) % stride == 0:
-                pool.apply_async(
+                result = pool.apply_async(
                     write_async_partial,
                     args=(n_frame, seq_frames, seq_optflows, seq_inds, seq_ids),
                 )
+                async_results.append(result)
 
             # update data
             seq_frames = seq_frames[1:]
@@ -135,7 +136,7 @@ def create_shards(video_path: str, config_path: str):
             seq_ids = seq_ids[1:]
             pbar.update()
 
-        pool.join()
+        [result.wait() for result in async_results]
         sink.close()
         pbar.close()
         del cap, seq_frames, seq_optflows, seq_inds, seq_ids
@@ -191,7 +192,7 @@ def _create_graph(pkl, norm_func, has_edge_attr):
     )
 
 
-def create_dataset(shard_paths, dataset_type, kps_norm_type, has_edge_attr):
+def load_dataset(shard_paths, dataset_type, kps_norm_type, has_edge_attr):
     dataset = wbs.WebDataset(shard_paths).decode().to_tuple("npz", "pickle")
     if dataset_type == "individual":
         partial_extract_individual_features = functools.partial(
