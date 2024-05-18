@@ -69,7 +69,7 @@ def _write_async(
         }
         sink.write(data)
         if pbar is not None:
-            pbar.write(f"Complete writing n_frame:{n_frame}", end="", nolock=True)
+            pbar.write(f"Complete writing n_frame:{n_frame}")
 
 
 def create_shards(video_path: str, config: SimpleNamespace):
