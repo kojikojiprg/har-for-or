@@ -136,6 +136,7 @@ def create_shards(video_path: str, config: SimpleNamespace):
             seq_ids = seq_ids[1:]
             pbar.update()
 
+        print("Waiting for writing shards.")
         [result.wait() for result in async_results]
         sink.close()
         pbar.close()
@@ -192,7 +193,9 @@ def _create_graph(pkl, norm_func, has_edge_attr):
     )
 
 
-def load_dataset(shard_paths, dataset_type, kps_norm_type, has_edge_attr):
+def load_dataset(
+    shard_paths: List[str], dataset_type: str, kps_norm_type: str, has_edge_attr: bool
+):
     dataset = wbs.WebDataset(shard_paths).decode().to_tuple("npz", "pickle")
     if dataset_type == "individual":
         partial_extract_individual_features = functools.partial(
