@@ -1,16 +1,17 @@
+import gc
 import functools
 import itertools
 import os
 import sys
-from multiprocessing import Pool
+import time
+from multiprocessing import Pool, shared_memory
 from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import List
 
 import numpy as np
 import torch
 import webdataset as wbs
-from numpy.typing import NDArray
 from tqdm import tqdm
 
 from .data import SpatialTemporalData
@@ -23,30 +24,110 @@ from .functional import (
 from .transform import FlowToTensor, FrameToTensor, NormalizeX
 
 sys.path.append("src")
+from model import HumanTracking
 from utils import json_handler, video
 
 
-class ShardManager(SyncManager):
-    pass
+class ShardWritingManager(SyncManager):
+    @staticmethod
+    def calc_ndarray_size(shape, dtype):
+        return np.prod(shape) * np.dtype(dtype).itemsize
+
+    @classmethod
+    def create_shared_ndarray(cls, name, shape, dtype):
+        size = cls.calc_ndarray_size(shape, dtype)
+        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+        return np.ndarray(shape, dtype, shm.buf), shm
+
+    @staticmethod
+    def check_que_len(head_frame, head_ind, tail, seq_len):
+        th = tail.value + seq_len
+        return head_frame.value >= th and head_ind.value >= th
 
 
-def _write_async(
-    n_frame: int,
-    seq_frames: List[NDArray],
-    seq_optflows: List[NDArray],
-    seq_inds: List[Dict[str, Any]],
-    seq_ids: List[int],
-    lock: Any,
-    sink: wbs.ShardWriter,
-    pbar: tqdm = None,
-):
+def _optical_flow_async(lock, cap, frame_que, flow_que, head_frame, tail, pbar):
+    que_len = frame_que.shape[0]
     with lock:
-        unique_ids = set(itertools.chain.from_iterable(seq_ids))
+        prev_frame = cap.read(0)[1]
+        cap.set_pos_frame_count(0)  # reset read position
+
+    for n_frame in range(cap.get_frame_count()):
+        with lock:
+            frame = cap.read(n_frame)[1]
+        flow = video.optical_flow(prev_frame, frame)
+        prev_frame = frame
+
+        while head_frame.value - tail.value >= que_len:
+            time.sleep(0.01)  # waiting for updating tail
+
+        with lock:
+            if n_frame < que_len:
+                frame_que[n_frame] = frame
+                flow_que[n_frame] = flow
+            else:
+                frame_que[:-1] = frame_que[:1]
+                flow_que[:-1] = flow_que[:1]
+                frame_que[-1] = frame
+                flow_que[-1] = flow
+            head_frame.value += 1
+
+        pbar.update()
+    # print("Complete optical flow!")
+
+
+def _human_tracking_async(
+    json_path: str,
+    lock,
+    cap,
+    individuals_que,
+    head_ind,
+    tail,
+    que_len,
+    pbar,
+    cfg_path: str = None,
+    device: str = None,
+):
+    do_human_tracking = not os.path.exists(json_path)
+    if do_human_tracking:
+        model = HumanTracking(cfg_path, device)
+    else:
+        json_data = json_handler.load(json_path)
+
+    for n_frame in range(cap.get_frame_count()):
+        if do_human_tracking:
+            with lock:
+                frame = cap.read(n_frame)[1]
+            inds_tmp = model.predict(frame, n_frame)
+        else:
+            inds_tmp = [ind for ind in json_data if ind["n_frame"] == n_frame]
+
+        while head_ind.value - tail.value >= que_len:
+            time.sleep(0.01)  # waiting for updating tail
+
+        with lock:
+            if n_frame < que_len:
+                individuals_que.append(inds_tmp)
+            else:
+                individuals_que = individuals_que[1:]
+                individuals_que.append(inds_tmp)
+            head_ind.value += 1
+        pbar.update()
+    # print("Complete human tracking!")
+
+
+def _write_async(n_frame, lock, sink, frame_que, flow_que, ind_que, pbar):
+    pbar.write(f"Start writing n_frame:{n_frame}")
+    with lock:
+        unique_ids = set(
+            itertools.chain.from_iterable(
+                [[ind["id"] for ind in inds] for inds in ind_que]
+            )
+        )
         inds_dict = {}
         node_idxs_s = []
         node_idxs_t = {_id: [] for _id in unique_ids}
         node_idx = 0
-        for t, inds in enumerate(seq_inds):
+        for t, inds in enumerate(ind_que):
             node_idxs_s.append([])
             for ind in inds:
                 _id = ind["id"]
@@ -59,25 +140,27 @@ def _write_async(
                 node_idxs_s[t].append(node_idx)
                 node_idxs_t[_id].append(node_idx)
                 node_idx += 1
+
         data = {
             "__key__": str(n_frame),
-            "npz": {
-                "frame": np.array(seq_frames),
-                "optical_flow": np.array(seq_optflows),
-            },
+            "npz": {"frame": frame_que, "optical_flow": flow_que},
             "pickle": (inds_dict, node_idxs_s, node_idxs_t),
         }
-        sink.write(data)
-        if pbar is not None:
-            pbar.write(f"Complete writing n_frame:{n_frame}")
+
+    sink.write(data)
+    pbar.write(f"Complete writing n_frame:{n_frame}")
+    del data
+    gc.collect()
 
 
-def create_shards(video_path: str, config: SimpleNamespace):
+def create_shards(video_path: str, config: SimpleNamespace, n_processes: int = 16):
     data_root = os.path.dirname(video_path)
     video_num = os.path.basename(video_path).split(".")[0]
     dir_path = os.path.join(data_root, video_num)
 
-    maxsize = float(config.max_shard_size)
+    json_path = os.path.join(dir_path, "json", "pose.json")
+
+    shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
     shard_pattern = f"dstg-w{seq_len}-s{stride}" + "-%05d.tar"
@@ -85,63 +168,86 @@ def create_shards(video_path: str, config: SimpleNamespace):
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
 
-    json_path = os.path.join(dir_path, "json", "pose.json")
-    indvisuals = json_handler.load(json_path)
-
-    cap = video.Capture(video_path)
-    prev_frame = cap.read(0)[1]
-    cap.set_pos_frame_count(0)  # reset read position
-
-    ShardManager.register("Tqdm", tqdm)
-    ShardManager.register("ShardWriter", wbs.ShardWriter)
-    with Pool() as pool, ShardManager() as manager:
-        lock = manager.Lock()
-        pbar = manager.Tqdm(total=cap.frame_count, ncols=100)
-        sink = manager.ShardWriter(shard_pattern, maxsize)
-        write_async_partial = functools.partial(
-            _write_async, lock=lock, sink=sink, pbar=pbar
-        )
+    ShardWritingManager.register("Tqdm", tqdm)
+    ShardWritingManager.register("Capture", video.Capture)
+    ShardWritingManager.register("ShardWriter", wbs.ShardWriter)
+    with Pool(n_processes) as pool, ShardWritingManager() as swm:
         async_results = []
 
-        seq_frames = []
-        seq_optflows = []
-        seq_inds = []
-        seq_ids = []
-        for n_frame in range(cap.frame_count):
-            frame = cap.read()[1]
-            seq_frames.append(frame)
-            seq_optflows.append(video.optical_flow(prev_frame, frame))
-            prev_frame = frame
+        lock = swm.Lock()
+        cap = swm.Capture(video_path)
+        frame_count, img_size = cap.get_frame_count(), cap.get_size()
+        tail = swm.Value("i", 0)
 
-            inds_tmp = [i for i in indvisuals if i["n_frame"] == n_frame]
-            seq_inds.append(inds_tmp)
+        # create shared ndarray and start optical flow
+        shape = (seq_len, img_size[1], img_size[0], 3)
+        frame_que, frame_shm = swm.create_shared_ndarray("frame", shape, np.uint8)
+        shape = (seq_len, img_size[1], img_size[0], 2)
+        flow_que, flow_shm = swm.create_shared_ndarray("flow", shape, np.float16)
+        head_frame = swm.Value("i", 0)
+        pbar_of = swm.Tqdm(
+            total=frame_count, ncols=100, desc="optical flow", position=1
+        )
+        result = pool.apply_async(
+            _optical_flow_async,
+            (lock, cap, frame_que, flow_que, head_frame, tail, pbar_of),
+        )
+        async_results.append(result)
 
-            seq_ids.append([i["id"] for i in inds_tmp])
+        # create shared list of indiciduals and start human tracking
+        individual_que = swm.list()
+        head_ind = swm.Value("i", 0)
+        pbar_ht = swm.Tqdm(
+            total=frame_count, ncols=100, desc="human tracking", position=2
+        )
+        result = pool.apply_async(
+            _human_tracking_async,
+            (json_path, lock, cap, individual_que, head_ind, tail, seq_len, pbar_ht),
+        )
+        async_results.append(result)
 
-            if n_frame < seq_len - 1:
-                pbar.update()
-                continue
+        pbar_w = swm.Tqdm(total=frame_count, ncols=100, desc="writing", position=3)
+        sink = swm.ShardWriter(shard_pattern, shard_maxsize, verbose=0)
 
-            if (n_frame - (seq_len - 1)) % stride == 0:
-                result = pool.apply_async(
-                    write_async_partial,
-                    args=(n_frame, seq_frames, seq_optflows, seq_inds, seq_ids),
-                )
-                async_results.append(result)
+        write_async_partial = functools.partial(
+            _write_async,
+            lock=lock,
+            sink=sink,
+            frame_que=frame_que,
+            flow_que=flow_que,
+            ind_que=individual_que,
+            pbar=pbar_w,
+        )
+        check_que_len_partial = functools.partial(
+            swm.check_que_len,
+            head_frame=head_frame,
+            head_ind=head_ind,
+            tail=tail,
+            seq_len=seq_len,
+        )
+        for n_frame in range(0, frame_count, stride):
+            while not check_que_len_partial():
+                # waiting for optical flow and human tracking
+                time.sleep(0.01)
 
-            # update data
-            seq_frames = seq_frames[1:]
-            seq_optflows = seq_optflows[1:]
-            seq_inds = seq_inds[1:]
-            seq_ids = seq_ids[1:]
-            pbar.update()
+            # start writing
+            result = pool.apply_async(write_async_partial, args=(n_frame,))
+            async_results.append(result)
+            tail.value += stride
+            pbar_w.update(stride)
 
         print("Waiting for writing shards.")
         [result.wait() for result in async_results]
+        frame_shm.close()
+        frame_shm.unlink()
+        flow_shm.close()
+        flow_shm.unlink()
+        pbar_of.close()
+        pbar_ht.close()
+        pbar_w.close()
         sink.close()
-        pbar.close()
-        del cap, seq_frames, seq_optflows, seq_inds, seq_ids
-        print("Complete!")
+        del frame_que, flow_que
+    print("Complete!")
 
 
 def _npz_to_tensor(npz, frame_trans, flow_trans):

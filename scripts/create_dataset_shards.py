@@ -19,5 +19,5 @@ if __name__ == "__main__":
 
     config = yaml_handler.load(args.config_path)
 
-    for video_path in video_paths:
+    for video_path in video_paths[:1]:
         create_shards(video_path, config)

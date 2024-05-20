@@ -33,6 +33,12 @@ class Capture:
         self.set_pos_frame_count(0)  # initialize
         return count
 
+    def get_frame_count(self) -> int:
+        return self.frame_count
+
+    def get_size(self) -> int:
+        return self.size
+
     @property
     def is_opened(self) -> bool:
         return self._cap.isOpened()
