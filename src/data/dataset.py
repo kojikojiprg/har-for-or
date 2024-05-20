@@ -116,10 +116,12 @@ def _human_tracking_async(
         del model
 
 
-def _write_async(lock, sink, frame_que, flow_que, ind_que, head, pbar):
+def _write_async(n_frame, head_val, lock, sink, frame_que, flow_que, ind_que, pbar):
     with lock:
         que_len = len(ind_que)
-        sorted_idxs = list(range(head.value, que_len)) + list(range(0, head.value))
+        assert n_frame % que_len == head_val
+
+        sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
         unique_ids = set(
             itertools.chain.from_iterable(
                 [[ind["id"] for ind in inds] for inds in ind_que]
@@ -145,7 +147,7 @@ def _write_async(lock, sink, frame_que, flow_que, ind_que, head, pbar):
                 node_idx += 1
 
         data = {
-            "__key__": str(head.value + que_len),
+            "__key__": str(n_frame),
             "npz": {
                 "frame": frame_que[sorted_idxs],
                 "optical_flow": flow_que[sorted_idxs],
@@ -155,7 +157,7 @@ def _write_async(lock, sink, frame_que, flow_que, ind_que, head, pbar):
 
     sink.write(data)
     with lock:
-        pbar.write(f"Complete writing n_frame:{head.value + que_len}")
+        pbar.write(f"Complete writing n_frame:{n_frame}")
         pbar.update()
     del data
     gc.collect()
@@ -202,13 +204,13 @@ def create_shards(
 
         # create progress bars
         pbar_of = swm.Tqdm(
-            total=frame_count, ncols=100, desc="optical flow", position=1
+            total=frame_count, ncols=100, desc="optical flow", position=0
         )
         pbar_ht = swm.Tqdm(
-            total=frame_count, ncols=100, desc="human tracking", position=2
+            total=frame_count, ncols=100, desc="human tracking", position=1
         )
         total = (frame_count - seq_len) // stride
-        pbar_w = swm.Tqdm(total=total, ncols=100, desc="writing", position=3)
+        pbar_w = swm.Tqdm(total=total, ncols=100, desc="writing", position=2)
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
@@ -238,7 +240,6 @@ def create_shards(
             frame_que=frame_que,
             flow_que=flow_que,
             ind_que=ind_que,
-            head=head,
             pbar=pbar_w,
         )
         check_full_partial = functools.partial(
@@ -248,17 +249,20 @@ def create_shards(
             head=head,
             que_len=seq_len,
         )
-        while head.value < frame_count:
+        for n_frame in range(seq_len, frame_count, stride):
             while not check_full_partial():
                 time.sleep(0.01)
 
             # start writing
-            result = pool.apply_async(write_async_partial)
+            result = pool.apply_async(
+                write_async_partial,
+                (n_frame, head.value),
+            )
             async_results.append(result)
             head.value = (head.value + stride) % seq_len
 
         pbar_w.write("Waiting for writing shards.")
-        while [result.wait() for result in async_results].count(True) > 0:
+        while [r.wait() for r in async_results].count(True) > 0:
             time.sleep(0.01)
         pbar_of.close()
         pbar_ht.close()
@@ -269,7 +273,7 @@ def create_shards(
         flow_shm.close()
         sink.close()
         del frame_que, flow_que
-    print("Complete!")
+    print("\nComplete!")
 
 
 def _npz_to_tensor(npz, frame_trans, flow_trans):
