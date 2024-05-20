@@ -112,6 +112,9 @@ def _human_tracking_async(
             time.sleep(0.01)
         tail_ind.value = next_tail
 
+    if model is not None:
+        del model
+
 
 def _write_async(lock, sink, frame_que, flow_que, ind_que, head, pbar):
     with lock:
@@ -152,6 +155,7 @@ def _write_async(lock, sink, frame_que, flow_que, ind_que, head, pbar):
 
     sink.write(data)
     with lock:
+        pbar.write(f"Complete writing n_frame:{head.value + que_len}")
         pbar.update()
     del data
     gc.collect()
@@ -254,16 +258,17 @@ def create_shards(
             head.value = (head.value + stride) % seq_len
 
         pbar_w.write("Waiting for writing shards.")
-        [result.wait() for result in async_results]
-        frame_shm.close()
-        frame_shm.unlink()
-        flow_shm.close()
-        flow_shm.unlink()
+        while [result.wait() for result in async_results].count(True) > 0:
+            time.sleep(0.01)
         pbar_of.close()
         pbar_ht.close()
         pbar_w.close()
+        frame_shm.unlink()
+        frame_shm.close()
+        flow_shm.unlink()
+        flow_shm.close()
         sink.close()
-        del frame_que, flow_que, model_ht
+        del frame_que, flow_que
     print("Complete!")
 
 
