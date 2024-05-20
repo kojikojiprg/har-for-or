@@ -1,4 +1,4 @@
-import sys
+from types import SimpleNamespace
 
 import numpy as np
 import scipy
@@ -8,18 +8,11 @@ from numpy.typing import NDArray
 from .detector import Detector
 from .tracker import Tracker
 
-sys.path.append("src")
-from utils import yaml_handler
-
 
 class HumanTracking:
-    def __init__(
-        self,
-        cfg_path: str,
-        gpu: int,
-    ):
-        self._device = f"cuda:{gpu}"
-        self._cfg = yaml_handler.load(cfg_path)
+    def __init__(self, config: SimpleNamespace, device: str):
+        self._cfg = config
+        self._device = device
         self._detector = Detector(self._cfg, self._device)
         self._tracker = Tracker(self._cfg, self._device)
 

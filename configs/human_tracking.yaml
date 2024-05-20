@@ -1,0 +1,24 @@
+yolo:
+  model: "yolov8x.pt"
+  th_conf: 0.2
+  th_iou: 0.95
+
+pose:
+  # config: submodules/mmpose/configs/body_2d_keypoint/topdown_heatmap/coco/td-hm_ViTPose-huge_8xb64-210e_coco-256x192.py
+  config: configs/td-hm_ViTPose-huge_8xb64-210e_coco-256x192.py
+  weights: https://download.openmmlab.com/mmpose/v1/body_2d_keypoint/topdown_heatmap/coco/td-hm_ViTPose-huge_3rdparty_coco-256x192-5b738c8e_20230314.pth
+  th_delete: 0.3 # threshold of confidence score of keypoints
+  th_diff: 20  # threshold of difference for finding same keypoints
+  th_count: 5
+
+tracking:
+  det_thresh: 0.2
+  lambda_iou: 0.5
+  lambda_mhd: 0.25
+  lambda_shape: 0.25
+  use_dlo_boost: True
+  use_duo_boost: True
+  max_age: 30
+  min_hits: 3
+  iou_threshold: 0.3
+  dlo_boost_coef: 0.65

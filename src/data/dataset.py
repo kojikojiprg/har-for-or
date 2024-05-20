@@ -1,17 +1,21 @@
-import gc
 import functools
+import gc
 import itertools
 import os
 import sys
 import time
-from multiprocessing import Pool, shared_memory
+import warnings
+from multiprocessing import shared_memory
 from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
 from typing import List
 
+warnings.filterwarnings("ignore")
+
 import numpy as np
 import torch
 import webdataset as wbs
+from torch.multiprocessing import Pool, set_start_method
 from tqdm import tqdm
 
 from .data import SpatialTemporalData
@@ -23,6 +27,7 @@ from .functional import (
 )
 from .transform import FlowToTensor, FrameToTensor, NormalizeX
 
+set_start_method("spawn", force=True)
 sys.path.append("src")
 from model import HumanTracking
 from utils import json_handler, video
@@ -72,11 +77,9 @@ def _optical_flow_async(lock, cap, frame_que, flow_que, head_frame, tail, pbar):
             head_frame.value += 1
 
         pbar.update()
-    # print("Complete optical flow!")
 
 
 def _human_tracking_async(
-    json_path: str,
     lock,
     cap,
     individuals_que,
@@ -84,13 +87,11 @@ def _human_tracking_async(
     tail,
     que_len,
     pbar,
-    cfg_path: str = None,
-    device: str = None,
+    json_path: str,
+    model=None,
 ):
     do_human_tracking = not os.path.exists(json_path)
-    if do_human_tracking:
-        model = HumanTracking(cfg_path, device)
-    else:
+    if not do_human_tracking:
         json_data = json_handler.load(json_path)
 
     for n_frame in range(cap.get_frame_count()):
@@ -112,7 +113,6 @@ def _human_tracking_async(
                 individuals_que.append(inds_tmp)
             head_ind.value += 1
         pbar.update()
-    # print("Complete human tracking!")
 
 
 def _write_async(n_frame, lock, sink, frame_que, flow_que, ind_que, pbar):
@@ -153,12 +153,22 @@ def _write_async(n_frame, lock, sink, frame_que, flow_que, ind_que, pbar):
     gc.collect()
 
 
-def create_shards(video_path: str, config: SimpleNamespace, n_processes: int = 16):
+def create_shards(
+    video_path: str,
+    config: SimpleNamespace,
+    config_human_tracking: SimpleNamespace,
+    device: str,
+    n_processes: int = 16,
+):
     data_root = os.path.dirname(video_path)
     video_num = os.path.basename(video_path).split(".")[0]
     dir_path = os.path.join(data_root, video_num)
 
     json_path = os.path.join(dir_path, "json", "pose.json")
+    if not os.path.exists(json_path):
+        model = HumanTracking(config_human_tracking, device)
+    else:
+        model = None
 
     shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
@@ -195,14 +205,14 @@ def create_shards(video_path: str, config: SimpleNamespace, n_processes: int = 1
         async_results.append(result)
 
         # create shared list of indiciduals and start human tracking
-        individual_que = swm.list()
+        ind_que = swm.list()
         head_ind = swm.Value("i", 0)
         pbar_ht = swm.Tqdm(
             total=frame_count, ncols=100, desc="human tracking", position=2
         )
-        result = pool.apply_async(
+        result = pool.apply(
             _human_tracking_async,
-            (json_path, lock, cap, individual_que, head_ind, tail, seq_len, pbar_ht),
+            (lock, cap, ind_que, head_ind, tail, seq_len, pbar_ht, json_path, model),
         )
         async_results.append(result)
 
@@ -215,7 +225,7 @@ def create_shards(video_path: str, config: SimpleNamespace, n_processes: int = 1
             sink=sink,
             frame_que=frame_que,
             flow_que=flow_que,
-            ind_que=individual_que,
+            ind_que=ind_que,
             pbar=pbar_w,
         )
         check_que_len_partial = functools.partial(
