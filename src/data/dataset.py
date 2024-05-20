@@ -210,7 +210,7 @@ def create_shards(
         pbar_ht = swm.Tqdm(
             total=frame_count, ncols=100, desc="human tracking", position=2
         )
-        result = pool.apply(
+        result = pool.apply_async(
             _human_tracking_async,
             (lock, cap, ind_que, head_ind, tail, seq_len, pbar_ht, json_path, model),
         )
