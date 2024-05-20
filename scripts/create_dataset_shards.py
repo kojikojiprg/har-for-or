@@ -6,6 +6,7 @@ from glob import glob
 sys.path.append("src")
 from data import create_shards
 from utils import yaml_handler
+from tqdm import tqdm
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -31,5 +32,5 @@ if __name__ == "__main__":
     device = f"cuda:{args.gpu}"
     n_processes = args.n_processes
 
-    for video_path in video_paths[:1]:
+    for video_path in tqdm(video_paths, ncols=100, position=0):
         create_shards(video_path, config, config_ht, device, n_processes)
