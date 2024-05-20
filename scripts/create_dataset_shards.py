@@ -20,6 +20,7 @@ if __name__ == "__main__":
         required=False,
         default="configs/human_tracking.yaml",
     )
+    parser.add_argument("-np", "--n_processes", type=int, required=False, default=32)
 
     parser.add_argument("-g", "--gpu", type=int, required=False, default=1)
     args = parser.parse_args()
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     config = yaml_handler.load(args.config_path)
     config_ht = yaml_handler.load(args.config_human_tracking_path)
     device = f"cuda:{args.gpu}"
+    n_processes = args.n_processes
 
     for video_path in video_paths[:1]:
-        create_shards(video_path, config, config_ht, device)
+        create_shards(video_path, config, config_ht, device, n_processes)
