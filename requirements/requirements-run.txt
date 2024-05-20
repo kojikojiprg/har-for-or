@@ -9,3 +9,8 @@ torchvision
 lightning
 torch_geometric
 webdataset
+
+ultralytics
+mmcv==2.1.0
+mmdet
+mmpose
