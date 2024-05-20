@@ -168,8 +168,11 @@ def create_shards(
     config: SimpleNamespace,
     config_human_tracking: SimpleNamespace,
     device: str,
-    n_processes: int,
+    n_processes: int = None,
 ):
+    if n_processes is None:
+        n_processes = os.cpu_count()
+
     data_root = os.path.dirname(video_path)
     video_num = os.path.basename(video_path).split(".")[0]
     dir_path = os.path.join(data_root, video_num)

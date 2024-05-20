@@ -20,8 +20,7 @@ if __name__ == "__main__":
         required=False,
         default="configs/human_tracking.yaml",
     )
-    parser.add_argument("-np", "--n_processes", type=int, required=False, default=32)
-
+    parser.add_argument("-np", "--n_processes", type=int, required=False, default=None)
     parser.add_argument("-g", "--gpu", type=int, required=False, default=1)
     args = parser.parse_args()
 
