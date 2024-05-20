@@ -157,6 +157,8 @@ def _write_async(n_frame, lock, sink, frame_que, flow_que, ind_que, head, pbar):
 
     sink.write(data)
     pbar.write(f"Complete writing n_frame:{n_frame}")
+    with lock:
+        pbar.update()
     del data
     gc.collect()
 
@@ -263,11 +265,8 @@ def create_shards(
             result = pool.apply_async(write_async_partial, args=(n_frame + seq_len,))
             async_results.append(result)
             head.value = (head.value + stride) % seq_len
-            ready_count = [r.ready() for r in async_results].count(True)
-            if ready_count > 0:
-                pbar_w.update()
 
-        print("Waiting for writing shards.")
+        pbar_w.write("Waiting for writing shards.")
         [result.wait() for result in async_results]
         frame_shm.close()
         frame_shm.unlink()
