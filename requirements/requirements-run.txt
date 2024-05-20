@@ -3,6 +3,8 @@ scipy
 matplotlib
 opencv-python
 PyYAML
+pickleshare
+lap
 
 torch
 torchvision
