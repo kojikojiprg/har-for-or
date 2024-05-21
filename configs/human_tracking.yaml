@@ -6,7 +6,8 @@ yolo:
 pose:
   # config: submodules/mmpose/configs/body_2d_keypoint/topdown_heatmap/coco/td-hm_ViTPose-huge_8xb64-210e_coco-256x192.py
   config: configs/td-hm_ViTPose-huge_8xb64-210e_coco-256x192.py
-  weights: https://download.openmmlab.com/mmpose/v1/body_2d_keypoint/topdown_heatmap/coco/td-hm_ViTPose-huge_3rdparty_coco-256x192-5b738c8e_20230314.pth
+  # weights: https://download.openmmlab.com/mmpose/v1/body_2d_keypoint/topdown_heatmap/coco/td-hm_ViTPose-huge_3rdparty_coco-256x192-5b738c8e_20230314.pth
+  weights: models/ViTPose/td-hm_ViTPose-huge_3rdparty_coco-256x192-5b738c8e_20230314.pth
   th_delete: 0.3 # threshold of confidence score of keypoints
   th_diff: 20  # threshold of difference for finding same keypoints
   th_count: 5
