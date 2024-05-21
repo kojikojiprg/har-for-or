@@ -30,13 +30,11 @@ def gen_edge_index(node_idxs) -> list:
 def gen_edge_attr_s(pos, edge_indexs_s) -> list:
     pos = np.array(pos)
     diffs = np.array([np.abs(pos[i] - pos[j]) for i, j in zip(*edge_indexs_s)])
-    print(diffs.shape)
-    # diffs /= np.array((1280, 940))
-    return normalize(1 / diffs).tolist()
+    return diffs
 
 
 def gen_edge_attr_t(pos, time, edge_indexs_t) -> list:
     pos = np.array(pos)
     pos_diffs = np.array([np.abs(pos[i] - pos[j]) for i, j in zip(*edge_indexs_t)])
     tm_diffs = np.array([abs(time[i] - time[j]) for i, j in zip(*edge_indexs_t)])
-    return normalize(1 / (pos_diffs * tm_diffs.reshape(-1, 1))).tolist()
+    return normalize(pos_diffs * (1 / tm_diffs.reshape(-1, 1)))

@@ -20,14 +20,13 @@ import webdataset as wbs
 from torch.multiprocessing import Pool, set_start_method
 from tqdm import tqdm
 
-from .data import SpatialTemporalData
 from .functional import (
     calc_bbox_center,
     gen_edge_attr_s,
     gen_edge_attr_t,
     gen_edge_index,
 )
-from .transform import FlowToTensor, FrameToTensor, NormalizeX
+from .transform import FlowToTensor, FrameToTensor, NormalizeKeypoints, TimeSeriesResize
 
 set_start_method("spawn", force=True)
 sys.path.append("src")
@@ -118,28 +117,21 @@ def _human_tracking_async(
         del model
 
 
-def _write_async(
-    n_frame, head_val, lock, sink, frame_que, flow_que, ind_que, pbar, video_num
-):
-    with lock:
-        # copy queue
-        copy_frame_que = frame_que.copy()
-        copy_flow_que = flow_que.copy()
-        copy_ind_que = list(ind_que)
+def _transform_images(frames, flows, frame_trans, flow_trans):
+    frames = frame_trans(frames).numpy()
+    flows = flow_trans(flows).numpy()
 
-    que_len = len(copy_ind_que)
-    assert n_frame % que_len == head_val
+    return np.concatenate([frames, flows], axis=1)  # (seq_len, 5, h, w)
 
-    sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
-    unique_ids = set(
-        itertools.chain.from_iterable(
-            [[ind["id"] for ind in inds] for inds in copy_ind_que]
-        )
-    )
 
-    # create individual data
+_partial_transform_images = functools.partial(
+    _transform_images, frame_trans=FrameToTensor(), flow_trans=FlowToTensor()
+)
+
+
+def _create_ind_data(copy_ind_que, sorted_idxs, unique_ids, img_size, kps_norm_func):
     inds_dict = {_id: {"bbox": [], "keypoints": []} for _id in unique_ids}
-    for t, idx in enumerate(sorted_idxs):
+    for idx in sorted_idxs:
         inds_tmp = copy_ind_que[idx]
         ids_tmp = [ind["id"] for ind in inds_tmp]
         for key_id in unique_ids:
@@ -158,7 +150,26 @@ def _write_async(
                     np.full((17, 2), -1, dtype=np.float32)
                 )
 
-    # create group data
+    ids = list(inds_dict.keys())  # id
+
+    bbox = [ind["bbox"] for ind in inds_dict.values()]
+    bbox = np.array(bbox)  # (-1, seq_len, 4)
+    n_id, seq_len = bbox.shape[:2]
+    bbox = bbox.reshape(n_id, seq_len, 2, 2)  # (-1, seq_len, 2, 2)
+
+    kps = [ind["keypoints"] for ind in inds_dict.values()]
+    kps = np.array(kps)  # (-1, seq_len, 17, 2)
+    kps = kps_norm_func(kps, bbox, img_size)  # (-1, seq_len, 34, 2)
+
+    return ids, bbox, kps
+
+
+_partial_create_ind_data = functools.partial(
+    _create_ind_data, kps_norm_func=NormalizeKeypoints()
+)
+
+
+def _create_group_data(copy_ind_que, sorted_idxs, unique_ids, img_size, kps_norm_func):
     node_dict = {}
     node_idxs_s = []
     node_idxs_t = {_id: [] for _id in unique_ids}
@@ -178,14 +189,64 @@ def _write_async(
             node_idxs_t[_id].append(node_idx)
             node_idx += 1
 
+    bbox = [ind[2] for ind in node_dict.values()]
+    bbox = np.array(bbox).reshape(-1, 2, 2)  # (-1, 2, 2)
+
+    kps = [ind[3] for ind in node_dict.values()]
+    kps = kps_norm_func(np.array(kps), bbox, img_size)  # (-1, 34, 2)
+
+    y = [ind[1] for ind in node_dict.values()]  # id
+    pos = [calc_bbox_center(ind[2]) / img_size for ind in node_dict.values()]
+    time = [ind[0] for ind in node_dict.values()]  # t
+    edge_index_s = gen_edge_index(node_idxs_s)
+    edge_index_t = gen_edge_index(list(node_idxs_t.values()))
+    edge_attr_s = gen_edge_attr_s(pos, edge_index_s)
+    edge_attr_t = gen_edge_attr_t(pos, time, edge_index_t)
+
+    return bbox, kps, y, pos, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t
+
+
+_partial_create_group_data = functools.partial(
+    _create_group_data, kps_norm_func=NormalizeKeypoints()
+)
+
+
+def _write_async(
+    n_frame, head_val, lock, sink, frame_que, flow_que, ind_que, pbar, video_num
+):
+    with lock:
+        # copy queue
+        copy_frame_que = frame_que.copy()
+        copy_flow_que = flow_que.copy()
+        copy_ind_que = list(ind_que)
+
+    que_len = len(copy_ind_que)
+    assert n_frame % que_len == head_val
+
+    # transform images
+    img_size = copy_frame_que.shape[1:3]
+    images = _partial_transform_images(copy_frame_que, copy_flow_que)
+
+    sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
+    unique_ids = set(
+        itertools.chain.from_iterable(
+            [[ind["id"] for ind in inds] for inds in copy_ind_que]
+        )
+    )
+
+    # create individual data
+    ind_data = _partial_create_ind_data(copy_ind_que, sorted_idxs, unique_ids, img_size)
+
+    # create group data
+    group_data = _partial_create_group_data(
+        copy_ind_que, sorted_idxs, unique_ids, img_size
+    )
+
     data = {
         "__key__": f"{video_num}_{n_frame}",
-        "npz": {
-            "frame": copy_frame_que[sorted_idxs],
-            "optical_flow": copy_flow_que[sorted_idxs],
-        },
-        "individuals.pickle": inds_dict,
-        "group.pickle": (node_dict, node_idxs_s, node_idxs_t),
+        "npz": {"imgs": images},
+        "individuals.pickle": ind_data,
+        "group.pickle": group_data,
     }
     sink.write(data)
 
@@ -218,7 +279,7 @@ def create_shards(
     shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    shard_pattern = f"dstg-w{seq_len}-s{stride}" + "-%05d.tar"
+    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-%05d.tar"
 
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
@@ -266,7 +327,7 @@ def create_shards(
         )
 
         # create shard writer and start writing
-        sink = swm.ShardWriter(shard_pattern, shard_maxsize, verbose=0)
+        sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
         write_async_partial = functools.partial(
             _write_async,
             lock=lock,
@@ -289,7 +350,6 @@ def create_shards(
                 time.sleep(0.01)
 
             # start writing
-            # pbar_w.write(f"Start writing n_frame:{n_frame}")
             result = pool.apply_async(
                 write_async_partial,
                 (n_frame, head.value),
@@ -310,82 +370,57 @@ def create_shards(
         del frame_que, flow_que
 
 
-def _npz_to_tensor(npz, frame_trans, flow_trans):
-    frames, flows = list(npz.values())
-    frames = frame_trans(frames)
-    flows = flow_trans(flows)
-
-    return torch.cat([frames, flows], dim=1).contiguous()
+def _npz_to_tensor(npz, img_transform):
+    imgs = torch.tensor(list(npz.values())[0], dtype=torch.float32).contiguous()
+    return img_transform(imgs)
 
 
-_partial_npz_to_tensor = functools.partial(
-    _npz_to_tensor, frame_trans=FrameToTensor(), flow_trans=FlowToTensor()
-)
+def _ind_pkl_to_tensor(ind_pkl):
+    ids, bbox, kps = ind_pkl
+    return (
+        torch.tensor(ids, dtype=torch.long).contiguous(),
+        torch.tensor(bbox, dtype=torch.float32).contiguous(),
+        torch.tensor(kps, dtype=torch.float32).contiguous(),
+    )
 
 
-def _extract_individual_features(inds_dict, kps_norm_func):
-    bboxs = [ind["bbox"] for ind in inds_dict.values()]  # bbox
-    # kps = [kps_norm_func(ind["keypoints"]) for ind in inds_dict.values()]  # keypoints
-    kps = [ind["keypoints"] for ind in inds_dict.values()]  # keypoints
-    return bboxs, kps
-
-
-def _create_graph(group_data, kps_norm_func, has_edge_attr):
-    inds_dict, node_idxs_s, node_idxs_t = group_data
-    x = [kps_norm_func(ind[3]) for ind in inds_dict.values()]  # keypoints
-    y = [ind[1] for ind in inds_dict.values()]  # id
-    pos = [calc_bbox_center(ind[2]) for ind in inds_dict.values()]
-    time = [ind[0] for ind in inds_dict.values()]  # t
-    edge_index_s = gen_edge_index(node_idxs_s)
-    edge_index_t = gen_edge_index(list(node_idxs_t.values()))
-    if has_edge_attr:
-        edge_attr_s = gen_edge_attr_s(pos, edge_index_s)
-        edge_attr_t = gen_edge_attr_t(pos, time, edge_index_t)
-        edge_attr_s = torch.tensor(edge_attr_s, dtype=torch.float32)
-        edge_attr_t = torch.tensor(edge_attr_t, dtype=torch.float32)
-    else:
-        edge_attr_s = None
-        edge_attr_t = None
-
-    return SpatialTemporalData(
-        torch.tensor(x, dtype=torch.float32),
-        torch.tensor(y, dtype=torch.long),
-        torch.tensor(pos, dtype=torch.float32),
-        torch.tensor(time, dtype=torch.long),
-        torch.tensor(edge_index_s, dtype=torch.long),
-        edge_attr_s,
-        torch.tensor(edge_index_t, dtype=torch.long),
-        edge_attr_t,
+def _grp_pkl_to_tensor(grp_pkl):
+    bbox, kps, y, pos, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t = (
+        grp_pkl
+    )
+    return (
+        torch.tensor(bbox, dtype=torch.long).contiguous(),
+        torch.tensor(kps, dtype=torch.long).contiguous(),
+        torch.tensor(y, dtype=torch.long).contiguous(),
+        torch.tensor(pos, dtype=torch.float32).contiguous(),
+        torch.tensor(time, dtype=torch.long).contiguous(),
+        torch.tensor(edge_index_s, dtype=torch.long).contiguous(),
+        torch.tensor(edge_attr_s, dtype=torch.float32).contiguous(),
+        torch.tensor(edge_index_t, dtype=torch.long).contiguous(),
+        torch.tensor(edge_attr_t, dtype=torch.float32).contiguous(),
     )
 
 
 def load_dataset(
-    data_root: str, dataset_type: str, kps_norm_type: str, has_edge_attr: bool = True
+    data_root: str, dataset_type: str, resize_ratio: float = 1.0
 ) -> IterableDataset:
     shard_paths = []
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", "*.tar")))
 
+    partial_npz_to_tensor = functools.partial(
+        _npz_to_tensor, img_transform=TimeSeriesResize(resize_ratio)
+    )
+
     dataset = wbs.WebDataset(shard_paths).decode()
 
     if dataset_type == "individual":
         dataset = dataset.to_tuple("npz", "individuals.pickle")
-        partial_extract_individual_features = functools.partial(
-            _extract_individual_features,
-            kps_norm_func=NormalizeX(kps_norm_type),
-        )
-        dataset = dataset.map_tuple(
-            _partial_npz_to_tensor, partial_extract_individual_features, None
-        )
+        dataset = dataset.map_tuple(partial_npz_to_tensor, _ind_pkl_to_tensor)
     elif dataset_type == "group":
         dataset = dataset.to_tuple("npz", "group.pickle")
-        partial_create_graph = functools.partial(
-            _create_graph,
-            norm_func=NormalizeX(kps_norm_type),
-            has_edge_attr=has_edge_attr,
-        )
-        dataset = dataset.map_tuple(_partial_npz_to_tensor, None, partial_create_graph)
+        dataset = dataset.map_tuple(partial_npz_to_tensor, _grp_pkl_to_tensor)
     else:
         raise ValueError
 
