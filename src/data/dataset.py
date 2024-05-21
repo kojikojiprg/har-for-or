@@ -5,10 +5,10 @@ import os
 import sys
 import time
 import warnings
+from glob import glob
 from multiprocessing import shared_memory
 from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
-from typing import List
 
 warnings.filterwarnings("ignore")
 
@@ -116,49 +116,79 @@ def _human_tracking_async(
         del model
 
 
-def _write_async(n_frame, head_val, lock, sink, frame_que, flow_que, ind_que, pbar):
+def _write_async(
+    n_frame, head_val, lock, sink, frame_que, flow_que, ind_que, pbar, video_num
+):
     with lock:
-        que_len = len(ind_que)
-        assert n_frame % que_len == head_val
+        # copy queue
+        copy_frame_que = frame_que.copy()
+        copy_flow_que = flow_que.copy()
+        copy_ind_que = list(ind_que)
 
-        sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
-        unique_ids = set(
-            itertools.chain.from_iterable(
-                [[ind["id"] for ind in inds] for inds in ind_que]
-            )
+    que_len = len(copy_ind_que)
+    assert n_frame % que_len == head_val
+
+    sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
+    unique_ids = set(
+        itertools.chain.from_iterable(
+            [[ind["id"] for ind in inds] for inds in copy_ind_que]
         )
-        inds_dict = {}
-        node_idxs_s = []
-        node_idxs_t = {_id: [] for _id in unique_ids}
-        node_idx = 0
-        for t, idx in enumerate(sorted_idxs):
-            inds_tmp = ind_que[idx]
-            node_idxs_s.append([])
-            for ind in inds_tmp:
-                _id = ind["id"]
-                inds_dict[node_idx] = (
-                    t,
-                    _id,
-                    ind["bbox"][:4],
-                    np.array(ind["keypoints"])[:, :2].tolist(),
+    )
+
+    # create individual data
+    inds_dict = {_id: {"bbox": [], "keypoints": []} for _id in unique_ids}
+    for t, idx in enumerate(sorted_idxs):
+        inds_tmp = copy_ind_que[idx]
+        ids_tmp = [ind["id"] for ind in inds_tmp]
+        for key_id in unique_ids:
+            if key_id in ids_tmp:
+                ind = [ind for ind in inds_tmp if ind["id"] == key_id][0]
+                inds_dict[key_id]["bbox"].append(
+                    np.array(ind["bbox"], dtype=np.float16)[:4]
                 )
-                node_idxs_s[t].append(node_idx)
-                node_idxs_t[_id].append(node_idx)
-                node_idx += 1
+                inds_dict[key_id]["keypoints"].append(
+                    np.array(ind["keypoints"], dtype=np.float16)[:, :2]
+                )
+            else:
+                # append dmy
+                inds_dict[key_id]["bbox"].append(np.full((4,), -1, dtype=np.float16))
+                inds_dict[key_id]["keypoints"].append(
+                    np.full((17, 2), -1, dtype=np.float16)
+                )
 
-        data = {
-            "__key__": str(n_frame),
-            "npz": {
-                "frame": frame_que[sorted_idxs],
-                "optical_flow": flow_que[sorted_idxs],
-            },
-            "pickle": (inds_dict, node_idxs_s, node_idxs_t),
-        }
+    # create group data
+    node_dict = {}
+    node_idxs_s = []
+    node_idxs_t = {_id: [] for _id in unique_ids}
+    node_idx = 0
+    for t, idx in enumerate(sorted_idxs):
+        inds_tmp = copy_ind_que[idx]
+        node_idxs_s.append([])
+        for ind in inds_tmp:
+            _id = ind["id"]
+            node_dict[node_idx] = (
+                t,
+                _id,
+                np.array(ind["bbox"], dtype=np.float16)[:4],
+                np.array(ind["keypoints"], dtype=np.float16)[:, :2],
+            )
+            node_idxs_s[t].append(node_idx)
+            node_idxs_t[_id].append(node_idx)
+            node_idx += 1
 
+    data = {
+        "__key__": f"{video_num}_{n_frame}",
+        "npz": {
+            "frame": copy_frame_que[sorted_idxs],
+            "optical_flow": copy_flow_que[sorted_idxs],
+        },
+        "individuals.pickle": inds_dict,
+        "group.pickle": (node_dict, node_idxs_s, node_idxs_t),
+    }
     sink.write(data)
-    with lock:
-        pbar.write(f"Complete writing n_frame:{n_frame}")
-        pbar.update()
+
+    # pbar.write(f"Complete writing n_frame:{n_frame}")
+    pbar.update()
     del data
     gc.collect()
 
@@ -204,13 +234,15 @@ def create_shards(
 
         # create progress bars
         pbar_of = swm.Tqdm(
-            total=frame_count, ncols=100, desc="optical flow", position=0
+            total=frame_count, ncols=100, desc="optical flow", position=1, leave=False
         )
         pbar_ht = swm.Tqdm(
-            total=frame_count, ncols=100, desc="human tracking", position=1
+            total=frame_count, ncols=100, desc="human tracking", position=2, leave=False
         )
         total = (frame_count - seq_len) // stride
-        pbar_w = swm.Tqdm(total=total, ncols=100, desc="writing", position=2)
+        pbar_w = swm.Tqdm(
+            total=total, ncols=100, desc="writing", position=3, leave=False
+        )
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
@@ -241,6 +273,7 @@ def create_shards(
             flow_que=flow_que,
             ind_que=ind_que,
             pbar=pbar_w,
+            video_num=video_num,
         )
         check_full_partial = functools.partial(
             check_full,
@@ -254,6 +287,7 @@ def create_shards(
                 time.sleep(0.01)
 
             # start writing
+            # pbar_w.write(f"Start writing n_frame:{n_frame}")
             result = pool.apply_async(
                 write_async_partial,
                 (n_frame, head.value),
@@ -261,7 +295,6 @@ def create_shards(
             async_results.append(result)
             head.value = (head.value + stride) % seq_len
 
-        pbar_w.write("Waiting for writing shards.")
         while [r.wait() for r in async_results].count(True) > 0:
             time.sleep(0.01)
         pbar_of.close()
@@ -273,7 +306,6 @@ def create_shards(
         flow_shm.close()
         sink.close()
         del frame_que, flow_que
-    print("\nComplete!")
 
 
 def _npz_to_tensor(npz, frame_trans, flow_trans):
@@ -296,9 +328,9 @@ def _extract_individual_features(pkl, kps_norm_func):
     return bboxs, kps
 
 
-def _create_graph(pkl, norm_func, has_edge_attr):
+def _create_graph(pkl, kps_norm_func, has_edge_attr):
     inds_dict, node_idxs_s, node_idxs_t = pkl
-    x = [norm_func(ind[3]) for ind in inds_dict.values()]  # keypoints
+    x = [kps_norm_func(ind[3]) for ind in inds_dict.values()]  # keypoints
     y = [ind[1] for ind in inds_dict.values()]  # id
     pos = [calc_bbox_center(ind[2]) for ind in inds_dict.values()]
     time = [ind[0] for ind in inds_dict.values()]  # t
@@ -326,8 +358,13 @@ def _create_graph(pkl, norm_func, has_edge_attr):
 
 
 def load_dataset(
-    shard_paths: List[str], dataset_type: str, kps_norm_type: str, has_edge_attr: bool
+    data_root: str, dataset_type: str, kps_norm_type: str, has_edge_attr: bool = True
 ):
+    shard_paths = []
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+    for dir_path in data_dirs:
+        shard_paths += sorted(glob(os.path.join(dir_path, "shards", "*.tar")))
+
     dataset = wbs.WebDataset(shard_paths).decode().to_tuple("npz", "pickle")
     if dataset_type == "individual":
         partial_extract_individual_features = functools.partial(
