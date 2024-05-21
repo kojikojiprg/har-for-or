@@ -10,6 +10,8 @@ from multiprocessing import shared_memory
 from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
 
+from torch.utils.data import IterableDataset
+
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -144,16 +146,16 @@ def _write_async(
             if key_id in ids_tmp:
                 ind = [ind for ind in inds_tmp if ind["id"] == key_id][0]
                 inds_dict[key_id]["bbox"].append(
-                    np.array(ind["bbox"], dtype=np.float16)[:4]
+                    np.array(ind["bbox"], dtype=np.float32)[:4]
                 )
                 inds_dict[key_id]["keypoints"].append(
-                    np.array(ind["keypoints"], dtype=np.float16)[:, :2]
+                    np.array(ind["keypoints"], dtype=np.float32)[:, :2]
                 )
             else:
                 # append dmy
-                inds_dict[key_id]["bbox"].append(np.full((4,), -1, dtype=np.float16))
+                inds_dict[key_id]["bbox"].append(np.full((4,), -1, dtype=np.float32))
                 inds_dict[key_id]["keypoints"].append(
-                    np.full((17, 2), -1, dtype=np.float16)
+                    np.full((17, 2), -1, dtype=np.float32)
                 )
 
     # create group data
@@ -169,8 +171,8 @@ def _write_async(
             node_dict[node_idx] = (
                 t,
                 _id,
-                np.array(ind["bbox"], dtype=np.float16)[:4],
-                np.array(ind["keypoints"], dtype=np.float16)[:, :2],
+                np.array(ind["bbox"], dtype=np.float32)[:4],
+                np.array(ind["keypoints"], dtype=np.float32)[:, :2],
             )
             node_idxs_s[t].append(node_idx)
             node_idxs_t[_id].append(node_idx)
@@ -248,7 +250,7 @@ def create_shards(
         shape = (seq_len, img_size[1], img_size[0], 3)
         frame_que, frame_shm = swm.create_shared_ndarray("frame", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_que, flow_shm = swm.create_shared_ndarray("flow", shape, np.float16)
+        flow_que, flow_shm = swm.create_shared_ndarray("flow", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         pool.apply_async(
             _optical_flow_async,
@@ -321,15 +323,15 @@ _partial_npz_to_tensor = functools.partial(
 )
 
 
-def _extract_individual_features(pkl, kps_norm_func):
-    inds_dict, _, _ = pkl
-    bboxs = [ind[2] for ind in inds_dict.values()]  # bbox
-    kps = [kps_norm_func(ind[3]) for ind in inds_dict.values()]  # keypoints
+def _extract_individual_features(inds_dict, kps_norm_func):
+    bboxs = [ind["bbox"] for ind in inds_dict.values()]  # bbox
+    # kps = [kps_norm_func(ind["keypoints"]) for ind in inds_dict.values()]  # keypoints
+    kps = [ind["keypoints"] for ind in inds_dict.values()]  # keypoints
     return bboxs, kps
 
 
-def _create_graph(pkl, kps_norm_func, has_edge_attr):
-    inds_dict, node_idxs_s, node_idxs_t = pkl
+def _create_graph(group_data, kps_norm_func, has_edge_attr):
+    inds_dict, node_idxs_s, node_idxs_t = group_data
     x = [kps_norm_func(ind[3]) for ind in inds_dict.values()]  # keypoints
     y = [ind[1] for ind in inds_dict.values()]  # id
     pos = [calc_bbox_center(ind[2]) for ind in inds_dict.values()]
@@ -359,28 +361,31 @@ def _create_graph(pkl, kps_norm_func, has_edge_attr):
 
 def load_dataset(
     data_root: str, dataset_type: str, kps_norm_type: str, has_edge_attr: bool = True
-):
+) -> IterableDataset:
     shard_paths = []
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", "*.tar")))
 
-    dataset = wbs.WebDataset(shard_paths).decode().to_tuple("npz", "pickle")
+    dataset = wbs.WebDataset(shard_paths).decode()
+
     if dataset_type == "individual":
+        dataset = dataset.to_tuple("npz", "individuals.pickle")
         partial_extract_individual_features = functools.partial(
             _extract_individual_features,
             kps_norm_func=NormalizeX(kps_norm_type),
         )
         dataset = dataset.map_tuple(
-            _partial_npz_to_tensor, partial_extract_individual_features
+            _partial_npz_to_tensor, partial_extract_individual_features, None
         )
     elif dataset_type == "group":
+        dataset = dataset.to_tuple("npz", "group.pickle")
         partial_create_graph = functools.partial(
             _create_graph,
             norm_func=NormalizeX(kps_norm_type),
             has_edge_attr=has_edge_attr,
         )
-        dataset = dataset.map_tuple(_partial_npz_to_tensor, partial_create_graph)
+        dataset = dataset.map_tuple(_partial_npz_to_tensor, None, partial_create_graph)
     else:
         raise ValueError
 
