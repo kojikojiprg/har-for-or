@@ -44,8 +44,8 @@ class HumanTracking:
             result = {
                 "n_frame": int(frame_num),
                 "id": int(t[4]),
-                "bbox": bboxs[i],
-                "keypoints": kps[i],
+                "bbox": bboxs[i].astype(np.float32),
+                "keypoints": kps[i].astype(np.float32),
             }
             results.append(result)
 
