@@ -4,7 +4,7 @@ from torch import Tensor
 from torch_geometric.data import Data
 
 
-class SpatialTemporalData(Data):
+class DynamicSpatialTemporalGraph(Data):
     def __init__(
         self,
         x: Optional[Tensor] = None,
