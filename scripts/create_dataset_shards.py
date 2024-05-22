@@ -3,10 +3,11 @@ import os
 import sys
 from glob import glob
 
-sys.path.append("src")
-from data import create_shards
-from utils import yaml_handler
+sys.path.append(".")
 from tqdm import tqdm
+
+from src.data import write_shards
+from src.utils import yaml_handler
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -33,4 +34,4 @@ if __name__ == "__main__":
     n_processes = args.n_processes
 
     for video_path in tqdm(video_paths, ncols=100, position=0):
-        create_shards(video_path, config, config_ht, device, n_processes)
+        write_shards(video_path, config, config_ht, device, n_processes)
