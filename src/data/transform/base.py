@@ -5,6 +5,11 @@ from numpy.typing import NDArray
 from torchvision.transforms import Compose, Normalize
 
 
+class NormalizeBbox:
+    def __call__(self, bbox, img_size):
+        return bbox / img_size
+
+
 class NormalizeKeypoints:
     def __call__(self, kps, bbox, img_size):
         global_kps = self.global_norm(kps, img_size)

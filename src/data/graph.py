@@ -17,6 +17,8 @@ class DynamicSpatialTemporalGraph(Data):
         edge_attr_t: Optional[Tensor] = None,
     ):
         super().__init__(x=x, y=y, pos=pos, time=time)
+        if x is None:
+            self.x = None
         self.edge_index_s = edge_index_s
         self.edge_attr_s = edge_attr_s
         self.edge_index_t = edge_index_t

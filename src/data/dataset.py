@@ -1,6 +1,5 @@
 import functools
 import gc
-import itertools
 import os
 import time
 import warnings
@@ -9,12 +8,10 @@ from multiprocessing import shared_memory
 from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
 
-from torch.utils.data import IterableDataset
-
 warnings.filterwarnings("ignore")
 
 import numpy as np
-import webdataset as wbs
+import webdataset as wds
 from torch.multiprocessing import Pool, set_start_method
 from tqdm import tqdm
 
@@ -24,13 +21,11 @@ from src.utils import json_handler, video
 from .transform import (
     FlowToTensor,
     FrameToTensor,
+    NormalizeBbox,
     NormalizeKeypoints,
-    frame_flow_to_visual_shard,
     group_pkl_to_tensor,
-    human_tracking_to_graoup_shard,
-    human_tracking_to_individual_shard,
+    images_to_tensor,
     individual_pkl_to_tensor,
-    visual_npz_to_tensor,
 )
 
 set_start_method("spawn", force=True)
@@ -48,14 +43,14 @@ class ShardWritingManager(SyncManager):
         return np.ndarray(shape, dtype, shm.buf), shm
 
 
-def check_full(tail_frame, tail_ind, head, que_len):
+def _check_full(tail_frame, tail_ind, head, que_len):
     is_frame_que_full = (tail_frame.value + 1) % que_len == head.value
     is_ind_que_full = (tail_ind.value + 1) % que_len == head.value
     is_eq = tail_frame.value == tail_ind.value
     return is_frame_que_full and is_ind_que_full and is_eq
 
 
-def optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
+def _optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
     que_len = frame_que.shape[0]
 
     with lock:
@@ -83,7 +78,7 @@ def optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
         tail_frame.value = next_tail
 
 
-def human_tracking_async(
+def _human_tracking_async(
     lock, cap, ind_que, tail_ind, head, pbar, json_path, model=None
 ):
     que_len = len(ind_que)
@@ -119,19 +114,8 @@ def human_tracking_async(
         del model
 
 
-def write_shard_async(
-    n_frame,
-    head_val,
-    lock,
-    sink,
-    frame_que,
-    flow_que,
-    ht_que,
-    pbar,
-    video_name,
-    to_vis_shard,
-    to_idv_shard,
-    to_grp_shard,
+def _write_shard_async(
+    n_frame, head_val, lock, sink, frame_que, flow_que, ht_que, pbar, video_name
 ):
     with lock:
         # copy queue
@@ -142,28 +126,17 @@ def write_shard_async(
     que_len = len(copy_ht_que)
     assert n_frame % que_len == head_val
 
-    # transform vidual data
-    img_size = copy_frame_que.shape[1:3]
-    vis_data = to_vis_shard(copy_frame_que, copy_flow_que)
-
     sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
-    unique_ids = set(
-        itertools.chain.from_iterable(
-            [[ind["id"] for ind in inds] for inds in copy_ht_que]
-        )
-    )
-
-    # create individual data
-    idv_data = to_idv_shard(copy_ht_que, sorted_idxs, unique_ids, img_size)
-
-    # create group data
-    grp_data = to_grp_shard(copy_ht_que, sorted_idxs, unique_ids, img_size)
+    sorted_ht = []
+    for idx in sorted_idxs:
+        sorted_ht.append(copy_ht_que[idx])
+    img_size = copy_frame_que.shape[1:3]
 
     data = {
         "__key__": f"{video_name}_{n_frame}",
-        "vis.npz": {"vis": vis_data},
-        "idv.pickle": idv_data,
-        "grp.pickle": grp_data,
+        "frame.npy": copy_frame_que[sorted_idxs].astype(np.uint8),
+        "flow.npy": copy_flow_que[sorted_idxs].astype(np.float32),
+        "pickle": (sorted_ht, img_size),
     }
     sink.write(data)
 
@@ -196,17 +169,14 @@ def write_shards(
     shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    resize_ratio = float(config.resize_ratio)
-    shard_pattern = (
-        f"seq_len{seq_len}-stride{stride}_resize{resize_ratio:.2f}" + "-%06d.tar"
-    )
+    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-%06d.tar"
 
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
 
     ShardWritingManager.register("Tqdm", tqdm)
     ShardWritingManager.register("Capture", video.Capture)
-    ShardWritingManager.register("ShardWriter", wbs.ShardWriter)
+    ShardWritingManager.register("ShardWriter", wds.ShardWriter)
     with Pool(n_processes) as pool, ShardWritingManager() as swm:
         async_results = []
 
@@ -234,7 +204,7 @@ def write_shards(
         flow_que, flow_shm = swm.create_shared_ndarray("flow", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         pool.apply_async(
-            optical_flow_async,
+            _optical_flow_async,
             (lock, cap, frame_que, flow_que, tail_frame, head, pbar_of),
         )
 
@@ -242,25 +212,14 @@ def write_shards(
         ht_que = swm.list([[] for _ in range(seq_len)])
         tail_ind = swm.Value("i", 0)
         pool.apply_async(
-            human_tracking_async,
+            _human_tracking_async,
             (lock, cap, ht_que, tail_ind, head, pbar_ht, json_path, model_ht),
         )
 
         # create shard writer and start writing
         sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
-        to_vis_shard = functools.partial(
-            frame_flow_to_visual_shard,
-            frame_trans=FrameToTensor(resize_ratio),
-            flow_trans=FlowToTensor(resize_ratio),
-        )
-        to_idv_shard = functools.partial(
-            human_tracking_to_individual_shard, kps_norm_func=NormalizeKeypoints()
-        )
-        to_grp_shard = functools.partial(
-            human_tracking_to_graoup_shard, kps_norm_func=NormalizeKeypoints()
-        )
         write_shard_async_f = functools.partial(
-            write_shard_async,
+            _write_shard_async,
             lock=lock,
             sink=sink,
             frame_que=frame_que,
@@ -268,12 +227,9 @@ def write_shards(
             ht_que=ht_que,
             pbar=pbar_w,
             video_name=video_name,
-            to_vis_shard=to_vis_shard,
-            to_idv_shard=to_idv_shard,
-            to_grp_shard=to_grp_shard,
         )
         check_full_f = functools.partial(
-            check_full,
+            _check_full,
             tail_frame=tail_frame,
             tail_ind=tail_ind,
             head=head,
@@ -304,30 +260,49 @@ def write_shards(
         del frame_que, flow_que
 
 
-def load_dataset(
-    data_root: str, dataset_type: str, config: SimpleNamespace
-) -> IterableDataset:
+def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
     shard_paths = []
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
     resize_ratio = float(config.resize_ratio)
-    shard_pattern = (
-        f"seq_len{seq_len}-stride{stride}_resize{resize_ratio:.2f}" + "-%06d.tar"
-    )
+    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-%06d.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
-    dataset = wbs.WebDataset(shard_paths).decode()
+    frame_to_tensor = functools.partial(
+        images_to_tensor, transform=FrameToTensor(resize_ratio)
+    )
+    flow_to_tensor = functools.partial(
+        images_to_tensor, transform=FlowToTensor(resize_ratio)
+    )
+    idv_pkl_to_tensor = functools.partial(
+        individual_pkl_to_tensor,
+        bbox_transform=NormalizeBbox(),
+        kps_transform=NormalizeKeypoints(),
+    )
+    grp_pkl_to_tensor = functools.partial(
+        group_pkl_to_tensor,
+        bbox_transform=NormalizeBbox(),
+        kps_transform=NormalizeKeypoints(),
+    )
 
     if dataset_type == "individual":
-        dataset = dataset.to_tuple("npz", "individuals.pickle")
-        dataset = dataset.map_tuple(visual_npz_to_tensor, individual_pkl_to_tensor)
+        return wds.DataPipeline(
+            wds.SimpleShardList(shard_paths),
+            wds.split_by_worker,
+            wds.tarfile_to_samples(),
+            wds.to_tuple("frame.npy", "flow.npy", "pickle"),
+            wds.map_tuple(frame_to_tensor, flow_to_tensor, idv_pkl_to_tensor),
+        )
     elif dataset_type == "group":
-        dataset = dataset.to_tuple("npz", "group.pickle")
-        dataset = dataset.map_tuple(visual_npz_to_tensor, group_pkl_to_tensor)
+        return wds.DataPipeline(
+            wds.SimpleShardList(shard_paths),
+            wds.split_by_worker,
+            wds.tarfile_to_samples(),
+            wds.to_tuple("frame.npy", "flow.npy", "pickle"),
+            wds.map_tuple(frame_to_tensor, flow_to_tensor, grp_pkl_to_tensor),
+        )
     else:
         raise ValueError
-
-    return dataset
