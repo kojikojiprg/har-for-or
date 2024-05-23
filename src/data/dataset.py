@@ -307,7 +307,7 @@ def write_shards(
 
             # start writing
             result = pool.apply_async(
-                write_shard_async_f, (n_frame,), error_callback=my_err_cb
+                write_shard_async_f, (n_frame,), error_callback=error_callback
             )
             async_results.append(result)
 
@@ -326,8 +326,8 @@ def write_shards(
         sink.close()
 
 
-def my_err_cb(*args):
-    print("error callback args={}".format(args))
+def error_callback(*args):
+    print(f"Error occurred in write_shard_async process:\n{args}")
 
 
 def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
