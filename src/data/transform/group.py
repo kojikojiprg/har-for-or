@@ -40,7 +40,7 @@ def group_pkl_to_tensor(pkl, bbox_transform, kps_transform):
 
     unique_ids = set(
         itertools.chain.from_iterable(
-            [[ind["id"] for ind in inds] for inds in human_tracking_data]
+            [[idv["id"] for idv in idvs] for idvs in human_tracking_data]
         )
     )
     unique_ids = list(unique_ids)

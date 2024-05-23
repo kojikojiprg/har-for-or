@@ -5,12 +5,39 @@ import numpy as np
 import torch
 
 
+def collect_human_tracking(human_tracking_data):
+    unique_ids = set(
+        itertools.chain.from_iterable(
+            [[idv["id"] for idv in idvs] for idvs in human_tracking_data]
+        )
+    )
+    unique_ids = sorted(list(unique_ids))
+    meta = []
+    ids = []
+    bboxs = []
+    kps = []
+    for t, idvs in enumerate(human_tracking_data):
+        for idv in idvs:
+            i = unique_ids.index(idv["id"])
+            meta.append([t, i])
+            ids.append(idv["id"])
+            bboxs.append(np.array(idv["bbox"], dtype=np.float32)[:4])
+            kps.append(np.array(idv["keypoints"], dtype=np.float32)[:, :2])
+
+    return (
+        np.array(meta, np.uint16),
+        np.array(ids, np.uint16),
+        np.array(bboxs, np.float32),
+        np.array(kps, np.float32),
+    )
+
+
 def individual_pkl_to_tensor(pkl, bbox_transform, kps_transform):
     human_tracking_data, img_size = pickle.loads(pkl)
 
     unique_ids = set(
         itertools.chain.from_iterable(
-            [[ind["id"] for ind in inds] for inds in human_tracking_data]
+            [[idv["id"] for idv in idvs] for idvs in human_tracking_data]
         )
     )
     unique_ids = list(unique_ids)

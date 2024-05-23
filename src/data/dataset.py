@@ -23,6 +23,8 @@ from .transform import (
     FrameToTensor,
     NormalizeBbox,
     NormalizeKeypoints,
+    clip_images_by_bbox,
+    collect_human_tracking,
     group_pkl_to_tensor,
     images_to_tensor,
     individual_pkl_to_tensor,
@@ -31,34 +33,64 @@ from .transform import (
 set_start_method("spawn", force=True)
 
 
+class SharedNDArray:
+    def __init__(self, name, shape, dtype):
+        self.name = name
+        self.shape = shape
+        self.dtype = dtype
+        self.shm = self.create_shared_memory()
+
+    # def __del__(self):
+    #     if hasattr(self, "shm"):
+    #         self.shm.close()
+    #         self.shm.unlink()
+
+    def calc_ndarray_size(self):
+        return np.prod(self.shape) * np.dtype(self.dtype).itemsize
+
+    def create_shared_memory(self):
+        size = self.calc_ndarray_size()
+        return shared_memory.SharedMemory(name=self.name, create=True, size=size)
+
+    def get_shared_memory(self):
+        shm = shared_memory.SharedMemory(name=self.name)
+        return shm
+
+    def ndarray(self):
+        shm = self.get_shared_memory()
+        return np.ndarray(self.shape, self.dtype, buffer=shm.buf), shm
+
+    def unlink(self):
+        self.shm.close()
+        self.shm.unlink()
+
+
 class ShardWritingManager(SyncManager):
-    @staticmethod
-    def calc_ndarray_size(shape, dtype):
-        return np.prod(shape) * np.dtype(dtype).itemsize
-
-    @classmethod
-    def create_shared_ndarray(cls, name, shape, dtype):
-        size = cls.calc_ndarray_size(shape, dtype)
-        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
-        return np.ndarray(shape, dtype, shm.buf), shm
+    pass
 
 
-def _check_full(tail_frame, tail_ind, head, que_len):
+def _check_full(tail_frame, tail_ht, head, que_len):
     is_frame_que_full = (tail_frame.value + 1) % que_len == head.value
-    is_ind_que_full = (tail_ind.value + 1) % que_len == head.value
-    is_eq = tail_frame.value == tail_ind.value
-    return is_frame_que_full and is_ind_que_full and is_eq
+    is_idv_que_full = (tail_ht.value + 1) % que_len == head.value
+    is_eq = tail_frame.value == tail_ht.value
+    return is_frame_que_full and is_idv_que_full and is_eq
 
 
-def _optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
+def _optical_flow_async(cap, frame_sna, flow_sna, tail_frame, head, lock, pbar):
+    frame_que, frame_shm = frame_sna.ndarray()
+    flow_que, flow_shm = flow_sna.ndarray()
     que_len = frame_que.shape[0]
 
     with lock:
+        frame_count = cap.get_frame_count()
         prev_frame = cap.read(0)[1]
         cap.set_pos_frame_count(0)  # reset read position
-        frame_count = cap.get_frame_count()
 
-    for n_frame in range(frame_count):
+        frame_que[tail_frame.value] = prev_frame
+        tail_frame.value = 1
+    pbar.update()
+
+    for n_frame in range(1, frame_count):
         with lock:
             frame = cap.read(n_frame)[1]
         flow = video.optical_flow(prev_frame, frame)
@@ -67,7 +99,7 @@ def _optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
         with lock:
             frame_que[tail_frame.value] = frame
             flow_que[tail_frame.value] = flow
-            pbar.update()
+        pbar.update()
 
         if n_frame + 1 == frame_count:
             break  # finish
@@ -77,11 +109,13 @@ def _optical_flow_async(lock, cap, frame_que, flow_que, tail_frame, head, pbar):
             time.sleep(0.01)
         tail_frame.value = next_tail
 
+    frame_shm.close()
+    flow_shm.close()
+    del frame_que, flow_que
 
-def _human_tracking_async(
-    lock, cap, ind_que, tail_ind, head, pbar, json_path, model=None
-):
-    que_len = len(ind_que)
+
+def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pbar):
+    que_len = len(ht_que)
 
     do_human_tracking = not os.path.exists(json_path)
     if not do_human_tracking:
@@ -94,55 +128,81 @@ def _human_tracking_async(
         if do_human_tracking:
             with lock:
                 frame = cap.read(n_frame)[1]
-            inds_tmp = model.predict(frame, n_frame)
+            idvs_tmp = model.predict(frame, n_frame)
         else:
-            inds_tmp = [ind for ind in json_data if ind["n_frame"] == n_frame]
+            idvs_tmp = [idv for idv in json_data if idv["n_frame"] == n_frame]
 
         with lock:
-            ind_que[tail_ind.value] = inds_tmp
+            ht_que[tail_ht.value] = idvs_tmp
             pbar.update()
 
         if n_frame + 1 == frame_count:
             break  # finish
 
-        next_tail = (tail_ind.value + 1) % que_len
+        next_tail = (tail_ht.value + 1) % que_len
         while next_tail == head.value:
             time.sleep(0.01)
-        tail_ind.value = next_tail
+        tail_ht.value = next_tail
 
     if model is not None:
         del model
 
 
 def _write_shard_async(
-    n_frame, head_val, lock, sink, frame_que, flow_que, ht_que, pbar, video_name
+    n_frame,
+    head_val,
+    frame_sna,
+    flow_sna,
+    ht_que,
+    sink,
+    lock,
+    pbar,
+    video_name,
+    resize,
 ):
     with lock:
         # copy queue
+        frame_que, frame_shm = frame_sna.ndarray()
+        flow_que, flow_shm = flow_sna.ndarray()
         copy_frame_que = frame_que.copy()
         copy_flow_que = flow_que.copy()
+        frame_shm.close()
+        flow_shm.close()
+        del frame_que, flow_que
         copy_ht_que = list(ht_que)
 
     que_len = len(copy_ht_que)
     assert n_frame % que_len == head_val
 
     sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
-    sorted_ht = []
-    for idx in sorted_idxs:
-        sorted_ht.append(copy_ht_que[idx])
-    img_size = copy_frame_que.shape[1:3]
+    copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
+    copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
+    copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
+
+    idv_frames, idv_flows = clip_images_by_bbox(
+        copy_frame_que, copy_flow_que, copy_ht_que, resize
+    )
+    meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que)
+    img_size = np.array(copy_frame_que.shape[1:3])
 
     data = {
         "__key__": f"{video_name}_{n_frame}",
-        "frame.npy": copy_frame_que[sorted_idxs].astype(np.uint8),
-        "flow.npy": copy_flow_que[sorted_idxs].astype(np.float32),
-        "pickle": (sorted_ht, img_size),
+        "npz": {
+            "meta": meta,
+            "id": ids,
+            "frame": idv_frames,
+            "flow": idv_flows,
+            "bbox": bboxs,
+            "keypoints": kps,
+            "img_size": img_size,
+        },
     }
     sink.write(data)
 
     # pbar.write(f"Complete writing n_frame:{n_frame}")
     pbar.update()
     del data
+    del copy_frame_que, copy_flow_que, copy_ht_que
     gc.collect()
 
 
@@ -199,39 +259,40 @@ def write_shards(
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_que, frame_shm = swm.create_shared_ndarray("frame", shape, np.uint8)
+        frame_sna = SharedNDArray("frame", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_que, flow_shm = swm.create_shared_ndarray("flow", shape, np.float32)
+        flow_sna = SharedNDArray("flow", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         pool.apply_async(
             _optical_flow_async,
-            (lock, cap, frame_que, flow_que, tail_frame, head, pbar_of),
+            (cap, frame_sna, flow_sna, tail_frame, head, lock, pbar_of),
         )
 
         # create shared list of indiciduals and start human tracking
         ht_que = swm.list([[] for _ in range(seq_len)])
-        tail_ind = swm.Value("i", 0)
+        tail_ht = swm.Value("i", 0)
         pool.apply_async(
             _human_tracking_async,
-            (lock, cap, ht_que, tail_ind, head, pbar_ht, json_path, model_ht),
+            (cap, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
         )
 
         # create shard writer and start writing
         sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
         write_shard_async_f = functools.partial(
             _write_shard_async,
-            lock=lock,
-            sink=sink,
-            frame_que=frame_que,
-            flow_que=flow_que,
+            frame_sna=frame_sna,
+            flow_sna=flow_sna,
             ht_que=ht_que,
+            sink=sink,
+            lock=lock,
             pbar=pbar_w,
             video_name=video_name,
+            resize=(config.resize_shape.h, config.resize_shape.w),
         )
         check_full_f = functools.partial(
             _check_full,
             tail_frame=tail_frame,
-            tail_ind=tail_ind,
+            tail_ht=tail_ht,
             head=head,
             que_len=seq_len,
         )
@@ -241,23 +302,19 @@ def write_shards(
 
             # start writing
             result = pool.apply_async(
-                write_shard_async_f,
-                (n_frame, head.value),
+                write_shard_async_f, (n_frame, head.value)
             )
-            async_results.append(result)
             head.value = (head.value + stride) % seq_len
+            async_results.append(result)
 
         while [r.wait() for r in async_results].count(True) > 0:
             time.sleep(0.01)
+        frame_sna.unlink()
+        flow_sna.unlink()
         pbar_of.close()
         pbar_ht.close()
         pbar_w.close()
-        frame_shm.unlink()
-        frame_shm.close()
-        flow_shm.unlink()
-        flow_shm.close()
         sink.close()
-        del frame_que, flow_que
 
 
 def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
