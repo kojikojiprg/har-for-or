@@ -161,7 +161,9 @@ def _write_shard_async(
     stride,
     resize,
 ):
-    assert n_frame % seq_len == head.value
+    assert (
+        n_frame % seq_len == head.value
+    ), f"n_frame % seq_len:{n_frame % seq_len}, head:{head.value}"
     with lock:
         # copy queue
         frame_que, frame_shm = frame_sna.ndarray()
@@ -304,8 +306,15 @@ def write_shards(
             time.sleep(0.5)  # after delay
 
             # start writing
-            result = pool.apply_async(write_shard_async_f, (n_frame,))
+            result = pool.apply_async(
+                write_shard_async_f, (n_frame,), error_callback=my_err_cb
+            )
             async_results.append(result)
+
+            if n_frame + stride >= frame_count:
+                break  # finish
+            while check_full_f():
+                time.sleep(0.001)  # waiting for coping queue in wirte_async
 
         while [r.wait() for r in async_results].count(True) > 0:
             time.sleep(0.001)
@@ -315,6 +324,10 @@ def write_shards(
         pbar_ht.close()
         pbar_w.close()
         sink.close()
+
+
+def my_err_cb(*args):
+    print("error callback args={}".format(args))
 
 
 def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
