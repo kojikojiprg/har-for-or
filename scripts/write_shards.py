@@ -12,6 +12,9 @@ from src.utils import yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
+    parser.add_argument("dataset_type", type=str, help="'individual' or 'group'")
+
+    # optional
     parser.add_argument(
         "-c", "--config_path", type=str, required=False, default="configs/dataset.yaml"
     )
@@ -27,6 +30,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     video_paths = sorted(glob(os.path.join(args.data_root, "*.mp4")))
+    dataset_type = args.dataset_type
 
     config = yaml_handler.load(args.config_path)
     config_ht = yaml_handler.load(args.config_human_tracking_path)
@@ -34,4 +38,4 @@ if __name__ == "__main__":
     n_processes = args.n_processes
 
     for video_path in tqdm(video_paths, ncols=100, position=0):
-        write_shards(video_path, config, config_ht, device, n_processes)
+        write_shards(video_path, dataset_type, config, config_ht, device, n_processes)

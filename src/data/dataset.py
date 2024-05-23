@@ -1,5 +1,6 @@
 import functools
 import gc
+import itertools
 import os
 import time
 import warnings
@@ -27,6 +28,7 @@ from .transform import (
     collect_human_tracking,
     group_npz_to_tensor,
     individual_npz_to_tensor,
+    individual_to_npz,
 )
 
 set_start_method("spawn", force=True)
@@ -38,11 +40,6 @@ class SharedNDArray:
         self.shape = shape
         self.dtype = dtype
         self.shm = self.create_shared_memory()
-
-    # def __del__(self):
-    #     if hasattr(self, "shm"):
-    #         self.shm.close()
-    #         self.shm.unlink()
 
     def calc_ndarray_size(self):
         return np.prod(self.shape) * np.dtype(self.dtype).itemsize
@@ -157,6 +154,7 @@ def _write_shard_async(
     lock,
     pbar,
     video_name,
+    dataset_type,
     seq_len,
     stride,
     resize,
@@ -176,29 +174,50 @@ def _write_shard_async(
         copy_ht_que = list(ht_que)
         head.value = (head.value + stride) % seq_len
 
+    # sort to start from head
     sorted_idxs = list(range(head.value, seq_len)) + list(range(0, head.value))
     copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
     copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
+
+    # clip frames and flows by bboxs
     idv_frames, idv_flows = clip_images_by_bbox(
         copy_frame_que, copy_flow_que, copy_ht_que, resize
     )
-    meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que)
+
+    # collect human tracking data
+    unique_ids = set(
+        itertools.chain.from_iterable(
+            [[idv["id"] for idv in idvs] for idvs in copy_ht_que]
+        )
+    )
+    unique_ids = sorted(list(unique_ids))
+    meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que, unique_ids)
     img_size = np.array(copy_frame_que.shape[1:3])
 
-    data = {
-        "__key__": f"{video_name}_{n_frame}",
-        "npz": {
-            "meta": meta,
-            "id": ids,
-            "frame": idv_frames,
-            "flow": idv_flows,
-            "bbox": bboxs,
-            "keypoints": kps,
-            "img_size": img_size,
-        },
-    }
-    sink.write(data)
+    if dataset_type == "individual":
+        idv_npzs = individual_to_npz(
+            meta, unique_ids, idv_frames, idv_flows, bboxs, kps
+        )
+        for i, _id in enumerate(unique_ids):
+            data = {"__key__": f"{video_name}_{_id}_{n_frame}", "npz": idv_npzs[i]}
+            sink.write(data)
+    elif dataset_type == "group":
+        data = {
+            "__key__": f"{video_name}_{n_frame}",
+            "npz": {
+                "meta": meta,
+                "id": ids,
+                "frame": idv_frames,
+                "flow": idv_flows,
+                "bbox": bboxs,
+                "keypoints": kps,
+                "img_size": img_size,
+            },
+        }
+        sink.write(data)
+    else:
+        raise ValueError
 
     # pbar.write(f"Complete writing n_frame:{n_frame}")
     pbar.update()
@@ -209,6 +228,7 @@ def _write_shard_async(
 
 def write_shards(
     video_path: str,
+    dataset_type: str,
     config: SimpleNamespace,
     config_human_tracking: SimpleNamespace,
     device: str,
@@ -230,7 +250,7 @@ def write_shards(
     shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-%06d.tar"
+    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}" + "-%06d.tar"
 
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
@@ -260,9 +280,9 @@ def write_shards(
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_sna = SharedNDArray("frame", shape, np.uint8)
+        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_sna = SharedNDArray("flow", shape, np.float32)
+        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         pool.apply_async(
             _optical_flow_async,
@@ -289,6 +309,7 @@ def write_shards(
             lock=lock,
             pbar=pbar_w,
             video_name=video_name,
+            dataset_type=dataset_type,
             seq_len=seq_len,
             stride=stride,
             resize=(config.resize_shape.w, config.resize_shape.h),
