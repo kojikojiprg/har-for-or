@@ -25,7 +25,7 @@ def collect_human_tracking(human_tracking_data, unique_ids):
     )
 
 
-def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps):
+def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
     frames_idvs = np.full((n, seq_len, h, w, 3), -1, dtype=np.uint8)
@@ -49,7 +49,8 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps):
             "frame": frames_idvs[i],
             "flow": flows_idvs[i],
             "bbox": bboxs_idvs[i],
-            "kps": kps_idvs[i],
+            "keypoints": kps_idvs[i],
+            "img_size": img_size,
         }
         idvs.append(data)
     return idvs
@@ -59,16 +60,9 @@ def individual_npz_to_tensor(
     npz, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
     npz = np.load(io.BytesIO(npz))
-    meta, ids, frames, flows, bboxs, kps, img_size = list(npz.values())
+    _id, frames, flows, bboxs, kps, img_size = list(npz.values())
 
-    h, w = frames.shape[1:3]
-    seq_len, n = np.max(meta, axis=0) + 1
-    unique_ids = sorted(list(set(ids)))
-    t_frames = torch.full((n, seq_len, 3, h, w), -1, dtype=torch.float32)
-    t_flows = torch.full((n, seq_len, 2, h, w), -1, dtype=torch.float32)
-    t_bboxs = torch.full((n, seq_len, 2, 2), -1, dtype=torch.float32)
-    t_kps = torch.full((n, seq_len, 17, 2), -1, dtype=torch.float32)
-
+    seq_len, h, w = frames.shape[:3]
     frames = frame_transform(frames)
     flows = flow_transform(flows)
 
@@ -78,18 +72,10 @@ def individual_npz_to_tensor(
     bboxs = bbox_transform(bboxs, img_size)
 
     # collect data
-    for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
-        meta, frames, flows, bboxs, kps
-    ):
-        t_frames[i, t] = frames_i
-        t_flows[i, t] = flows_i
-        t_bboxs[i, t] = torch.tensor(bboxs_i).contiguous()
-        t_kps[i, t] = torch.tensor(kps_i).contiguous()
-
     return (
-        torch.tensor(unique_ids, dtype=torch.long).contiguous(),
-        t_frames,
-        t_flows,
-        t_bboxs,
-        t_kps,
+        torch.tensor(_id, dtype=torch.long),
+        frames,
+        flows,
+        torch.tensor(bboxs, dtype=torch.float32).contiguous(),
+        torch.tensor(kps, dtype=torch.float32).contiguous(),
     )

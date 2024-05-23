@@ -197,7 +197,7 @@ def _write_shard_async(
 
     if dataset_type == "individual":
         idv_npzs = individual_to_npz(
-            meta, unique_ids, idv_frames, idv_flows, bboxs, kps
+            meta, unique_ids, idv_frames, idv_flows, bboxs, kps, img_size
         )
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{_id}_{n_frame}", "npz": idv_npzs[i]}
@@ -357,7 +357,7 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-*.tar"
+    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}" + "-*.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
