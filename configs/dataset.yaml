@@ -4,3 +4,6 @@ stride: 30
 resize_shape:
   w: 192
   h: 256
+# resize_shape:
+#   w: 288
+#   h: 384

@@ -250,7 +250,9 @@ def write_shards(
     shard_maxsize = float(config.max_shard_size)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}" + "-%06d.tar"
+    w = int(config.resize_shape.w)
+    h = int(config.resize_shape.h)
+    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
 
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
@@ -312,7 +314,7 @@ def write_shards(
             dataset_type=dataset_type,
             seq_len=seq_len,
             stride=stride,
-            resize=(config.resize_shape.w, config.resize_shape.h),
+            resize=(w, h),
         )
         check_full_f = functools.partial(
             _check_full,
@@ -357,7 +359,9 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}" + "-*.tar"
+    w = int(config.resize_shape.w)
+    h = int(config.resize_shape.h)
+    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
