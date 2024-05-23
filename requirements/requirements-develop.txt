@@ -1,5 +1,8 @@
 jupyter
 pickleshare
+
+torchsummary
+
 black
 flake8
 isort
