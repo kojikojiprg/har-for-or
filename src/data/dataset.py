@@ -26,7 +26,6 @@ from .transform import (
     clip_images_by_bbox,
     collect_human_tracking,
     group_npz_to_tensor,
-    images_to_tensor,
     individual_npz_to_tensor,
 )
 
@@ -150,10 +149,10 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
 
 def _write_shard_async(
     n_frame,
-    head,
     frame_sna,
     flow_sna,
     ht_que,
+    head,
     sink,
     lock,
     pbar,
@@ -247,14 +246,14 @@ def write_shards(
 
         # create progress bars
         pbar_of = swm.Tqdm(
-            total=frame_count, ncols=100, desc="optical flow", position=1, leave=False
+            total=frame_count, desc="opticalflow", position=1, leave=False, ncols=100
         )
         pbar_ht = swm.Tqdm(
-            total=frame_count, ncols=100, desc="human tracking", position=2, leave=False
+            total=frame_count, desc="tracking", position=2, leave=False, ncols=100
         )
         total = (frame_count - seq_len) // stride
         pbar_w = swm.Tqdm(
-            total=total, ncols=100, desc="writing", position=3, leave=False
+            total=total, desc="writing", position=3, leave=False, ncols=100
         )
 
         # create shared ndarray and start optical flow
@@ -283,6 +282,7 @@ def write_shards(
             frame_sna=frame_sna,
             flow_sna=flow_sna,
             ht_que=ht_que,
+            head=head,
             sink=sink,
             lock=lock,
             pbar=pbar_w,
@@ -304,7 +304,7 @@ def write_shards(
             time.sleep(0.5)  # after delay
 
             # start writing
-            result = pool.apply_async(write_shard_async_f, (n_frame, head))
+            result = pool.apply_async(write_shard_async_f, (n_frame,))
             async_results.append(result)
 
         while [r.wait() for r in async_results].count(True) > 0:
@@ -323,24 +323,21 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    resize_ratio = float(config.resize_ratio)
-    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-%06d.tar"
+    shard_pattern = f"seq_len{seq_len}-stride{stride}" + "-*.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
-    frame_to_tensor = functools.partial(
-        images_to_tensor, transform=FrameToTensor(resize_ratio)
-    )
-    flow_to_tensor = functools.partial(
-        images_to_tensor, transform=FlowToTensor(resize_ratio)
-    )
-    idv_pkl_to_tensor = functools.partial(
+    idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
+        frame_transform=FrameToTensor(),
+        flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )
-    grp_pkl_to_tensor = functools.partial(
+    grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
+        frame_transform=FrameToTensor(),
+        flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )
@@ -350,16 +347,16 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
             wds.SimpleShardList(shard_paths),
             wds.split_by_worker,
             wds.tarfile_to_samples(),
-            wds.to_tuple("frame.npy", "flow.npy", "pickle"),
-            wds.map_tuple(frame_to_tensor, flow_to_tensor, idv_pkl_to_tensor),
+            wds.to_tuple("npz"),
+            wds.map_tuple(idv_npz_to_tensor),
         )
     elif dataset_type == "group":
         return wds.DataPipeline(
             wds.SimpleShardList(shard_paths),
             wds.split_by_worker,
             wds.tarfile_to_samples(),
-            wds.to_tuple("frame.npy", "flow.npy", "pickle"),
-            wds.map_tuple(frame_to_tensor, flow_to_tensor, grp_pkl_to_tensor),
+            wds.to_tuple("npz"),
+            wds.map_tuple(grp_npz_to_tensor),
         )
     else:
         raise ValueError
