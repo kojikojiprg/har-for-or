@@ -25,9 +25,9 @@ from .transform import (
     NormalizeKeypoints,
     clip_images_by_bbox,
     collect_human_tracking,
-    group_pkl_to_tensor,
+    group_npz_to_tensor,
     images_to_tensor,
-    individual_pkl_to_tensor,
+    individual_npz_to_tensor,
 )
 
 set_start_method("spawn", force=True)
@@ -106,7 +106,7 @@ def _optical_flow_async(cap, frame_sna, flow_sna, tail_frame, head, lock, pbar):
 
         next_tail = (tail_frame.value + 1) % que_len
         while next_tail == head.value:
-            time.sleep(0.01)
+            time.sleep(0.001)
         tail_frame.value = next_tail
 
     frame_shm.close()
@@ -141,7 +141,7 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
 
         next_tail = (tail_ht.value + 1) % que_len
         while next_tail == head.value:
-            time.sleep(0.01)
+            time.sleep(0.001)
         tail_ht.value = next_tail
 
     if model is not None:
@@ -150,7 +150,7 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
 
 def _write_shard_async(
     n_frame,
-    head_val,
+    head,
     frame_sna,
     flow_sna,
     ht_que,
@@ -158,8 +158,11 @@ def _write_shard_async(
     lock,
     pbar,
     video_name,
+    seq_len,
+    stride,
     resize,
 ):
+    assert n_frame % seq_len == head.value
     with lock:
         # copy queue
         frame_que, frame_shm = frame_sna.ndarray()
@@ -170,15 +173,12 @@ def _write_shard_async(
         flow_shm.close()
         del frame_que, flow_que
         copy_ht_que = list(ht_que)
+        head.value = (head.value + stride) % seq_len
 
-    que_len = len(copy_ht_que)
-    assert n_frame % que_len == head_val
-
-    sorted_idxs = list(range(head_val, que_len)) + list(range(0, head_val))
+    sorted_idxs = list(range(head.value, seq_len)) + list(range(0, head.value))
     copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
     copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
-
     idv_frames, idv_flows = clip_images_by_bbox(
         copy_frame_que, copy_flow_que, copy_ht_que, resize
     )
@@ -287,7 +287,9 @@ def write_shards(
             lock=lock,
             pbar=pbar_w,
             video_name=video_name,
-            resize=(config.resize_shape.h, config.resize_shape.w),
+            seq_len=seq_len,
+            stride=stride,
+            resize=(config.resize_shape.w, config.resize_shape.h),
         )
         check_full_f = functools.partial(
             _check_full,
@@ -298,17 +300,15 @@ def write_shards(
         )
         for n_frame in range(seq_len, frame_count, stride):
             while not check_full_f():
-                time.sleep(0.01)
+                time.sleep(0.001)
+            time.sleep(0.5)  # after delay
 
             # start writing
-            result = pool.apply_async(
-                write_shard_async_f, (n_frame, head.value)
-            )
-            head.value = (head.value + stride) % seq_len
+            result = pool.apply_async(write_shard_async_f, (n_frame, head))
             async_results.append(result)
 
         while [r.wait() for r in async_results].count(True) > 0:
-            time.sleep(0.01)
+            time.sleep(0.001)
         frame_sna.unlink()
         flow_sna.unlink()
         pbar_of.close()
@@ -335,12 +335,12 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
         images_to_tensor, transform=FlowToTensor(resize_ratio)
     )
     idv_pkl_to_tensor = functools.partial(
-        individual_pkl_to_tensor,
+        individual_npz_to_tensor,
         bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )
     grp_pkl_to_tensor = functools.partial(
-        group_pkl_to_tensor,
+        group_npz_to_tensor,
         bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )

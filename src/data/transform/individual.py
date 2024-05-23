@@ -1,5 +1,5 @@
+import io
 import itertools
-import pickle
 
 import numpy as np
 import torch
@@ -21,7 +21,7 @@ def collect_human_tracking(human_tracking_data):
             i = unique_ids.index(idv["id"])
             meta.append([t, i])
             ids.append(idv["id"])
-            bboxs.append(np.array(idv["bbox"], dtype=np.float32)[:4])
+            bboxs.append(np.array(idv["bbox"], dtype=np.float32)[:4].reshape(2, 2))
             kps.append(np.array(idv["keypoints"], dtype=np.float32)[:, :2])
 
     return (
@@ -32,48 +32,41 @@ def collect_human_tracking(human_tracking_data):
     )
 
 
-def individual_pkl_to_tensor(pkl, bbox_transform, kps_transform):
-    human_tracking_data, img_size = pickle.loads(pkl)
+def individual_npz_to_tensor(
+    npz, frame_transform, flow_transform, bbox_transform, kps_transform
+):
+    npz = np.load(io.BytesIO(npz))
+    meta, ids, frames, flows, bboxs, kps, img_size = list(npz.values())
 
-    unique_ids = set(
-        itertools.chain.from_iterable(
-            [[idv["id"] for idv in idvs] for idvs in human_tracking_data]
-        )
-    )
-    unique_ids = list(unique_ids)
+    h, w = frames.shape[1:3]
+    seq_len, n = np.max(meta, axis=0) + 1
+    unique_ids = sorted(list(set(ids)))
+    t_frames = torch.full((n, seq_len, 3, h, w), -1, dtype=torch.float32)
+    t_flows = torch.full((n, seq_len, 2, h, w), -1, dtype=torch.float32)
+    t_bboxs = torch.full((n, seq_len, 2, 2), -1, dtype=torch.float32)
+    t_kps = torch.full((n, seq_len, 17, 2), -1, dtype=torch.float32)
+
+    frames = frame_transform(frames)
+    flows = flow_transform(flows)
+
+    # NOTE: keypoints normalization is depend on raw bboxs.
+    #       So that normalize keypoints first.
+    kps = kps_transform(kps, bboxs)
+    bboxs = bbox_transform(bboxs, img_size)
 
     # collect data
-    inds_dict = {_id: {"bbox": [], "keypoints": []} for _id in unique_ids}
-    for idvs in human_tracking_data:
-        ids_tmp = [idv["id"] for idv in idvs]
-        for key_id in unique_ids:
-            if key_id in ids_tmp:
-                idv = [idv for idv in idvs if idv["id"] == key_id][0]
-                inds_dict[key_id]["bbox"].append(
-                    np.array(idv["bbox"], dtype=np.float32)[:4]
-                )
-                inds_dict[key_id]["keypoints"].append(
-                    np.array(idv["keypoints"], dtype=np.float32)[:, :2]
-                )
-            else:
-                # append dmy
-                inds_dict[key_id]["bbox"].append(np.full((4,), -1, dtype=np.float32))
-                inds_dict[key_id]["keypoints"].append(
-                    np.full((17, 2), -1, dtype=np.float32)
-                )
-
-    bbox = [idv["bbox"] for idv in inds_dict.values()]
-    bbox = np.array(bbox)  # (-1, seq_len, 4)
-    n_id, seq_len = bbox.shape[:2]
-    bbox = bbox.reshape(n_id, seq_len, 2, 2)  # (-1, seq_len, 2, 2)
-    bbox = bbox_transform(bbox, img_size)
-
-    kps = [idv["keypoints"] for idv in inds_dict.values()]
-    kps = np.array(kps)  # (-1, seq_len, 17, 2)
-    kps = kps_transform(kps, bbox, img_size)
+    for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
+        meta, frames, flows, bboxs, kps
+    ):
+        t_frames[i, t] = frames_i
+        t_flows[i, t] = flows_i
+        t_bboxs[i, t] = torch.tensor(bboxs_i).contiguous()
+        t_kps[i, t] = torch.tensor(kps_i).contiguous()
 
     return (
         torch.tensor(unique_ids, dtype=torch.long).contiguous(),
-        torch.tensor(bbox, dtype=torch.float32).contiguous(),
-        torch.tensor(kps, dtype=torch.float32).contiguous(),
+        t_frames,
+        t_flows,
+        t_bboxs,
+        t_kps,
     )

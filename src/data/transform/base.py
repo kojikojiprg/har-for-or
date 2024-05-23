@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import torchvision.transforms.functional as F
 from numpy.typing import NDArray
@@ -11,21 +10,7 @@ class NormalizeBbox:
 
 
 class NormalizeKeypoints:
-    def __call__(self, kps, bbox, img_size):
-        global_kps = self.global_norm(kps, img_size)
-        local_kps = self.local_norm(kps, bbox)
-        ndim = kps.ndim
-        if ndim == 4:
-            return np.concatenate([global_kps, local_kps], axis=2)
-        elif ndim == 3:
-            return np.concatenate([global_kps, local_kps], axis=1)
-        else:
-            raise ValueError
-
-    def global_norm(self, kps, img_size):
-        return kps / img_size
-
-    def local_norm(self, kps, bbox):
+    def __call__(self, kps, bbox):
         ndim = kps.ndim
         if ndim == 4:
             n_ids, seq_len = kps.shape[:2]
