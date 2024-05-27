@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from rotary_embedding_torch import RotaryEmbedding
 
 from .core import FeedForward, TransformerEncoderBlock
 
@@ -53,10 +54,10 @@ class ImageEmbedding(nn.Module):
         return (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
 
     def patching(self, imgs):
-        h, w = self.patch_size
-        imgs = imgs.unfold(3, h, h).unfold(4, w, w).contiguous()
-        b, seq_len, c, nh, nw, h, w = imgs.size()
-        return imgs.view(b, seq_len, c, nh * nw, h * w)
+        ph, pw = self.patch_size
+        imgs = imgs.unfold(3, ph, ph).unfold(4, pw, pw).contiguous()
+        b, seq_len, c, nh, nw, ph, pw = imgs.size()
+        return imgs.view(b, seq_len, c, nh * nw, ph * pw)
 
     def forward(self, imgs, bboxs=None):
         # imgs (b, seq_len, 5, 256, 192)
@@ -85,16 +86,16 @@ class ImageEmbedding(nn.Module):
 
 
 class TransformerEmbedding(nn.Module):
-    def __init__(self, in_ndim, out_ndim, npatch, nhead, nlayers, dropout):
+    def __init__(self, in_ndim, out_ndim, npatchs, nheads, nlayers, dropout):
         super().__init__()
         self.layers = nn.ModuleList(
-            [TransformerEncoderBlock(in_ndim, nhead, dropout) for _ in range(nlayers)]
+            [TransformerEncoderBlock(in_ndim, nheads, dropout) for _ in range(nlayers)]
         )
-        self.norm = nn.LayerNorm((npatch, in_ndim))
-        self.ff = FeedForward(npatch * in_ndim, out_ndim)
+        self.norm = nn.LayerNorm((npatchs, in_ndim))
+        self.ff = FeedForward(npatchs * in_ndim, out_ndim)
 
     def forward(self, x):
-        # x (b, seq_len, npatch, in_dim)
+        # x (b, seq_len, npatch, in_ndim)
         b, seq_len, npatch, ndim = x.size()
 
         x = x.view(b * seq_len, npatch, ndim)
@@ -111,13 +112,13 @@ class TransformerEmbedding(nn.Module):
 class IndividualEmbedding(nn.Module):
     def __init__(
         self,
-        data_type,
-        hidden_ndim,
-        out_ndim,
-        nhead,
-        nlayers,
-        dropout=0.1,
-        add_position_patch=True,
+        data_type: str,
+        hidden_ndim: int,
+        out_ndim: int,
+        nheads: int,
+        nlayers: int,
+        dropout: float = 0.1,
+        add_position_patch: bool = True,
         **kwargs
     ):
         super().__init__()
@@ -132,8 +133,10 @@ class IndividualEmbedding(nn.Module):
         else:
             raise ValueError
 
+        self.pe = RotaryEmbedding(hidden_ndim)
+
         self.emb_transformer = TransformerEmbedding(
-            hidden_ndim, out_ndim, npatch, nhead, nlayers, dropout
+            hidden_ndim, out_ndim, npatch, nheads, nlayers, dropout
         )
 
     def forward(self, x, bbox=None):
@@ -144,5 +147,6 @@ class IndividualEmbedding(nn.Module):
         else:
             raise ValueError
 
+        x = self.pe.rotate_queries_or_keys(x)
         x = self.emb_transformer(x)
         return x  # x (b, seq_len, out_ndim)

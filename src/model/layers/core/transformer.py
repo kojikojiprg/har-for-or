@@ -4,11 +4,11 @@ from .feadfoward import FeedForward
 
 
 class TransformerEncoderBlock(nn.Module):
-    def __init__(self, ndim, nhead, dropout):
+    def __init__(self, ndim, nheads, dropout):
         super().__init__()
         self.norm1 = nn.LayerNorm(ndim, eps=1e-5)
         self.self_attn = nn.MultiheadAttention(
-            ndim, nhead, dropout=dropout, batch_first=True
+            ndim, nheads, dropout=dropout, batch_first=True
         )
         self.dropout1 = nn.Dropout(dropout)
 
