@@ -1,14 +1,14 @@
-data_type: images
+data_type: keypoints
 seq_len: 90
 stride: 30
 
-hidden_ndim: 128
-latent_ndim: 64
-nheads: 8
+hidden_ndim: 64
+latent_ndim: 32
+nheads: 4
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 128
-emb_nheads: 8
+emb_hidden_ndim: 32
+emb_nheads: 4
 emb_nlayers: 3
 emb_dropout: 0.1
 add_position_patch: True
@@ -17,5 +17,5 @@ img_size: [256, 192]
 
 epochs: 200
 batch_size: 4
-accumulate_grad_batches: 256
+accumulate_grad_batches: 128
 lr: 0.0001
