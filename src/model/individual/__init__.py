@@ -1,1 +1,1 @@
-from .nn import TemporalTransformerEncoder
+from .nn import IndividualTemporalTransformer

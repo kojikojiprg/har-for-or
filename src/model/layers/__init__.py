@@ -1,2 +1,2 @@
+from .core import FeedForward, TransformerDecoderBlock, TransformerEncoderBlock
 from .embedding import IndividualEmbedding
-from .core import TransformerEncoderBlock

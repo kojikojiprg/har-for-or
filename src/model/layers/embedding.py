@@ -9,11 +9,11 @@ class KeypointsEmbedding(nn.Module):
     def __init__(self, ndim, add_position_patch=True):
         super().__init__()
         self.emb_kps = nn.Conv2d(2, ndim, kernel_size=1)
-        self.npatch = 17
+        self.npatchs = 17
 
         self.add_position_patch = add_position_patch
         if add_position_patch:
-            self.npatch += 2
+            self.npatchs += 2
             self.emb_bbox = nn.Conv2d(2, ndim, kernel_size=1)
 
     def forward(self, kps, bboxs=None):
@@ -39,18 +39,19 @@ class ImageEmbedding(nn.Module):
     ):
         super().__init__()
         self.patch_size = patch_size
-        self.npatch = self.get_n_patch(img_size, patch_size)
+        self.npatchs = self.get_npatchs(img_size, patch_size)
 
         self.emb_imgs1 = nn.Conv2d(5, 1, kernel_size=1)
-        self.emb_imgs2 = nn.Conv2d(16 * 12, ndim, kernel_size=1)
+        size = patch_size[0] * patch_size[1]
+        self.emb_imgs2 = nn.Conv2d(size, ndim, kernel_size=1)
 
         self.add_position_patch = add_position_patch
         if add_position_patch:
-            self.npatch += 2
+            self.npatchs += 2
             self.emb_bbox = nn.Conv2d(2, ndim, kernel_size=1)
 
     @staticmethod
-    def get_n_patch(img_size, patch_size):
+    def get_npatchs(img_size, patch_size):
         return (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
 
     def patching(self, imgs):
@@ -126,17 +127,17 @@ class IndividualEmbedding(nn.Module):
         self.data_type = data_type
         if data_type == "keypoints":
             self.emb_kps = KeypointsEmbedding(hidden_ndim, add_position_patch)
-            npatch = self.emb_kps.npatch
+            self.npatchs = self.emb_kps.npatchs
         elif data_type == "images":
             self.emb_imgs = ImageEmbedding(hidden_ndim, add_position_patch, **kwargs)
-            npatch = self.emb_imgs.npatch
+            self.npatchs = self.emb_imgs.npatchs
         else:
             raise ValueError
 
         self.pe = RotaryEmbedding(hidden_ndim)
 
         self.emb_transformer = TransformerEmbedding(
-            hidden_ndim, out_ndim, npatch, nheads, nlayers, dropout
+            hidden_ndim, out_ndim, self.npatchs, nheads, nlayers, dropout
         )
 
     def forward(self, x, bbox=None):
