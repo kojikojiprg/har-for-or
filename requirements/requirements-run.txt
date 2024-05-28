@@ -8,6 +8,7 @@ lap
 torch
 torchvision
 lightning
+tensorboard
 torch_geometric
 webdataset
 
