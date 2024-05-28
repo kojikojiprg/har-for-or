@@ -78,7 +78,8 @@ class IndividualActivityRecognition(LightningModule):
         if not self.add_position_patch:
             bboxs = None
 
-        fake_x, z, mu, log_sig, fake_bboxs = self.model(x, bboxs)
+        mask = torch.any(bboxs < 0, dim=[2, 3])
+        fake_x, z, mu, log_sig, fake_bboxs = self.model(x, bboxs, mask)
         loss = self.loss_func(x, fake_x, mu, log_sig, bboxs, fake_bboxs)
 
         return loss

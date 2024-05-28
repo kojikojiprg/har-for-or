@@ -60,12 +60,12 @@ class IndividualTemporalTransformer(nn.Module):
             dropout,
         )
 
-    def forward(self, x, bbox=None):
+    def forward(self, x, bbox=None, mask=None):
         x = self.emb(x, bbox)
         x = self.pe.rotate_queries_or_keys(x)
 
-        z, mu, log_sig = self.encoder(x)
-        fake_x, fake_bboxs = self.decoder(x, z)
+        z, mu, log_sig = self.encoder(x, mask)
+        fake_x, fake_bboxs = self.decoder(x, z, mask)
 
         return fake_x, z, mu, log_sig, fake_bboxs
 
@@ -92,10 +92,10 @@ class IndividualTemporalEncoder(nn.Module):
         self.ff_mu = FeedForward(seq_len * hidden_ndim, latent_ndim)
         self.ff_log_sig = FeedForward(seq_len * hidden_ndim, latent_ndim)
 
-    def forward(self, x):
+    def forward(self, x, mask):
         # x (b, seq_len, hidden_ndim)
         for layer in self.encoders:
-            x = layer(x)
+            x = layer(x, mask)
         # x (b, seq_len, hidden_ndim)
 
         b, seq_len, hidden_ndim = x.size()
@@ -123,6 +123,7 @@ class IndividualTemporalDecoder(nn.Module):
         dropout: float = 0.1,
         add_position_patch: bool = True,
         patch_size: tuple = (16, 12),
+        img_size: tuple = (256, 192),
     ):
         super().__init__()
         self.seq_len = seq_len
@@ -131,6 +132,7 @@ class IndividualTemporalDecoder(nn.Module):
         self.emb_hidden_ndim = emb_hidden_ndim
         self.emb_npatchs = emb_npatchs
         self.add_position_patch = add_position_patch
+        self.img_size = img_size
 
         self.ff_z = FeedForward(latent_ndim, seq_len * hidden_ndim)
         self.decoders = nn.ModuleList(
@@ -155,11 +157,7 @@ class IndividualTemporalDecoder(nn.Module):
             raise ValueError
         self.tanh = nn.Tanh()
 
-    def forward(self, x, z):
-        if self.data_type == "images":
-            # x (b, seq_len, c, h, w)
-            h, w = x.size()[3:]
-
+    def forward(self, x, z, mask):
         # x (b, seq_len, hidden_ndim)
         # z (b, latent_ndim)
         z = self.ff_z(z)  # (b, seq_len * hidden_ndim)
@@ -167,7 +165,7 @@ class IndividualTemporalDecoder(nn.Module):
         z = z.view(b, self.seq_len, self.hidden_ndim)
 
         for layer in self.decoders:
-            x = layer(x, z)
+            x = layer(x, z, mask)
         # x (b, seq_len, hidden_ndim)
 
         x = self.ff(x)
@@ -198,5 +196,6 @@ class IndividualTemporalDecoder(nn.Module):
 
             fake_x = fake_x.permute(0, 3, 1, 4, 2)
             # (b, seq_len, 5, patch_sz, img_size)
+            h, w = self.img_size
             fake_x = fake_x.view(b, seq_len, 5, h, w)  # (b, seq_len, 5, h, w)
             return fake_x, fake_bboxs

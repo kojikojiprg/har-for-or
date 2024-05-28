@@ -62,7 +62,6 @@ def individual_npz_to_tensor(
     npz = np.load(io.BytesIO(npz))
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
 
-    seq_len, h, w = frames.shape[:3]
     frames = frame_transform(frames)
     flows = flow_transform(flows)
 
