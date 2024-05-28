@@ -1,1 +1,2 @@
-from .nn import IndividualTemporalTransformer
+from .core import IndividualTemporalTransformer, IndividualTemporalEncoder, IndividualTemporalDecoder, IndividualEmbedding
+from .model import IndividualActivityRecognition

@@ -120,7 +120,8 @@ class IndividualEmbedding(nn.Module):
         nlayers: int,
         dropout: float = 0.1,
         add_position_patch: bool = True,
-        **kwargs
+        patch_size=(16, 12),
+        img_size=(256, 192),
     ):
         super().__init__()
 
@@ -129,7 +130,9 @@ class IndividualEmbedding(nn.Module):
             self.emb_kps = KeypointsEmbedding(hidden_ndim, add_position_patch)
             self.npatchs = self.emb_kps.npatchs
         elif data_type == "images":
-            self.emb_imgs = ImageEmbedding(hidden_ndim, add_position_patch, **kwargs)
+            self.emb_imgs = ImageEmbedding(
+                hidden_ndim, add_position_patch, patch_size, img_size
+            )
             self.npatchs = self.emb_imgs.npatchs
         else:
             raise ValueError

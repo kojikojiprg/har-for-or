@@ -252,7 +252,9 @@ def write_shards(
     stride = int(config.stride)
     w = int(config.resize_shape.w)
     h = int(config.resize_shape.h)
-    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
+    shard_pattern = (
+        f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
+    )
 
     shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
     os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
@@ -380,21 +382,13 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
         kps_transform=NormalizeKeypoints(),
     )
 
+    dataset = wds.WebDataset(shard_paths)
+    dataset = dataset.to_tuple("npz")
     if dataset_type == "individual":
-        return wds.DataPipeline(
-            wds.SimpleShardList(shard_paths),
-            wds.split_by_worker,
-            wds.tarfile_to_samples(),
-            wds.to_tuple("npz"),
-            wds.map_tuple(idv_npz_to_tensor),
-        )
+        dataset = dataset.map_tuple(idv_npz_to_tensor)
+        return dataset
     elif dataset_type == "group":
-        return wds.DataPipeline(
-            wds.SimpleShardList(shard_paths),
-            wds.split_by_worker,
-            wds.tarfile_to_samples(),
-            wds.to_tuple("npz"),
-            wds.map_tuple(grp_npz_to_tensor),
-        )
+        dataset = dataset.map_tuple(grp_npz_to_tensor)
+        return dataset
     else:
         raise ValueError
