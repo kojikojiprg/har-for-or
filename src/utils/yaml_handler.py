@@ -13,10 +13,16 @@ def load(yaml_path: str) -> SimpleNamespace:
 def _get_reccursive(config: dict) -> SimpleNamespace:
     new_config = SimpleNamespace(**config)
     for name, values in new_config.__dict__.items():
-        if type(values) is dict:
+        if isinstance(values, dict):
             new_config.__setattr__(name, _get_reccursive(values))
-        elif type(values) is list:
-            new_config.__setattr__(name, [_get_reccursive(v) for v in values])
+        elif isinstance(values, list):
+            attrs = []
+            for v in values:
+                try:
+                    attrs.append(_get_reccursive(v))
+                except TypeError:
+                    attrs.append(v)
+            new_config.__setattr__(name, attrs)
         else:
             continue
     return new_config
