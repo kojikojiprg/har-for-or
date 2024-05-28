@@ -98,12 +98,14 @@ class IndividualTemporalEncoder(nn.Module):
             x = layer(x)
         # x (b, seq_len, hidden_ndim)
 
+        b, seq_len, hidden_ndim = x.size()
+        x = x.view(b, seq_len * hidden_ndim)
         mu = self.ff_mu(x)  # average
         log_sig = self.ff_log_sig(x)  # log(sigma^2)
 
         ep = torch.randn_like(mu)
         z = mu + torch.exp(log_sig / 2) * ep
-        # z (b, seq_len, latent_ndim)
+        # z, mu, log_sig (b, latent_ndim)
         return z, mu, log_sig
 
 

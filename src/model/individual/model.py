@@ -18,14 +18,13 @@ class IndividualActivityRecognition(LightningModule):
         self.lr = config.lr
         self.add_position_patch = config.add_position_patch
         h, w = config.img_size
-        checkpoint_dir = (
-            f"models/individual/seq_len{config.seq_len}-stride{config.stride}-{h}x{w}/"
-        )
+        checkpoint_dir = f"models/individual/{self.data_type}/"
+        filename = f"individual_{self.data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}_loss_min"
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.callbacks = [
             ModelCheckpoint(
                 checkpoint_dir,
-                filename=f"individual_{self.data_type}_loss_min",
+                filename=filename,
                 monitor="l",
                 mode="min",
                 save_last=True,
@@ -72,9 +71,9 @@ class IndividualActivityRecognition(LightningModule):
 
     def training_step(self, batch, batch_idx):
         if self.data_type == "keypoints":
-            _, _, _, bboxs, x = batch
+            _, _, _, bboxs, x = batch[0]
         elif self.data_type == "images":
-            _, frames, flows, bboxs, _ = batch
+            _, frames, flows, bboxs, _ = batch[0]
             x = torch.cat([frames, flows], dim=2)
         if not self.add_position_patch:
             bboxs = None

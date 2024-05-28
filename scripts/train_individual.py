@@ -8,10 +8,10 @@ from lightning.pytorch.strategies import FSDPStrategy
 sys.path.append(".")
 from src.data import DataModule, load_dataset
 from src.model import IndividualActivityRecognition
-from src.model.individual import (
+from src.model.layers import (
     IndividualEmbedding,
-    IndividualTemporalDecoder,
-    IndividualTemporalEncoder,
+    TransformerDecoderBlock,
+    TransformerEncoderBlock,
 )
 from src.utils import yaml_handler
 
@@ -45,9 +45,10 @@ if __name__ == "__main__":
     fsdp = FSDPStrategy(
         auto_wrap_policy={
             IndividualEmbedding,
-            IndividualTemporalEncoder,
-            IndividualTemporalDecoder,
-        }
+            TransformerDecoderBlock,
+            TransformerEncoderBlock,
+        },
+        sharding_strategy="FULL_SHARD",
     )
     trainer = Trainer(
         accelerator="cuda",
