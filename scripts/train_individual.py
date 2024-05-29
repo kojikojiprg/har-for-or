@@ -32,15 +32,12 @@ if __name__ == "__main__":
     model_cfg = yaml_handler.load(model_cfg_path)
 
     # load dataset
-    print("=> loading dataset")
     dataset = load_dataset(data_root, "individual", dataset_cfg)
     datamodule = DataModule(dataset, model_cfg.batch_size)
 
     # create model
-    print("=> creating model")
     model = IndividualActivityRecognition(model_cfg)
 
-    print("=> training")
     logger = TensorBoardLogger("logs/individual/", name=data_type)
     fsdp = FSDPStrategy(
         auto_wrap_policy={
