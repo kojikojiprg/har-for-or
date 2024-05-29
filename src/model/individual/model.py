@@ -35,6 +35,11 @@ class IndividualActivityRecognition(LightningModule):
 
         self.model = None
 
+        if self.data_type == "keypoints":
+            self.loss_x = F.binary_cross_entropy_with_logits
+        elif self.data_type == "images":
+            self.loss_x = F.mse_loss
+
     def configure_model(self):
         config = self.config
         if self.model is not None:
@@ -57,14 +62,29 @@ class IndividualActivityRecognition(LightningModule):
         )
 
     def loss_func(self, x, fake_x, mu, log_sig, bboxs, fake_bboxs):
-        x_rc = F.cross_entropy(x, fake_x)
+        mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
+
+        # reconstruct loss of x
+        x = x[~mask]
+        fake_x = fake_x[~mask]
+        x_rc = self.loss_x(x, fake_x)
+        x_rc *= self.config.x_rc
+
+        # KL loss
         kl = -0.5 * torch.sum(1 + log_sig - mu**2 - log_sig.exp())
+        kl *= self.config.kl
+
         loss = x_rc + kl
         logs = {"x": x_rc, "kl": kl}
         if self.add_position_patch:
-            bbox_rc = F.cross_entropy(bboxs, fake_bboxs)
+            # reconstruct loss of bbox
+            bboxs = bboxs[~mask]
+            fake_bboxs = fake_bboxs[~mask]
+            bbox_rc = F.binary_cross_entropy_with_logits(bboxs, fake_bboxs)
+            bbox_rc *= self.config.bbox_rc
             loss += bbox_rc
             logs["b"] = bbox_rc
+
         logs["l"] = loss
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
         return loss
@@ -75,11 +95,12 @@ class IndividualActivityRecognition(LightningModule):
         elif self.data_type == "images":
             _, frames, flows, bboxs, _ = batch[0]
             x = torch.cat([frames, flows], dim=2)
+
+        mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
         if not self.add_position_patch:
             bboxs = None
 
-        mask = torch.any(bboxs < 0, dim=[2, 3])
-        fake_x, z, mu, log_sig, fake_bboxs = self.model(x, bboxs, mask)
+        fake_x, mu, log_sig, fake_bboxs = self.model(x, mask, bboxs)
         loss = self.loss_func(x, fake_x, mu, log_sig, bboxs, fake_bboxs)
 
         return loss

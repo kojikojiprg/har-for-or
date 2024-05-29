@@ -29,6 +29,7 @@ class IndividualTemporalTransformer(nn.Module):
         img_size=(256, 192),
     ):
         super().__init__()
+        self.hidden_ndim = hidden_ndim
 
         self.emb = IndividualEmbedding(
             data_type,
@@ -60,14 +61,26 @@ class IndividualTemporalTransformer(nn.Module):
             dropout,
         )
 
-    def forward(self, x, bbox=None, mask=None):
-        x = self.emb(x, bbox)
-        x = self.pe.rotate_queries_or_keys(x)
+    def forward(self, x, mask, bbox=None):
+        b, seq_len = x.size()[:2]
+        if bbox is not None:
+            x_emb = self.emb(x[~mask], bbox[~mask])
+        else:
+            x_emb = self.emb(x[~mask])
+        x = (
+            torch.full((b, seq_len, self.hidden_ndim), -1e10, dtype=torch.float32)
+            .contiguous()
+            .to(next(self.parameters()).device)
+        )
+        # print(x.shape, x_emb.shape, mask.shape, x[mask].shape)
+        x[~mask] = x_emb
+
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
         z, mu, log_sig = self.encoder(x, mask)
         fake_x, fake_bboxs = self.decoder(x, z, mask)
 
-        return fake_x, z, mu, log_sig, fake_bboxs
+        return fake_x, mu, log_sig, fake_bboxs
 
 
 class IndividualTemporalEncoder(nn.Module):
@@ -95,7 +108,7 @@ class IndividualTemporalEncoder(nn.Module):
     def forward(self, x, mask):
         # x (b, seq_len, hidden_ndim)
         for layer in self.encoders:
-            x = layer(x, mask)
+            x, attn_w = layer(x, mask)
         # x (b, seq_len, hidden_ndim)
 
         b, seq_len, hidden_ndim = x.size()
@@ -103,7 +116,7 @@ class IndividualTemporalEncoder(nn.Module):
         mu = self.ff_mu(x)  # average
         log_sig = self.ff_log_sig(x)  # log(sigma^2)
 
-        ep = torch.randn_like(mu)
+        ep = torch.randn_like(log_sig)
         z = mu + torch.exp(log_sig / 2) * ep
         # z, mu, log_sig (b, latent_ndim)
         return z, mu, log_sig
@@ -146,16 +159,18 @@ class IndividualTemporalDecoder(nn.Module):
 
         if add_position_patch:
             self.conv_bbox = nn.Conv2d(emb_hidden_ndim, 2, 1)
+            self.act_bbox = nn.Sigmoid()
 
         if data_type == "keypoints":
             self.conv_kps = nn.Conv2d(emb_hidden_ndim, 2, 1)
+            self.act = nn.Sigmoid()
         elif data_type == "images":
             size = patch_size[0] * patch_size[1]
             self.conv_imgs1 = nn.Conv2d(emb_hidden_ndim, size, 1)
             self.conv_imgs2 = nn.Conv3d(1, 5, 1)
+            self.act = nn.Tanh()
         else:
             raise ValueError
-        self.tanh = nn.Tanh()
 
     def forward(self, x, z, mask):
         # x (b, seq_len, hidden_ndim)
@@ -174,7 +189,7 @@ class IndividualTemporalDecoder(nn.Module):
         if self.add_position_patch:
             fake_x, fake_bboxs = x[:, :, :-2], x[:, :, -2:]
             fake_bboxs = fake_bboxs.permute(0, 3, 1, 2)
-            fake_bboxs = self.tanh(self.conv_bbox(fake_bboxs))
+            fake_bboxs = self.act_bbox(self.conv_bbox(fake_bboxs))
             fake_bboxs = fake_bboxs.permute(0, 2, 3, 1)
         else:
             fake_x = x
@@ -182,7 +197,7 @@ class IndividualTemporalDecoder(nn.Module):
 
         if self.data_type == "keypoints":
             fake_x = fake_x.permute(0, 3, 1, 2)  # (b, ndim, seq_len, npatchs)
-            fake_x = self.tanh(self.conv_kps(fake_x))
+            fake_x = self.act(self.conv_kps(fake_x))
             fake_x = fake_x.permute(0, 2, 3, 1)  # (b, seq_len, 17, 2)
             return fake_x, fake_bboxs
         elif self.data_type == "images":
@@ -191,7 +206,7 @@ class IndividualTemporalDecoder(nn.Module):
 
             b, patch_sz, seq_len, np = fake_x.size()
             fake_x = fake_x.view(b, 1, patch_sz, seq_len, np)
-            fake_x = self.tanh(self.conv_imgs2(fake_x))
+            fake_x = self.act(self.conv_imgs2(fake_x))
             # (b, 5, patch_sz, seq_len, npatchs)
 
             fake_x = fake_x.permute(0, 3, 1, 4, 2)

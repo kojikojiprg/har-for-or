@@ -8,29 +8,29 @@ from .core import FeedForward, TransformerEncoderBlock
 class KeypointsEmbedding(nn.Module):
     def __init__(self, ndim, add_position_patch=True):
         super().__init__()
-        self.emb_kps = nn.Conv2d(2, ndim, kernel_size=1)
+        self.emb_kps = nn.Conv1d(2, ndim, kernel_size=1)
         self.npatchs = 17
 
         self.add_position_patch = add_position_patch
         if add_position_patch:
             self.npatchs += 2
-            self.emb_bbox = nn.Conv2d(2, ndim, kernel_size=1)
+            self.emb_bbox = nn.Conv1d(2, ndim, kernel_size=1)
 
     def forward(self, kps, bboxs=None):
-        # kps (b, seq_len, 17, 2)
-        kps = kps.permute(0, 3, 1, 2)
+        # kps (n, 17, 2)
+        kps = kps.permute(0, 2, 1)  # (n, 2, 17)
         kps = self.emb_kps(kps)
-        kps = kps.permute(0, 2, 3, 1)  # (b, seq_len, 17, ndim)
+        kps = kps.permute(0, 2, 1)  # (n, 17, ndim)
 
         if self.add_position_patch:
-            # bbox (b, seq_len, 2, 2)
-            bboxs = bboxs.permute(0, 3, 1, 2)
+            # bbox (n, 2, 2)
+            bboxs = bboxs.permute(0, 2, 1)
             bboxs = self.emb_bbox(bboxs)
-            bboxs = bboxs.permute(0, 2, 3, 1)  # (b, seq_len, 2, ndim)
+            bboxs = bboxs.permute(0, 2, 1)  # (n, 2, ndim)
 
-            return torch.cat([kps, bboxs], dim=2)  # (b, seq_len, 19, ndim)
+            return torch.cat([kps, bboxs], dim=1)  # (n, 19, ndim)
         else:
-            return kps  # (b, seq_len, 17, ndim)
+            return kps  # (n, 17, ndim)
 
 
 class ImageEmbedding(nn.Module):
@@ -56,34 +56,33 @@ class ImageEmbedding(nn.Module):
 
     def patching(self, imgs):
         ph, pw = self.patch_size
-        imgs = imgs.unfold(3, ph, ph).unfold(4, pw, pw).contiguous()
-        b, seq_len, c, nh, nw, ph, pw = imgs.size()
-        return imgs.view(b, seq_len, c, nh * nw, ph * pw)
+        imgs = imgs.unfold(2, ph, ph).unfold(3, pw, pw).contiguous()
+        n, c, nh, nw, ph, pw = imgs.size()
+        return imgs.view(n, c, nh * nw, ph * pw)
 
     def forward(self, imgs, bboxs=None):
-        # imgs (b, seq_len, 5, 256, 192)
+        # imgs (n, 5, 256, 192)
         imgs = self.patching(imgs)
-        b, seq_len, c, nimgs, size = imgs.size()
-        # imgs (b, seq_len, 5, nimg, size)
+        n, c, nimgs, size = imgs.size()
+        # imgs (n, 5, nimg, size)
 
-        imgs = imgs.view(b * seq_len, c, nimgs, size)
         imgs = self.emb_imgs1(imgs)
-        imgs = imgs.view(b, seq_len, nimgs, size)
-        imgs = imgs.permute(0, 3, 1, 2)
-        # imgs (b, size, seq_len, nimgs)
+        imgs = imgs.view(n, nimgs, size)
+        imgs = imgs.permute(0, 2, 1)
+        # imgs (n, size, nimgs)
         imgs = self.emb_imgs2(imgs)
-        imgs = imgs.permute(0, 2, 3, 1)
-        # imgs (b, seq_len, nimgs, ndim)
+        imgs = imgs.permute(0, 2, 1)
+        # imgs (n, nimgs, ndim)
 
         if self.add_position_patch:
-            # bbox (b, seq_len, 2, 2)
-            bboxs = bboxs.permute(0, 3, 1, 2)
+            # bbox (n, 2, 2)
+            bboxs = bboxs.permute(0, 2, 1)
             bboxs = self.emb_bbox(bboxs)
-            bboxs = bboxs.permute(0, 2, 3, 1)
-            # bboxs (b, seq_len, 2, ndim)
-            return torch.cat([imgs, bboxs], dim=2)  # (b, seq_len, 2 + nimgs, ndim)
+            bboxs = bboxs.permute(0, 2, 1)
+            # bboxs (n, 2, ndim)
+            return torch.cat([imgs, bboxs], dim=2)  # (n, 2 + nimgs, ndim)
         else:
-            return imgs  # (b, seq_len, nimgs, ndim)
+            return imgs  # (n, nimgs, ndim)
 
 
 class TransformerEmbedding(nn.Module):
@@ -96,17 +95,16 @@ class TransformerEmbedding(nn.Module):
         self.ff = FeedForward(npatchs * in_ndim, out_ndim)
 
     def forward(self, x):
-        # x (b, seq_len, npatch, in_ndim)
-        b, seq_len, npatch, ndim = x.size()
+        # x (n, npatch, in_ndim)
+        n, npatch, ndim = x.size()
 
-        x = x.view(b * seq_len, npatch, ndim)
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x)[0]
 
         x = self.norm(x)
-        x = x.view(b, seq_len, npatch * ndim)
+        x = x.view(n, npatch * ndim)
         x = self.ff(x)
-        # x (b, seq_len, out_ndim)
+        # x (n, out_ndim)
         return x
 
 
@@ -143,14 +141,18 @@ class IndividualEmbedding(nn.Module):
             hidden_ndim, out_ndim, self.npatchs, nheads, nlayers, dropout
         )
 
-    def forward(self, x, bbox=None):
+    def forward(self, x, bboxs=None):
+        # kps (n, 17, 2)
+        # images (n, 5, h, w)
+        # bbox (n, 2, 2)
         if self.data_type == "keypoints":
-            x = self.emb_kps(x, bbox)
+            x = self.emb_kps(x, bboxs)
         elif self.data_type == "images":
-            x = self.emb_imgs(x, bbox)
+            x = self.emb_imgs(x, bboxs)
         else:
             raise ValueError
+        # x (n, npatchs, ndim)
 
-        x = self.pe.rotate_queries_or_keys(x)
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
         x = self.emb_transformer(x)
-        return x  # x (b, seq_len, out_ndim)
+        return x  # x (n, out_ndim)
