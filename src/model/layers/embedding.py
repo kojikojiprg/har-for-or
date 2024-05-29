@@ -43,12 +43,12 @@ class ImageEmbedding(nn.Module):
 
         self.emb_imgs1 = nn.Conv2d(5, 1, kernel_size=1)
         size = patch_size[0] * patch_size[1]
-        self.emb_imgs2 = nn.Conv2d(size, ndim, kernel_size=1)
+        self.emb_imgs2 = nn.Conv1d(size, ndim, kernel_size=1)
 
         self.add_position_patch = add_position_patch
         if add_position_patch:
             self.npatchs += 2
-            self.emb_bbox = nn.Conv2d(2, ndim, kernel_size=1)
+            self.emb_bbox = nn.Conv1d(2, ndim, kernel_size=1)
 
     @staticmethod
     def get_npatchs(img_size, patch_size):
@@ -80,7 +80,7 @@ class ImageEmbedding(nn.Module):
             bboxs = self.emb_bbox(bboxs)
             bboxs = bboxs.permute(0, 2, 1)
             # bboxs (n, 2, ndim)
-            return torch.cat([imgs, bboxs], dim=2)  # (n, 2 + nimgs, ndim)
+            return torch.cat([imgs, bboxs], dim=1)  # (n, 2 + nimgs, ndim)
         else:
             return imgs  # (n, nimgs, ndim)
 
