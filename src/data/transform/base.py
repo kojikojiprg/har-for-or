@@ -2,6 +2,7 @@ import torch
 import torchvision.transforms.functional as F
 from numpy.typing import NDArray
 from torchvision.transforms import Compose, Normalize
+import numpy as np
 
 
 class NormalizeBbox:
@@ -17,12 +18,14 @@ class NormalizeKeypoints:
             bbox = bbox.reshape(n_ids, seq_len, 2, 2)
             kps = kps - bbox[:, :, 0].reshape(n_ids, seq_len, 1, 2)
             kps /= (bbox[:, :, 1] - bbox[:, :, 0]).reshape(n_ids, seq_len, 1, 2)
+            kps = np.clip(kps, 0, 1)
             return kps
         elif ndim == 3:
             n = kps.shape[0]
             bbox = bbox.reshape(n, 2, 2)
             kps = kps - bbox[:, 0].reshape(n, 1, 2)
             kps /= (bbox[:, 1] - bbox[:, 0]).reshape(n, 1, 2)
+            kps = np.clip(kps, 0, 1)
             return kps
         else:
             raise ValueError

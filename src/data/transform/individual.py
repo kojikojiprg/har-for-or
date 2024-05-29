@@ -28,10 +28,10 @@ def collect_human_tracking(human_tracking_data, unique_ids):
 def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
-    frames_idvs = np.full((n, seq_len, h, w, 3), -1, dtype=np.uint8)
-    flows_idvs = np.full((n, seq_len, h, w, 2), -1, dtype=np.float32)
-    bboxs_idvs = np.full((n, seq_len, 2, 2), -1, dtype=np.float32)
-    kps_idvs = np.full((n, seq_len, 17, 2), -1, dtype=np.float32)
+    frames_idvs = np.full((n, seq_len, h, w, 3), np.nan, dtype=np.uint8)
+    flows_idvs = np.full((n, seq_len, h, w, 2), np.nan, dtype=np.float32)
+    bboxs_idvs = np.full((n, seq_len, 2, 2), np.nan, dtype=np.float32)
+    kps_idvs = np.full((n, seq_len, 17, 2), np.nan, dtype=np.float32)
 
     # collect data
     for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
@@ -61,14 +61,17 @@ def individual_npz_to_tensor(
 ):
     npz = np.load(io.BytesIO(npz))
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
+    mask = np.any(np.isnan(bboxs), axis=(1, 2))
 
     frames = frame_transform(frames)
+    # frames[mask] = torch.full(frames.shape[1:], torch.nan, dtype=torch.float32)
     flows = flow_transform(flows)
+    # flows[mask] = torch.full(flows.shape[1:], torch.nan, dtype=torch.float32)
 
     # NOTE: keypoints normalization is depend on raw bboxs.
     #       So that normalize keypoints first.
-    kps = kps_transform(kps, bboxs)
-    bboxs = bbox_transform(bboxs, img_size)
+    kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
+    bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
 
     # collect data
     return (
