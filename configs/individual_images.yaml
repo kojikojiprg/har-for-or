@@ -2,12 +2,12 @@ data_type: images
 seq_len: 90
 stride: 30
 
-hidden_ndim: 64
+hidden_ndim: 32
 latent_ndim: 32
 nheads: 4
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 64
+emb_hidden_ndim: 32
 emb_nheads: 4
 emb_nlayers: 3
 emb_dropout: 0.1
@@ -15,7 +15,11 @@ add_position_patch: True
 patch_size: [16, 12]
 img_size: [256, 192]
 
+x_rc: 1
+bbox_rc: 1
+kl: 1
+
 epochs: 200
 batch_size: 1
-accumulate_grad_batches: 512
+accumulate_grad_batches: 128
 lr: 0.0001
