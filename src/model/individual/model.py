@@ -86,7 +86,7 @@ class IndividualActivityRecognition(LightningModule):
             logs["b"] = bbox_rc
 
         logs["l"] = loss
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
+        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
         return loss
 
     def training_step(self, batch, batch_idx):

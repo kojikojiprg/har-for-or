@@ -11,12 +11,12 @@ class DataModule(LightningDataModule):
         self.batch_size = batch_size
 
     def train_dataloader(self):
-        self.dataset = self.dataset.shuffle(3e9)
+        self.dataset = self.dataset.shuffle(1e9)
         return DataLoader(
-            self.dataset, self.batch_size, num_workers=16, pin_memory=True
+            self.dataset, self.batch_size, num_workers=2, pin_memory=True
         )
 
     def predict_dataloader(self):
         return DataLoader(
-            self.dataset, self.batch_size, num_workers=16, pin_memory=True
+            self.dataset, self.batch_size, num_workers=2, pin_memory=True
         )
