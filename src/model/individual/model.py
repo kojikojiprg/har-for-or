@@ -30,7 +30,7 @@ class IndividualActivityRecognition(LightningModule):
                 save_last=True,
             ),
         ]
-        last_name = f"individual_{self.data_type}_last"
+        last_name = f"individual_{self.data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}_last"
         self.callbacks[0].CHECKPOINT_NAME_LAST = last_name
 
         self.model = None
