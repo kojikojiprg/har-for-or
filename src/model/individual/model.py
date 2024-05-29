@@ -67,7 +67,7 @@ class IndividualActivityRecognition(LightningModule):
         # reconstruct loss of x
         x = x[~mask]
         fake_x = fake_x[~mask]
-        x_rc = self.loss_x(x, fake_x, reduction="sum")
+        x_rc = self.loss_x(x, fake_x)
         x_rc *= self.config.x_rc
 
         # KL loss
@@ -80,7 +80,7 @@ class IndividualActivityRecognition(LightningModule):
             # reconstruct loss of bbox
             bboxs = bboxs[~mask]
             fake_bboxs = fake_bboxs[~mask]
-            bbox_rc = F.binary_cross_entropy_with_logits(bboxs, fake_bboxs, reduction="sum")
+            bbox_rc = F.binary_cross_entropy_with_logits(bboxs, fake_bboxs)
             bbox_rc *= self.config.bbox_rc
             loss += bbox_rc
             logs["b"] = bbox_rc
