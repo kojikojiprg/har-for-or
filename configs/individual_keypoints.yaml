@@ -3,7 +3,7 @@ n_clusters: 10
 seq_len: 90
 stride: 30
 
-hidden_ndim: 32
+hidden_ndim: 16
 latent_ndim: 32
 nheads: 4
 nlayers: 6
