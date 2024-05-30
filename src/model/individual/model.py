@@ -35,17 +35,13 @@ class IndividualActivityRecognition(LightningModule):
 
         self.model = None
 
-        if self.data_type == "keypoints":
-            self.loss_x = F.binary_cross_entropy_with_logits
-        elif self.data_type == "images":
-            self.loss_x = F.mse_loss
-
     def configure_model(self):
         config = self.config
         if self.model is not None:
             return
         self.model = IndividualTemporalTransformer(
             config.data_type,
+            config.n_clusters,
             config.seq_len,
             config.hidden_ndim,
             config.latent_ndim,
@@ -61,31 +57,57 @@ class IndividualActivityRecognition(LightningModule):
             config.img_size,
         )
 
-    def loss_func(self, x, fake_x, mu, log_sig, bboxs, fake_bboxs):
+    @staticmethod
+    def loss_kl_gaussian(m, logv, m_p, logv_p):
+        return -0.5 * torch.sum(
+            1
+            + logv
+            - logv_p
+            - logv.exp() / logv_p.exp()
+            - (m_p - m) ** 2 / logv_p.exp()
+        )
+
+    @staticmethod
+    def loss_kl_clustering(q, p, eps=1e-20):
+        return (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
+
+    def loss_func(
+        self, x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y
+    ):
+        logs = {}
         mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
 
         # reconstruct loss of x
         x = x[~mask]
         fake_x = fake_x[~mask]
-        x_rc = self.loss_x(x, fake_x)
-        x_rc *= self.config.x_rc
+        lrc_x = F.mse_loss(x, fake_x)
+        lrc_x *= self.config.lrc_x
+        logs["x"] = lrc_x
 
-        # KL loss
-        kl = -0.5 * torch.sum(1 + log_sig - mu**2 - log_sig.exp())
-        kl *= self.config.kl
-
-        loss = x_rc + kl
-        logs = {"x": x_rc, "kl": kl}
+        # reconstruct loss of bbox
         if self.add_position_patch:
-            # reconstruct loss of bbox
             bboxs = bboxs[~mask]
             fake_bboxs = fake_bboxs[~mask]
-            bbox_rc = F.binary_cross_entropy_with_logits(bboxs, fake_bboxs)
-            bbox_rc *= self.config.bbox_rc
-            loss += bbox_rc
-            logs["b"] = bbox_rc
+            lrc_bbox = F.mse_loss(bboxs, fake_bboxs)
+            lrc_bbox *= self.config.lrc_bbox
+            logs["b"] = lrc_bbox
 
+        # Gaussian loss
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
+        lg *= self.config.lg
+        logs["g"] = lg
+
+        # clustering loss
+        y_prior = (torch.ones(y.size()) / y.size(1)).to(next(self.parameters()).device)
+        lc = self.loss_kl_clustering(y, y_prior)
+        lc *= self.config.lc
+        logs["c"] = lc
+
+        loss = lrc_x + lg + lc
+        if self.add_position_patch:
+            loss += lrc_bbox
         logs["l"] = loss
+
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
         return loss
 
@@ -100,8 +122,12 @@ class IndividualActivityRecognition(LightningModule):
         if not self.add_position_patch:
             bboxs = None
 
-        fake_x, mu, log_sig, fake_bboxs = self.model(x, mask, bboxs)
-        loss = self.loss_func(x, fake_x, mu, log_sig, bboxs, fake_bboxs)
+        fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+            x, mask, bboxs
+        )
+        loss = self.loss_func(
+            x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y
+        )
 
         return loss
 

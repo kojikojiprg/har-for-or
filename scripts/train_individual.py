@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+import torch
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import FSDPStrategy
@@ -16,6 +17,8 @@ from src.model.layers import (
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
+    torch.backends.cudnn.benchmark = True
+
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("data_type", type=str, help="'individual' or 'images'")

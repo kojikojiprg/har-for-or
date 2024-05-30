@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 
 from src.model.layers import (
@@ -14,6 +15,7 @@ class IndividualTemporalTransformer(nn.Module):
     def __init__(
         self,
         data_type: str,
+        n_clusters: int,
         seq_len: int,
         hidden_ndim: int,
         latent_ndim: int,
@@ -30,6 +32,10 @@ class IndividualTemporalTransformer(nn.Module):
     ):
         super().__init__()
         self.hidden_ndim = hidden_ndim
+        self.cls_token = nn.Parameter(
+            torch.randn((1, 1, hidden_ndim)), requires_grad=True
+        )
+        self.cls_mask = torch.full((1, 1), False, dtype=torch.bool, requires_grad=False)
 
         self.emb = IndividualEmbedding(
             data_type,
@@ -47,10 +53,11 @@ class IndividualTemporalTransformer(nn.Module):
         self.pe = RotaryEmbedding(hidden_ndim)
 
         self.encoder = IndividualTemporalEncoder(
-            seq_len, hidden_ndim, latent_ndim, nheads, nlayers, dropout
+            n_clusters, seq_len, hidden_ndim, latent_ndim, nheads, nlayers, dropout
         )
         self.decoder = IndividualTemporalDecoder(
             data_type,
+            n_clusters,
             seq_len,
             hidden_ndim,
             latent_ndim,
@@ -72,20 +79,27 @@ class IndividualTemporalTransformer(nn.Module):
             .contiguous()
             .to(next(self.parameters()).device)
         )
-        # print(x.shape, x_emb.shape, mask.shape, x[mask].shape)
         x[~mask] = x_emb
+
+        # concat cls token
+        x = torch.cat([self.cls_token.repeat(b, 1, 1), x], dim=1)
+        cls_mask = self.cls_mask.repeat(b, 1).to(next(self.parameters()).device)
+        mask = torch.cat([cls_mask, mask], dim=1)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
-        z, mu, log_sig = self.encoder(x, mask)
-        fake_x, fake_bboxs = self.decoder(x, z, mask)
+        z, mu, logvar, y = self.encoder(x, mask)
+        fake_x, fake_bboxs, mu_prior, logvar_prior = self.decoder(
+            x[:, 1:, :], z, y, mask[:, 1:]
+        )
 
-        return fake_x, mu, log_sig, fake_bboxs
+        return fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
 
 
 class IndividualTemporalEncoder(nn.Module):
     def __init__(
         self,
+        n_clusters: int,
         seq_len: int,
         hidden_ndim: int,
         latent_ndim: int,
@@ -101,31 +115,50 @@ class IndividualTemporalEncoder(nn.Module):
             ]
         )
 
-        self.norm = nn.LayerNorm((seq_len, hidden_ndim))
-        self.ff_mu = FeedForward(seq_len * hidden_ndim, latent_ndim)
-        self.ff_log_sig = FeedForward(seq_len * hidden_ndim, latent_ndim)
+        self.norm = nn.LayerNorm((seq_len + 1, hidden_ndim))
+        self.ff_mu = FeedForward((seq_len + 1) * hidden_ndim, latent_ndim)
+        self.ff_logvar = FeedForward((seq_len + 1) * hidden_ndim, latent_ndim)
+
+        self.ff_y = FeedForward(hidden_ndim, n_clusters)
 
     def forward(self, x, mask):
-        # x (b, seq_len, hidden_ndim)
+        # x (b, seq_len+1, hidden_ndim)
         for layer in self.encoders:
             x, attn_w = layer(x, mask)
-        # x (b, seq_len, hidden_ndim)
+        # x (b, seq_len+1, hidden_ndim)
+        b, seq_len_1, hidden_ndim = x.size()
 
-        b, seq_len, hidden_ndim = x.size()
-        x = x.view(b, seq_len * hidden_ndim)
+        # q(y|x)
+        y = x[:, 0, :]  # cls token
+        y = self.ff_y(y.view(b, hidden_ndim))
+        y = F.sigmoid(y)
+        y = self.gumbel_softmax_sampling(y, y.size(), 0.5)
+
+        # q(z|x, y)
+        x = x.view(b, seq_len_1 * hidden_ndim)
         mu = self.ff_mu(x)  # average
-        log_sig = self.ff_log_sig(x)  # log(sigma^2)
-
-        ep = torch.randn_like(log_sig)
-        z = mu + torch.exp(log_sig / 2) * ep
+        logvar = self.ff_logvar(x)  # log(sigma^2)
+        ep = torch.randn_like(logvar)
+        z = mu + torch.exp(logvar / 2) * ep
         # z, mu, log_sig (b, latent_ndim)
-        return z, mu, log_sig
+        return z, mu, logvar, y
+
+    def sample_gumbel(self, shape, eps=1e-20):
+        u = torch.rand(shape)
+        return -torch.log(-torch.log(u + eps))
+
+    def gumbel_softmax_sampling(self, pi, shape, tau, eps=1e-20):
+        log_pi = torch.log(pi + eps)
+        g = self.sample_gumbel(shape).to(next(self.parameters()).device)
+        y = F.softmax((log_pi + g) / tau, dim=1)
+        return y
 
 
 class IndividualTemporalDecoder(nn.Module):
     def __init__(
         self,
         data_type: str,
+        n_clusters: int,
         seq_len: int,
         hidden_ndim: int,
         latent_ndim: int,
@@ -147,6 +180,11 @@ class IndividualTemporalDecoder(nn.Module):
         self.add_position_patch = add_position_patch
         self.img_size = img_size
 
+        # p(z|y)
+        self.ff_mu = FeedForward(n_clusters, latent_ndim)
+        self.ff_logvar = FeedForward(n_clusters, latent_ndim)
+
+        # p(x|z)
         self.ff_z = FeedForward(latent_ndim, seq_len * hidden_ndim)
         self.decoders = nn.ModuleList(
             [
@@ -156,7 +194,6 @@ class IndividualTemporalDecoder(nn.Module):
         )
 
         self.ff = FeedForward(hidden_ndim, emb_npatchs * emb_hidden_ndim)
-
         if add_position_patch:
             self.conv_bbox = nn.Conv2d(emb_hidden_ndim, 2, 1)
             self.act_bbox = nn.Sigmoid()
@@ -172,7 +209,12 @@ class IndividualTemporalDecoder(nn.Module):
         else:
             raise ValueError
 
-    def forward(self, x, z, mask):
+    def forward(self, x, z, y, mask):
+        # p(z|y)
+        mu_prior = self.ff_mu(y)
+        logvar_prior = self.ff_logvar(y)
+
+        # p(x|z)
         # x (b, seq_len, hidden_ndim)
         # z (b, latent_ndim)
         z = self.ff_z(z)  # (b, seq_len * hidden_ndim)
@@ -199,7 +241,7 @@ class IndividualTemporalDecoder(nn.Module):
             fake_x = fake_x.permute(0, 3, 1, 2)  # (b, ndim, seq_len, npatchs)
             fake_x = self.act(self.conv_kps(fake_x))
             fake_x = fake_x.permute(0, 2, 3, 1)  # (b, seq_len, 17, 2)
-            return fake_x, fake_bboxs
+            return fake_x, fake_bboxs, mu_prior, logvar_prior
         elif self.data_type == "images":
             fake_x = fake_x.permute(0, 3, 1, 2)  # (b, ndim, seq_len, npatchs)
             fake_x = self.conv_imgs1(fake_x)
@@ -213,4 +255,4 @@ class IndividualTemporalDecoder(nn.Module):
             # (b, seq_len, 5, patch_sz, img_size)
             h, w = self.img_size
             fake_x = fake_x.view(b, seq_len, 5, h, w)  # (b, seq_len, 5, h, w)
-            return fake_x, fake_bboxs
+            return fake_x, fake_bboxs, mu_prior, logvar_prior
