@@ -64,7 +64,7 @@ def individual_npz_to_tensor(
 
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
 
-    mask = np.any(np.isnan(bboxs), axis=(1, 2))
+    mask = np.any(bboxs < 0, axis=(1, 2))
     if data_type == "keypoints":
         kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
         x = torch.tensor(kps, dtype=torch.float32).contiguous()
@@ -80,7 +80,8 @@ def individual_npz_to_tensor(
     del sample, npz, frames, flows  # release memory
 
     return (
-        torch.tensor(_id, dtype=torch.long),
+        torch.tensor(_id, dtype=torch.long).contiguous(),
         x,
         torch.tensor(bboxs, dtype=torch.float32).contiguous(),
+        torch.tensor(mask, dtype=torch.bool).contiguous(),
     )

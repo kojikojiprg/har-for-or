@@ -72,10 +72,9 @@ class IndividualActivityRecognition(LightningModule):
         return (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
 
     def loss_func(
-        self, x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y
+        self, x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
     ):
         logs = {}
-        mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
 
         # reconstruct loss of x
         x = x[~mask]
@@ -112,12 +111,12 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        ids, x, bboxs = batch
+        ids, x, bboxs, mask = batch
         ids = ids[0]
         x = x[0]
         bboxs = bboxs[0]
+        mask = mask[0]
 
-        mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
         if not self.add_position_patch:
             bboxs = None
 
@@ -125,7 +124,7 @@ class IndividualActivityRecognition(LightningModule):
             x, mask, bboxs
         )
         loss = self.loss_func(
-            x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y
+            x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
         )
 
         return loss
