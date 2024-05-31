@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     # load dataset
     dataset = load_dataset(data_root, "individual", data_type, dataset_cfg, model_cfg.batch_size, True)
-    datamodule = DataModule(dataset, model_cfg.batch_size)
+    datamodule = DataModule(dataset, model_cfg.num_workers)
 
     # create model
     model = IndividualActivityRecognition(model_cfg)

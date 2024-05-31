@@ -3,14 +3,14 @@ from webdataset import WebDataset, WebLoader
 
 
 class DataModule(LightningDataModule):
-    def __init__(self, dataset: WebDataset, batch_size: int):
+    def __init__(self, dataset: WebDataset, num_workers: int = 8):
         super().__init__()
         self.prepare_data_per_node = True
         self.dataset = dataset
-        self.batch_size = batch_size
+        self.num_workers = num_workers
 
     def train_dataloader(self):
-        return WebLoader(self.dataset, num_workers=2, pin_memory=True)
+        return WebLoader(self.dataset, num_workers=self.num_workers, pin_memory=True)
 
     def predict_dataloader(self):
-        return WebLoader(self.dataset, self.batch_size, num_workers=2, pin_memory=True)
+        return WebLoader(self.dataset, num_workers=self.num_workers, pin_memory=True)
