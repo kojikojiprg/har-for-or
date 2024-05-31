@@ -46,7 +46,13 @@ class SharedNDArray:
 
     def create_shared_memory(self):
         size = self.calc_ndarray_size()
-        return shared_memory.SharedMemory(name=self.name, create=True, size=size)
+        try:
+            return shared_memory.SharedMemory(name=self.name, create=True, size=size)
+        except FileExistsError:
+            sm = shared_memory.SharedMemory(name=self.name)
+            sm.close()
+            sm.unlink()
+            return shared_memory.SharedMemory(name=self.name, create=True, size=size)
 
     def get_shared_memory(self):
         shm = shared_memory.SharedMemory(name=self.name)
