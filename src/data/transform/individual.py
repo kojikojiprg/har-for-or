@@ -28,10 +28,10 @@ def collect_human_tracking(human_tracking_data, unique_ids):
 def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
-    frames_idvs = np.full((n, seq_len, h, w, 3), np.nan, dtype=np.uint8)
-    flows_idvs = np.full((n, seq_len, h, w, 2), np.nan, dtype=np.float32)
-    bboxs_idvs = np.full((n, seq_len, 2, 2), np.nan, dtype=np.float32)
-    kps_idvs = np.full((n, seq_len, 17, 2), np.nan, dtype=np.float32)
+    frames_idvs = np.full((n, seq_len, h, w, 3), -1, dtype=np.int16)
+    flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
+    bboxs_idvs = np.full((n, seq_len, 2, 2), -1e10, dtype=np.float32)
+    kps_idvs = np.full((n, seq_len, 17, 2), -1e10, dtype=np.float32)
 
     # collect data
     for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
@@ -63,8 +63,8 @@ def individual_npz_to_tensor(
     npz = np.load(io.BytesIO(npz))
 
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
-    mask = np.any(np.isnan(bboxs), axis=(1, 2))
 
+    mask = np.any(np.isnan(bboxs), axis=(1, 2))
     if data_type == "keypoints":
         kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
         x = torch.tensor(kps, dtype=torch.float32).contiguous()
@@ -77,9 +77,8 @@ def individual_npz_to_tensor(
     #       So that normalize keypoints first.
     bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
 
-    del sample, npz, frames, flows  # rerease memory
+    del sample, npz, frames, flows  # release memory
 
-    # collect data
     return (
         torch.tensor(_id, dtype=torch.long),
         x,
