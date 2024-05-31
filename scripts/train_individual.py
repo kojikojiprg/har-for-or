@@ -35,7 +35,7 @@ if __name__ == "__main__":
     model_cfg = yaml_handler.load(model_cfg_path)
 
     # load dataset
-    dataset = load_dataset(data_root, "individual", dataset_cfg)
+    dataset = load_dataset(data_root, "individual", data_type, dataset_cfg, model_cfg.batch_size, True)
     datamodule = DataModule(dataset, model_cfg.batch_size)
 
     # create model

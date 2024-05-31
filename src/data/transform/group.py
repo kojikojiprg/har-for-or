@@ -36,9 +36,11 @@ def _gen_edge_attr_t(pos, time, edge_indexs_t) -> NDArray:
 
 
 def group_npz_to_tensor(
-    npz, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
+    npz = sample["npz"]
     npz = np.load(io.BytesIO(npz))
+
     meta, ids, frames, flows, bboxs, kps, img_size = list(npz.values())
 
     # collect data
@@ -68,6 +70,8 @@ def group_npz_to_tensor(
     edge_attr_s = _gen_edge_attr_s(pos, edge_index_s)
     edge_attr_t = _gen_edge_attr_t(pos, time, edge_index_t)
 
+    # TODO: modify for WebLoader
+    # Create graph onject in training_step on model
     graph = DynamicSpatialTemporalGraph(
         None,
         y,

@@ -355,7 +355,14 @@ def error_callback(*args):
     print(f"Error occurred in write_shard_async process:\n{args}")
 
 
-def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
+def load_dataset(
+    data_root: str,
+    dataset_type: str,
+    data_type: str,
+    config: SimpleNamespace,
+    batch_size: int,
+    shuffle: bool,
+):
     shard_paths = []
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
@@ -369,6 +376,7 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
 
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
+        data_type=data_type,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
@@ -382,13 +390,19 @@ def load_dataset(data_root: str, dataset_type: str, config: SimpleNamespace):
         kps_transform=NormalizeKeypoints(),
     )
 
-    dataset = wds.WebDataset(shard_paths)
-    dataset = dataset.to_tuple("npz")
+    dataset = wds.WebDataset(
+        shard_paths, shardshuffle=shuffle, nodesplitter=wds.split_by_node
+    )
     if dataset_type == "individual":
-        dataset = dataset.map_tuple(idv_npz_to_tensor)
-        return dataset
+        dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":
-        dataset = dataset.map_tuple(grp_npz_to_tensor)
-        return dataset
+        dataset = dataset.map(grp_npz_to_tensor)
     else:
         raise ValueError
+
+    if shuffle:
+        dataset = dataset.shuffle(5e8)
+
+    dataset = dataset.batched(batch_size, partial=False)
+
+    return dataset

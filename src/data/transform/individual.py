@@ -57,27 +57,31 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
 
 
 def individual_npz_to_tensor(
-    npz, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample, data_type, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
+    npz = sample["npz"]
     npz = np.load(io.BytesIO(npz))
+
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
     mask = np.any(np.isnan(bboxs), axis=(1, 2))
 
-    frames = frame_transform(frames)
-    # frames[mask] = torch.full(frames.shape[1:], torch.nan, dtype=torch.float32)
-    flows = flow_transform(flows)
-    # flows[mask] = torch.full(flows.shape[1:], torch.nan, dtype=torch.float32)
+    if data_type == "keypoints":
+        kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
+        x = torch.tensor(kps, dtype=torch.float32).contiguous()
+    elif data_type == "images":
+        frames = frame_transform(frames)
+        flows = flow_transform(flows)
+        x = torch.cat([frames, flows], dim=1).contiguous()
 
-    # NOTE: keypoints normalization is depend on raw bboxs.
+    # NOTE: keypoints normalization is depend on original bboxs.
     #       So that normalize keypoints first.
-    kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
     bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
+
+    del sample, npz, frames, flows  # rerease memory
 
     # collect data
     return (
         torch.tensor(_id, dtype=torch.long),
-        frames,
-        flows,
+        x,
         torch.tensor(bboxs, dtype=torch.float32).contiguous(),
-        torch.tensor(kps, dtype=torch.float32).contiguous(),
     )

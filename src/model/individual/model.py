@@ -112,11 +112,10 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        if self.data_type == "keypoints":
-            _, _, _, bboxs, x = batch[0]
-        elif self.data_type == "images":
-            _, frames, flows, bboxs, _ = batch[0]
-            x = torch.cat([frames, flows], dim=2)
+        ids, x, bboxs = batch
+        ids = ids[0]
+        x = x[0]
+        bboxs = bboxs[0]
 
         mask = torch.any(torch.isnan(bboxs), dim=[2, 3])
         if not self.add_position_patch:

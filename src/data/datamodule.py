@@ -1,6 +1,5 @@
 from lightning.pytorch import LightningDataModule
-from torch.utils.data import DataLoader
-from webdataset import WebDataset
+from webdataset import WebDataset, WebLoader
 
 
 class DataModule(LightningDataModule):
@@ -11,8 +10,7 @@ class DataModule(LightningDataModule):
         self.batch_size = batch_size
 
     def train_dataloader(self):
-        self.dataset = self.dataset.shuffle(1e9)
-        return DataLoader(self.dataset, self.batch_size, num_workers=2, pin_memory=True)
+        return WebLoader(self.dataset, num_workers=2, pin_memory=True)
 
     def predict_dataloader(self):
-        return DataLoader(self.dataset, self.batch_size, num_workers=2, pin_memory=True)
+        return WebLoader(self.dataset, self.batch_size, num_workers=2, pin_memory=True)
