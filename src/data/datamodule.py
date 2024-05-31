@@ -40,14 +40,14 @@ class DataModule(LightningDataModule):
         if self.dataset_type == "individual":
             return WebLoader(
                 self.dataset,
-                batch_size=self.batch_size,
+                batch_size=1,
                 num_workers=self.num_workers,
                 pin_memory=True,
             )
         elif self.dataset_type == "group":
             return DataLoader(
                 self.dataset,
-                batch_size=self.batch_size,
+                batch_size=1,
                 num_workers=self.num_workers,
                 pin_memory=True,
             )
