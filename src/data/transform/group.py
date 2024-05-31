@@ -55,9 +55,8 @@ def group_npz_to_tensor(
         x = torch.cat([frames, flows], dim=1).contiguous()
 
     bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
-    pos = torch.tensor(
-        [_calc_bbox_center(b) for b in bboxs], dtype=torch.float32
-    ).contiguous()
+    bbox_centers = [_calc_bbox_center(b) for b in bboxs]
+    bboxs = torch.tensor(bboxs, dtype=torch.float32).contiguous()
 
     # create edges
     seq_len, n = np.max(meta, axis=0) + 1
@@ -70,8 +69,8 @@ def group_npz_to_tensor(
         node_idx += 1
     edge_index_s = _gen_edge_index(node_idxs_s)
     edge_index_t = _gen_edge_index(node_idxs_t)
-    edge_attr_s = _gen_edge_attr_s(pos, edge_index_s)
-    edge_attr_t = _gen_edge_attr_t(pos, time, edge_index_t)
+    edge_attr_s = _gen_edge_attr_s(bbox_centers, edge_index_s)
+    edge_attr_t = _gen_edge_attr_t(bbox_centers, time, edge_index_t)
     edge_index_s = torch.tensor(edge_index_s, dtype=torch.long).contiguous()
     edge_index_t = torch.tensor(edge_attr_s, dtype=torch.float32).contiguous()
     edge_attr_s = torch.tensor(edge_index_t, dtype=torch.long).contiguous()
@@ -79,4 +78,4 @@ def group_npz_to_tensor(
 
     del sample, npz, frames, flows  # release memory
 
-    return x, y, pos, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t, mask
+    return x, y, bboxs, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t, mask
