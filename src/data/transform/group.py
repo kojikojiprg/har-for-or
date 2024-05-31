@@ -5,8 +5,6 @@ import numpy as np
 import torch
 from numpy.typing import NDArray
 
-from src.data.graph import DynamicSpatialTemporalGraph
-
 
 def _calc_bbox_center(bbox) -> NDArray:
     return (bbox[1] - bbox[0]) / 2 + bbox[0]
@@ -36,7 +34,7 @@ def _gen_edge_attr_t(pos, time, edge_indexs_t) -> NDArray:
 
 
 def group_npz_to_tensor(
-    sample, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample, data_type, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
     npz = sample["npz"]
     npz = np.load(io.BytesIO(npz))
@@ -44,42 +42,41 @@ def group_npz_to_tensor(
     meta, ids, frames, flows, bboxs, kps, img_size = list(npz.values())
 
     # collect data
+    time = torch.tensor(meta[:, 0], dtype=torch.long).contiguous()
+    y = torch.tensor(ids, dtype=torch.long).contiguous()
+
+    mask = np.any(bboxs < 0, axis=(1, 2))
+    if data_type == "keypoints":
+        kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
+        x = torch.tensor(kps, dtype=torch.float32).contiguous()
+    elif data_type == "images":
+        frames = frame_transform(frames)
+        flows = flow_transform(flows)
+        x = torch.cat([frames, flows], dim=1).contiguous()
+
+    bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
+    pos = torch.tensor(
+        [_calc_bbox_center(b) for b in bboxs], dtype=torch.float32
+    ).contiguous()
+
+    # create edges
     seq_len, n = np.max(meta, axis=0) + 1
     node_idxs_s = [[] for i in range(seq_len)]
     node_idxs_t = [[] for i in range(n)]
     node_idx = 0
-    time = torch.tensor(meta[:, 0], dtype=torch.long).contiguous()
-    y = torch.tensor(ids, dtype=torch.long).contiguous()
-
-    frames = frame_transform(frames)
-    flows = flow_transform(flows)
-    # NOTE: keypoints normalization is depend on raw bboxs.
-    #       So that normalize keypoints first.
-    kps = kps_transform(kps, bboxs)
-    bboxs = bbox_transform(bboxs, img_size)
-
     for t, i in meta:
         node_idxs_s[t].append(node_idx)
         node_idxs_t[i].append(node_idx)
         node_idx += 1
-
-    pos = [_calc_bbox_center(b) for b in bboxs]
-
     edge_index_s = _gen_edge_index(node_idxs_s)
     edge_index_t = _gen_edge_index(node_idxs_t)
     edge_attr_s = _gen_edge_attr_s(pos, edge_index_s)
     edge_attr_t = _gen_edge_attr_t(pos, time, edge_index_t)
+    edge_index_s = torch.tensor(edge_index_s, dtype=torch.long).contiguous()
+    edge_index_t = torch.tensor(edge_attr_s, dtype=torch.float32).contiguous()
+    edge_attr_s = torch.tensor(edge_index_t, dtype=torch.long).contiguous()
+    edge_attr_t = torch.tensor(edge_attr_t, dtype=torch.float32).contiguous()
 
-    # TODO: modify for WebLoader
-    # Create graph onject in training_step on model
-    graph = DynamicSpatialTemporalGraph(
-        None,
-        y,
-        torch.tensor(pos, dtype=torch.float32).contiguous(),
-        time,
-        torch.tensor(edge_index_s, dtype=torch.long).contiguous(),
-        torch.tensor(edge_attr_s, dtype=torch.float32).contiguous(),
-        torch.tensor(edge_index_t, dtype=torch.long).contiguous(),
-        torch.tensor(edge_attr_t, dtype=torch.float32).contiguous(),
-    )
-    return frames, flows, bboxs, kps, graph
+    del sample, npz, frames, flows  # release memory
+
+    return x, y, pos, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t, mask

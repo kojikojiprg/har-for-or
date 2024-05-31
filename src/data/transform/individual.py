@@ -73,8 +73,6 @@ def individual_npz_to_tensor(
         flows = flow_transform(flows)
         x = torch.cat([frames, flows], dim=1).contiguous()
 
-    # NOTE: keypoints normalization is depend on original bboxs.
-    #       So that normalize keypoints first.
     bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
 
     del sample, npz, frames, flows  # release memory

@@ -390,6 +390,7 @@ def load_dataset(
     )
     grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
+        data_type=data_type,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
@@ -407,7 +408,7 @@ def load_dataset(
         raise ValueError
 
     if shuffle:
-        dataset = dataset.shuffle(5e8)
+        dataset = dataset.shuffle(1e9)
 
     dataset = dataset.batched(batch_size, partial=False)
 
