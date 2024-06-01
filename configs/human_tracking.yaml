@@ -1,5 +1,5 @@
 yolo:
-  model: "yolov8x.pt"
+  model: "yolov8m.pt"
   th_conf: 0.2
   th_iou: 0.95
 
