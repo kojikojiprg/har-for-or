@@ -57,12 +57,27 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
 
 
 def individual_npz_to_tensor(
-    sample, data_type, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample,
+    data_type,
+    seq_len,
+    frame_transform,
+    flow_transform,
+    bbox_transform,
+    kps_transform,
 ):
     npz = sample["npz"]
     npz = np.load(io.BytesIO(npz))
 
     _id, frames, flows, bboxs, kps, img_size = list(npz.values())
+
+    if len(bboxs) < seq_len:
+        # padding
+        pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
+        frames = np.pad(frames, pad_shape, constant_values=-1)
+        flows = np.pad(flows, pad_shape, constant_values=-1e10)
+        pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
+        bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
+        kps = np.pad(kps, pad_shape, constant_values=-1e10)
 
     mask = np.any(bboxs < 0, axis=(1, 2))
     if data_type == "keypoints":

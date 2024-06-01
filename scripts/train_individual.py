@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
-    parser.add_argument("data_type", type=str, help="'individual' or 'images'")
+    parser.add_argument("data_type", type=str, help="'keypoints' or 'images'")
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
     args = parser.parse_args()
     data_root = args.data_root
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     # load dataset
     dataset = load_dataset(data_root, "individual", data_type, dataset_cfg, True)
-    datamodule = DataModule(dataset, model_cfg.batch_size, model_cfg.num_workers)
+    datamodule = DataModule(dataset, "individual", model_cfg.batch_size, model_cfg.num_workers)
 
     # create model
     model = IndividualActivityRecognition(model_cfg)

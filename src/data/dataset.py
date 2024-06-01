@@ -376,6 +376,7 @@ def load_dataset(
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
         data_type=data_type,
+        seq_len=seq_len,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
