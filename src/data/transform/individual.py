@@ -28,7 +28,7 @@ def collect_human_tracking(human_tracking_data, unique_ids):
 def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
-    frames_idvs = np.full((n, seq_len, h, w, 3), -1, dtype=np.int16)
+    frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
     flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
     bboxs_idvs = np.full((n, seq_len, 2, 2), -1e10, dtype=np.float32)
     kps_idvs = np.full((n, seq_len, 17, 2), -1e10, dtype=np.float32)
