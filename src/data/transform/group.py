@@ -19,14 +19,6 @@ def _gen_edge_index(node_idxs) -> list:
     return e
 
 
-# def _gen_edge_index(node_idxs) -> list:
-#     e_i = [[idxs[i] for i in range(len(idxs))] for idxs in node_idxs]
-#     e_j = [[idxs[(i + 1) % len(idxs)] for i in range(len(idxs))] for idxs in node_idxs]
-#     e_i = list(itertools.chain.from_iterable(e_i))
-#     e_j = list(itertools.chain.from_iterable(e_j))
-#     return [e_i, e_j]
-
-
 def _gen_edge_attr_s(pos, edge_indexs_s) -> NDArray:
     pos = np.array(pos)
     diffs = np.array(
