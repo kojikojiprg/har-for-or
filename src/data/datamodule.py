@@ -20,11 +20,9 @@ class DataModule(LightningDataModule):
 
     def train_dataloader(self):
         if self.dataset_type == "individual":
+            self.dataset = self.dataset.batched(self.batch_size, partial=False)
             return WebLoader(
-                self.dataset,
-                batch_size=self.batch_size,
-                num_workers=self.num_workers,
-                pin_memory=True,
+                self.dataset, num_workers=self.num_workers, pin_memory=True
             )
         elif self.dataset_type == "group":
             return DataLoader(
@@ -39,17 +37,11 @@ class DataModule(LightningDataModule):
     def predict_dataloader(self):
         if self.dataset_type == "individual":
             return WebLoader(
-                self.dataset,
-                batch_size=1,
-                num_workers=self.num_workers,
-                pin_memory=True,
+                self.dataset, num_workers=self.num_workers, pin_memory=True
             )
         elif self.dataset_type == "group":
             return DataLoader(
-                self.dataset,
-                batch_size=1,
-                num_workers=self.num_workers,
-                pin_memory=True,
+                self.dataset, num_workers=self.num_workers, pin_memory=True
             )
         else:
             raise ValueError
