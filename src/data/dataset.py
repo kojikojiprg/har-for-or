@@ -402,6 +402,6 @@ def load_dataset(
         raise ValueError
 
     if shuffle:
-        dataset = dataset.shuffle(5e8)
+        dataset = dataset.shuffle(1e9)
 
     return dataset
