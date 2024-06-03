@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import scipy
 import scipy.stats
+import torch
 from numpy.typing import NDArray
 
 from .detector import Detector
@@ -18,9 +19,11 @@ class HumanTracking:
 
     def __del__(self):
         del self._detector, self._tracker
+        torch.cuda.empty_cache()
 
     def reset_tracker(self):
         del self._tracker
+        torch.cuda.empty_cache()
         self._tracker = Tracker(self._cfg, self._device)
 
     def predict(self, frame: NDArray, frame_num: int):
