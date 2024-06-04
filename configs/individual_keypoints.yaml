@@ -3,7 +3,7 @@ n_clusters: 10
 seq_len: 90
 stride: 30
 
-hidden_ndim: 16
+hidden_ndim: 64
 latent_ndim: 32
 nheads: 4
 nlayers: 6
@@ -13,7 +13,7 @@ emb_nheads: 4
 emb_nlayers: 3
 emb_dropout: 0.1
 add_position_patch: True
-patch_size: [16, 12]
+patch_size: [32, 24]
 img_size: [256, 192]
 
 lrc_x: 1
@@ -25,4 +25,4 @@ epochs: 200
 batch_size: 16
 accumulate_grad_batches: 64
 lr: 0.0001
-num_workers: 8
+num_workers: 16
