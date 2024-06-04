@@ -398,7 +398,7 @@ def load_dataset(
     )
 
     if shuffle and data_type == "images":
-        dataset = dataset.shuffle(1e5)
+        dataset = dataset.shuffle(100)
 
     if dataset_type == "individual":
         dataset = dataset.map(idv_npz_to_tensor)
@@ -408,6 +408,6 @@ def load_dataset(
         raise ValueError
 
     if shuffle and data_type == "keypoints":
-        dataset = dataset.shuffle(1e5)
+        dataset = dataset.shuffle(100)
 
     return dataset
