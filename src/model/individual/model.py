@@ -127,7 +127,25 @@ class IndividualActivityRecognition(LightningModule):
             x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
         )
 
+        del batch, ids, x, bboxs, mask  # release memory
+        del fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
+
         return loss
+
+    def predict_step(self, batch):
+        ids, x, bboxs, mask = batch
+        ids = ids[0]
+        x = x[0]
+        bboxs = bboxs[0]
+        mask = mask[0]
+
+        if not self.add_position_patch:
+            bboxs = None
+
+        fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+            x, mask, bboxs
+        )
+        return
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)

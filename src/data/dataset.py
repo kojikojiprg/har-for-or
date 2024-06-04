@@ -12,6 +12,7 @@ from types import SimpleNamespace
 warnings.filterwarnings("ignore")
 
 import numpy as np
+import torch
 import webdataset as wds
 from torch.multiprocessing import Pool, set_start_method
 from tqdm import tqdm
@@ -142,6 +143,7 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
 
     if model is not None:
         del model
+        torch.cuda.empty_cache()
 
 
 def _write_shard_async(
@@ -342,7 +344,7 @@ def write_shards(
                 time.sleep(0.001)  # waiting for coping queue in wirte_async
 
         while [r.wait() for r in async_results].count(True) > 0:
-            time.sleep(0.001)
+            time.sleep(0.5)
         frame_sna.unlink()
         flow_sna.unlink()
         pbar_of.close()
@@ -392,7 +394,7 @@ def load_dataset(
     )
 
     dataset = wds.WebDataset(
-        shard_paths, shardshuffle=shuffle, nodesplitter=wds.split_by_node
+        shard_paths, resampled=shuffle, nodesplitter=wds.split_by_node
     )
     if dataset_type == "individual":
         dataset = dataset.map(idv_npz_to_tensor)

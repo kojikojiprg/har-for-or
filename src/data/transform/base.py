@@ -37,8 +37,7 @@ class TimeSeriesToTensor:
         self.default_float_dtype = torch.get_default_dtype()
 
     def __call__(self, imgs: NDArray) -> torch.Tensor:
-        imgs = imgs.transpose(0, 3, 1, 2)
-        imgs = torch.from_numpy(imgs)
+        imgs = torch.from_numpy(imgs.transpose(0, 3, 1, 2))
         if self.div_by_255:
             return imgs.to(dtype=self.default_float_dtype).div(255)
         else:

@@ -1,24 +1,15 @@
 import argparse
 import sys
 
-import torch
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
-from lightning.pytorch.strategies import FSDPStrategy
 
 sys.path.append(".")
 from src.data import DataModule, load_dataset
 from src.model import IndividualActivityRecognition
-from src.model.layers import (
-    IndividualEmbedding,
-    TransformerDecoderBlock,
-    TransformerEncoderBlock,
-)
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = True
-
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("data_type", type=str, help="'keypoints' or 'images'")
@@ -36,27 +27,23 @@ if __name__ == "__main__":
 
     # load dataset
     dataset = load_dataset(data_root, "individual", data_type, dataset_cfg, True)
-    datamodule = DataModule(dataset, "individual", model_cfg.batch_size, model_cfg.num_workers)
+    datamodule = DataModule(
+        dataset, "individual", model_cfg.batch_size, model_cfg.num_workers
+    )
 
     # create model
     model = IndividualActivityRecognition(model_cfg)
 
     logger = TensorBoardLogger("logs/individual/", name=data_type)
-    fsdp = FSDPStrategy(
-        auto_wrap_policy={
-            IndividualEmbedding,
-            TransformerDecoderBlock,
-            TransformerEncoderBlock,
-        },
-        sharding_strategy="FULL_SHARD",
-    )
     trainer = Trainer(
         accelerator="cuda",
-        strategy=fsdp,
+        strategy="fsdp",
         devices=gpu_ids,
         logger=logger,
         callbacks=model.callbacks,
         max_epochs=model_cfg.epochs,
         accumulate_grad_batches=model_cfg.accumulate_grad_batches,
+        benchmark=True,
+        use_distributed_sampler=True,
     )
     trainer.fit(model, datamodule=datamodule)

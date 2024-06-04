@@ -66,6 +66,9 @@ class IndividualTemporalTransformer(nn.Module):
             emb_hidden_ndim,
             emb_npatchs,
             dropout,
+            add_position_patch,
+            patch_size,
+            img_size,
         )
 
     def forward(self, x, mask, bbox=None):
@@ -74,10 +77,8 @@ class IndividualTemporalTransformer(nn.Module):
             x_emb = self.emb(x[~mask], bbox[~mask])
         else:
             x_emb = self.emb(x[~mask])
-        x = (
-            torch.full((b, seq_len, self.hidden_ndim), -1e10, dtype=torch.float32)
-            .contiguous()
-            .to(next(self.parameters()).device)
+        x = torch.full((b, seq_len, self.hidden_ndim), -1e10, dtype=torch.float32).to(
+            next(self.parameters()).device
         )
         x[~mask] = x_emb
 
@@ -251,7 +252,7 @@ class IndividualTemporalDecoder(nn.Module):
             fake_x = self.act(self.conv_imgs2(fake_x))
             # (b, 5, patch_sz, seq_len, npatchs)
 
-            fake_x = fake_x.permute(0, 3, 1, 4, 2)
+            fake_x = fake_x.permute(0, 3, 1, 4, 2).contiguous()
             # (b, seq_len, 5, patch_sz, img_size)
             h, w = self.img_size
             fake_x = fake_x.view(b, seq_len, 5, h, w)  # (b, seq_len, 5, h, w)
