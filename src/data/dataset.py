@@ -396,6 +396,10 @@ def load_dataset(
     dataset = wds.WebDataset(
         shard_paths, resampled=shuffle, nodesplitter=wds.split_by_node
     )
+
+    if shuffle and data_type == "images":
+        dataset = dataset.shuffle(1e5)
+
     if dataset_type == "individual":
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":
@@ -403,7 +407,7 @@ def load_dataset(
     else:
         raise ValueError
 
-    if shuffle:
-        dataset = dataset.shuffle(1e9)
+    if shuffle and data_type == "keypoints":
+        dataset = dataset.shuffle(1e5)
 
     return dataset

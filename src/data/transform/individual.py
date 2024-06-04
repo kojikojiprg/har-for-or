@@ -1,5 +1,4 @@
 import io
-import gc
 
 import numpy as np
 import torch
@@ -66,10 +65,8 @@ def individual_npz_to_tensor(
     bbox_transform,
     kps_transform,
 ):
-    npz = sample["npz"]
-    npz = np.load(io.BytesIO(npz))
-
-    _id, frames, flows, bboxs, kps, img_size = list(npz.values())
+    npz = list(np.load(io.BytesIO(sample["npz"])).values())
+    _id, frames, flows, bboxs, kps, img_size = npz
 
     if len(bboxs) < seq_len:
         # padding
@@ -92,7 +89,6 @@ def individual_npz_to_tensor(
     bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
 
     del sample, npz, frames, flows, kps  # release memory
-    gc.collect()
 
     return (
         torch.tensor(_id, dtype=torch.long),

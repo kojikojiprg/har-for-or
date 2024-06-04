@@ -1,3 +1,4 @@
+import gc
 import os
 from types import SimpleNamespace
 
@@ -81,7 +82,7 @@ class IndividualActivityRecognition(LightningModule):
         fake_x = fake_x[~mask]
         lrc_x = F.mse_loss(x, fake_x)
         lrc_x *= self.config.lrc_x
-        logs["x"] = lrc_x
+        logs["x"] = lrc_x.item()
 
         # reconstruct loss of bbox
         if self.add_position_patch:
@@ -89,23 +90,23 @@ class IndividualActivityRecognition(LightningModule):
             fake_bboxs = fake_bboxs[~mask]
             lrc_bbox = F.mse_loss(bboxs, fake_bboxs)
             lrc_bbox *= self.config.lrc_bbox
-            logs["b"] = lrc_bbox
+            logs["b"] = lrc_bbox.item()
 
         # Gaussian loss
         lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
         lg *= self.config.lg
-        logs["g"] = lg
+        logs["g"] = lg.item()
 
         # clustering loss
         y_prior = (torch.ones(y.size()) / y.size(1)).to(next(self.parameters()).device)
         lc = self.loss_kl_clustering(y, y_prior)
         lc *= self.config.lc
-        logs["c"] = lc
+        logs["c"] = lc.item()
 
         loss = lrc_x + lg + lc
         if self.add_position_patch:
             loss += lrc_bbox
-        logs["l"] = loss
+        logs["l"] = loss.item()
 
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
         return loss
@@ -129,6 +130,8 @@ class IndividualActivityRecognition(LightningModule):
 
         del batch, ids, x, bboxs, mask  # release memory
         del fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
+        gc.collect()
+        torch.cuda.empty_cache()
 
         return loss
 
