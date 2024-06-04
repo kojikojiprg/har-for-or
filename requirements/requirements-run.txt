@@ -11,6 +11,8 @@ lightning
 tensorboard
 torch_geometric
 webdataset
+torch_tb_profiler
+tensorboardx
 
 ultralytics
 mmcv==2.1.0
