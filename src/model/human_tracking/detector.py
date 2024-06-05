@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import List, Tuple
 
 import numpy as np
+import torch
 from mmpose.apis import inference_topdown, init_model
 from mmpose.evaluation.functional import nms
 from mmpose.structures import PoseDataSample
@@ -30,6 +31,7 @@ class Detector:
 
     def __del__(self):
         del self._yolo, self._pose_model
+        torch.cuda.empty_cache()
 
     def predict(self, img: np.array) -> Tuple[NDArray, NDArray]:
         bboxs = self._yolo.predict(img, verbose=False)[0].boxes.data.cpu().numpy()

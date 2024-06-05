@@ -13,18 +13,15 @@ from .tracker import Tracker
 class HumanTracking:
     def __init__(self, config: SimpleNamespace, device: str):
         self._cfg = config
-        self._device = device
-        self._detector = Detector(self._cfg, self._device)
-        self._tracker = Tracker(self._cfg, self._device)
+        self._detector = Detector(self._cfg, device)
+        self._tracker = Tracker(self._cfg, device)
 
     def __del__(self):
         del self._detector, self._tracker
         torch.cuda.empty_cache()
 
     def reset_tracker(self):
-        del self._tracker
-        torch.cuda.empty_cache()
-        self._tracker = Tracker(self._cfg, self._device)
+        self._tracker.reset()
 
     def predict(self, frame: NDArray, frame_num: int):
         # keypoints detection
