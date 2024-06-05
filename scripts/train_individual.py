@@ -1,13 +1,16 @@
 import argparse
+import os
 import sys
 
 from lightning.pytorch import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
 sys.path.append(".")
 from src.data import DataModule, load_dataset
 from src.model import IndividualActivityRecognition
 from src.utils import yaml_handler
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -19,20 +22,32 @@ if __name__ == "__main__":
     data_type = args.data_type
     gpu_ids = args.gpu_ids
 
-    # load configs
-    dataset_cfg_path = "configs/dataset.yaml"
-    model_cfg_path = f"configs/individual_{data_type}.yaml"
-    dataset_cfg = yaml_handler.load(dataset_cfg_path)
-    model_cfg = yaml_handler.load(model_cfg_path)
+    # load config
+    config_path = f"configs/individual_{data_type}.yaml"
+    config = yaml_handler.load(config_path)
+
+    # model checkpoint callback
+    h, w = config.img_size
+    checkpoint_dir = f"models/individual/{data_type}/"
+    filename = f"individual_{data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    model_checkpoint = ModelCheckpoint(
+        checkpoint_dir,
+        filename=filename + "_loss_min",
+        monitor="l",
+        mode="min",
+        save_last=True,
+    )
+    model_checkpoint.CHECKPOINT_NAME_LAST = filename + "_last"
 
     # load dataset
-    dataset = load_dataset(data_root, "individual", data_type, dataset_cfg, True)
+    dataset = load_dataset(data_root, "individual", data_type, config, True)
     datamodule = DataModule(
-        dataset, "individual", model_cfg.batch_size, model_cfg.num_workers
+        dataset, "individual", config.batch_size, config.num_workers
     )
 
     # create model
-    model = IndividualActivityRecognition(model_cfg)
+    model = IndividualActivityRecognition(config)
 
     logger = TensorBoardLogger("logs/individual/", name=data_type)
     trainer = Trainer(
@@ -40,10 +55,9 @@ if __name__ == "__main__":
         strategy="fsdp",
         devices=gpu_ids,
         logger=logger,
-        callbacks=model.callbacks,
-        max_epochs=model_cfg.epochs,
-        accumulate_grad_batches=model_cfg.accumulate_grad_batches,
+        callbacks=[model_checkpoint],
+        max_epochs=config.epochs,
+        accumulate_grad_batches=config.accumulate_grad_batches,
         benchmark=True,
-        use_distributed_sampler=True,
     )
     trainer.fit(model, datamodule=datamodule)

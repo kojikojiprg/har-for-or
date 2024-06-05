@@ -1,11 +1,9 @@
 import gc
-import os
 from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
-from lightning.pytorch.callbacks import ModelCheckpoint
 
 from .core import IndividualTemporalTransformer
 
@@ -18,22 +16,6 @@ class IndividualActivityRecognition(LightningModule):
         self.seq_len = config.seq_len
         self.lr = config.lr
         self.add_position_patch = config.add_position_patch
-        h, w = config.img_size
-        checkpoint_dir = f"models/individual/{self.data_type}/"
-        filename = f"individual_{self.data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}_loss_min"
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        self.callbacks = [
-            ModelCheckpoint(
-                checkpoint_dir,
-                filename=filename,
-                monitor="l",
-                mode="min",
-                save_last=True,
-            ),
-        ]
-        last_name = f"individual_{self.data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}_last"
-        self.callbacks[0].CHECKPOINT_NAME_LAST = last_name
-
         self.model = None
 
     def configure_model(self):

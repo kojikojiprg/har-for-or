@@ -7,6 +7,7 @@ sys.path.append(".")
 from tqdm import tqdm
 
 from src.data import write_shards
+from src.model import HumanTracking
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
@@ -37,5 +38,9 @@ if __name__ == "__main__":
     device = f"cuda:{args.gpu}"
     n_processes = args.n_processes
 
+    model_ht = HumanTracking(config_ht, device)
     for video_path in tqdm(video_paths, ncols=100, position=0):
-        write_shards(video_path, dataset_type, config, config_ht, device, n_processes)
+        write_shards(video_path, dataset_type, config, model_ht, n_processes)
+        model_ht.reset_tracker()
+
+    del model_ht

@@ -2,6 +2,7 @@ import functools
 import gc
 import itertools
 import os
+import random
 import time
 import warnings
 from glob import glob
@@ -10,11 +11,10 @@ from multiprocessing.managers import SyncManager
 from types import SimpleNamespace
 
 warnings.filterwarnings("ignore")
-
 import numpy as np
-import torch
 import webdataset as wds
 from torch.multiprocessing import Pool, set_start_method
+from torch.utils.data import IterableDataset
 from tqdm import tqdm
 
 from src.model import HumanTracking
@@ -33,6 +33,129 @@ from .transform import (
 )
 
 set_start_method("spawn", force=True)
+
+
+def write_shards(
+    video_path: str,
+    dataset_type: str,
+    config: SimpleNamespace,
+    model_ht: HumanTracking = None,
+    n_processes: int = None,
+):
+    if n_processes is None:
+        n_processes = os.cpu_count()
+
+    data_root = os.path.dirname(video_path)
+    video_name = os.path.basename(video_path).split(".")[0]
+    dir_path = os.path.join(data_root, video_name)
+
+    json_path = os.path.join(dir_path, "json", "pose.json")
+
+    shard_maxsize = float(config.max_shard_size)
+    seq_len = int(config.seq_len)
+    stride = int(config.stride)
+    w = int(config.resize_shape.w)
+    h = int(config.resize_shape.h)
+    shard_pattern = (
+        f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
+    )
+
+    shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
+    os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
+
+    ShardWritingManager.register("Tqdm", tqdm)
+    ShardWritingManager.register("Capture", video.Capture)
+    ShardWritingManager.register("ShardWriter", wds.ShardWriter)
+    with Pool(n_processes) as pool, ShardWritingManager() as swm:
+        async_results = []
+
+        lock = swm.Lock()
+        cap = swm.Capture(video_path)
+        frame_count, img_size = cap.get_frame_count(), cap.get_size()
+        head = swm.Value("i", 0)
+
+        # create progress bars
+        pbar_of = swm.Tqdm(
+            total=frame_count, desc="opticalflow", position=1, leave=False, ncols=100
+        )
+        pbar_ht = swm.Tqdm(
+            total=frame_count, desc="tracking", position=2, leave=False, ncols=100
+        )
+        total = (frame_count - seq_len) // stride + 1
+        pbar_w = swm.Tqdm(
+            total=total, desc="writing", position=3, leave=False, ncols=100
+        )
+
+        # create shared ndarray and start optical flow
+        shape = (seq_len, img_size[1], img_size[0], 3)
+        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
+        shape = (seq_len, img_size[1], img_size[0], 2)
+        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
+        tail_frame = swm.Value("i", 0)
+        pool.apply_async(
+            _optical_flow_async,
+            (cap, frame_sna, flow_sna, tail_frame, head, lock, pbar_of),
+        )
+
+        # create shared list of indiciduals and start human tracking
+        ht_que = swm.list([[] for _ in range(seq_len)])
+        tail_ht = swm.Value("i", 0)
+        pool.apply_async(
+            _human_tracking_async,
+            (cap, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
+        )
+
+        # create shard writer and start writing
+        sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
+        write_shard_async_f = functools.partial(
+            _write_shard_async,
+            frame_sna=frame_sna,
+            flow_sna=flow_sna,
+            ht_que=ht_que,
+            head=head,
+            sink=sink,
+            lock=lock,
+            pbar=pbar_w,
+            video_name=video_name,
+            dataset_type=dataset_type,
+            seq_len=seq_len,
+            stride=stride,
+            resize=(w, h),
+        )
+        check_full_f = functools.partial(
+            _check_full,
+            tail_frame=tail_frame,
+            tail_ht=tail_ht,
+            head=head,
+            que_len=seq_len,
+        )
+        for n_frame in range(seq_len, frame_count + 1, stride):
+            while not check_full_f():
+                time.sleep(0.001)
+            time.sleep(0.5)  # after delay
+
+            # start writing
+            result = pool.apply_async(
+                write_shard_async_f, (n_frame,), error_callback=_error_callback
+            )
+            async_results.append(result)
+
+            sleep_count = 0
+            while check_full_f():
+                time.sleep(0.5)  # waiting for coping queue in wirte_async
+                sleep_count += 1
+                if sleep_count > 60 / 0.5:
+                    break  # avoid for infinite loop
+
+        while [r.wait() for r in async_results].count(True) > 0:
+            time.sleep(0.5)
+        frame_sna.unlink()
+        flow_sna.unlink()
+        pbar_of.close()
+        pbar_ht.close()
+        pbar_w.close()
+        sink.close()
+    gc.collect()
 
 
 class SharedNDArray:
@@ -141,10 +264,6 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
             time.sleep(0.001)
         tail_ht.value = next_tail
 
-    if model is not None:
-        del model
-        torch.cuda.empty_cache()
-
 
 def _write_shard_async(
     n_frame,
@@ -228,132 +347,7 @@ def _write_shard_async(
     gc.collect()
 
 
-def write_shards(
-    video_path: str,
-    dataset_type: str,
-    config: SimpleNamespace,
-    config_human_tracking: SimpleNamespace,
-    device: str,
-    n_processes: int = None,
-):
-    if n_processes is None:
-        n_processes = os.cpu_count()
-
-    data_root = os.path.dirname(video_path)
-    video_name = os.path.basename(video_path).split(".")[0]
-    dir_path = os.path.join(data_root, video_name)
-
-    json_path = os.path.join(dir_path, "json", "pose.json")
-    if not os.path.exists(json_path):
-        model_ht = HumanTracking(config_human_tracking, device)
-    else:
-        model_ht = None
-
-    shard_maxsize = float(config.max_shard_size)
-    seq_len = int(config.seq_len)
-    stride = int(config.stride)
-    w = int(config.resize_shape.w)
-    h = int(config.resize_shape.h)
-    shard_pattern = (
-        f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
-    )
-
-    shard_pattern = os.path.join(dir_path, "shards", shard_pattern)
-    os.makedirs(os.path.dirname(shard_pattern), exist_ok=True)
-
-    ShardWritingManager.register("Tqdm", tqdm)
-    ShardWritingManager.register("Capture", video.Capture)
-    ShardWritingManager.register("ShardWriter", wds.ShardWriter)
-    with Pool(n_processes) as pool, ShardWritingManager() as swm:
-        async_results = []
-
-        lock = swm.Lock()
-        cap = swm.Capture(video_path)
-        frame_count, img_size = cap.get_frame_count(), cap.get_size()
-        head = swm.Value("i", 0)
-
-        # create progress bars
-        pbar_of = swm.Tqdm(
-            total=frame_count, desc="opticalflow", position=1, leave=False, ncols=100
-        )
-        pbar_ht = swm.Tqdm(
-            total=frame_count, desc="tracking", position=2, leave=False, ncols=100
-        )
-        total = (frame_count - seq_len) // stride
-        pbar_w = swm.Tqdm(
-            total=total, desc="writing", position=3, leave=False, ncols=100
-        )
-
-        # create shared ndarray and start optical flow
-        shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
-        shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
-        tail_frame = swm.Value("i", 0)
-        pool.apply_async(
-            _optical_flow_async,
-            (cap, frame_sna, flow_sna, tail_frame, head, lock, pbar_of),
-        )
-
-        # create shared list of indiciduals and start human tracking
-        ht_que = swm.list([[] for _ in range(seq_len)])
-        tail_ht = swm.Value("i", 0)
-        pool.apply_async(
-            _human_tracking_async,
-            (cap, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
-        )
-
-        # create shard writer and start writing
-        sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
-        write_shard_async_f = functools.partial(
-            _write_shard_async,
-            frame_sna=frame_sna,
-            flow_sna=flow_sna,
-            ht_que=ht_que,
-            head=head,
-            sink=sink,
-            lock=lock,
-            pbar=pbar_w,
-            video_name=video_name,
-            dataset_type=dataset_type,
-            seq_len=seq_len,
-            stride=stride,
-            resize=(w, h),
-        )
-        check_full_f = functools.partial(
-            _check_full,
-            tail_frame=tail_frame,
-            tail_ht=tail_ht,
-            head=head,
-            que_len=seq_len,
-        )
-        for n_frame in range(seq_len, frame_count, stride):
-            while not check_full_f():
-                time.sleep(0.001)
-            time.sleep(0.5)  # after delay
-
-            # start writing
-            result = pool.apply_async(
-                write_shard_async_f, (n_frame,), error_callback=error_callback
-            )
-            async_results.append(result)
-
-            if n_frame + stride >= frame_count:
-                break  # finish
-            while check_full_f():
-                time.sleep(0.001)  # waiting for coping queue in wirte_async
-
-        while [r.wait() for r in async_results].count(True) > 0:
-            time.sleep(0.5)
-        frame_sna.unlink()
-        flow_sna.unlink()
-        pbar_of.close()
-        pbar_ht.close()
-        pbar_w.close()
-        sink.close()
-
-
-def error_callback(*args):
+def _error_callback(*args):
     print(f"Error occurred in write_shard_async process:\n{args}")
 
 
@@ -369,8 +363,7 @@ def load_dataset(
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    w = int(config.resize_shape.w)
-    h = int(config.resize_shape.h)
+    h, w = config.img_size
     shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
@@ -393,14 +386,15 @@ def load_dataset(
         kps_transform=NormalizeKeypoints(),
     )
 
-    dataset = wds.WebDataset(
-        shard_paths, resampled=shuffle, nodesplitter=wds.split_by_node
-    )
-    dataset.append(wds.shardlists.split_by_node)
-    dataset.append(wds.shardlists.split_by_worker)
+    if shuffle:
+        dataset = wds.WebDataset(ResampledShards(shard_paths))
+        dataset.append(_node_splitter)
+        dataset.append(wds.shardlists.split_by_worker)
+    else:
+        dataset = wds.WebDataset(shard_paths, nodesplitter=_node_splitter)
 
     if shuffle and data_type == "images":
-        dataset = dataset.shuffle(200)
+        dataset = dataset.shuffle(100)
 
     if dataset_type == "individual":
         dataset = dataset.map(idv_npz_to_tensor)
@@ -410,6 +404,47 @@ def load_dataset(
         raise ValueError
 
     if shuffle and data_type == "keypoints":
-        dataset = dataset.shuffle(200)
+        dataset = dataset.shuffle(100)
 
     return dataset
+
+
+class ResampledShards(IterableDataset):
+    def __init__(self, shard_paths, worker_seed=None):
+        super().__init__()
+        self.shards = shard_paths
+        assert isinstance(self.shards[0], str)
+        self.worker_seed = (
+            wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
+        )
+        self.epoch = -1
+
+    def __len__(self):
+        # NOTE: webdataset.shardlists.ResampledShards doesn't have __len__.
+        # So that infinite loops is occurred.
+        return len(self.shards)
+
+    def __iter__(self):
+        self.epoch += 1
+        seed = wds.utils.make_seed(
+            self.worker_seed(),
+            self.epoch,
+            os.getpid(),
+            time.time_ns(),
+            os.urandom(4),
+        )
+        if os.environ.get("WDS_SHOW_SEED", "0") == "1":
+            print(f"# ResampledShards seed {seed}")
+        self.rng = random.Random(seed)
+        for _ in range(len(self.shards)):
+            index = self.rng.randint(0, len(self.shards) - 1)
+            yield dict(url=self.shards[index])
+
+
+def _node_splitter(src):
+    world_size = int(os.environ["WORLD_SIZE"])
+    if world_size > 1:
+        rank = int(os.environ["LOCAL_RANK"])
+        yield from itertools.islice(src, rank, None, world_size)
+    else:
+        yield from src
