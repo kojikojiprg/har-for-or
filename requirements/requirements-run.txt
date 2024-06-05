@@ -11,7 +11,6 @@ lightning
 tensorboard
 torch_geometric
 webdataset
-torch_tb_profiler
 tensorboardx
 
 ultralytics
