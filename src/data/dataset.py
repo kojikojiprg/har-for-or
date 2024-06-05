@@ -144,8 +144,8 @@ def write_shards(
             while check_full_f():
                 time.sleep(0.5)  # waiting for coping queue in wirte_async
                 sleep_count += 1
-                if sleep_count > 60 / 0.5:
-                    break  # avoid for infinite loop
+                if sleep_count > 60 * 3 / 0.5:
+                    break  # avoid infinite loop after 3 min
 
         while [r.wait() for r in async_results].count(True) > 0:
             time.sleep(0.5)
