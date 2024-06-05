@@ -10,7 +10,6 @@ from .ext import BoostTrack
 class Tracker:
     def __init__(self, cfg: SimpleNamespace, device: str):
         self.tracker = BoostTrack(**cfg.tracking.__dict__)
-        self.tracker = self.tracker.to(device)
 
     def __del__(self):
         self.tracker.dump_cache()
