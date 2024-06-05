@@ -11,7 +11,6 @@ from src.data import DataModule, load_dataset
 from src.model import IndividualActivityRecognition
 from src.utils import yaml_handler
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
@@ -29,7 +28,9 @@ if __name__ == "__main__":
     # model checkpoint callback
     h, w = config.img_size
     checkpoint_dir = f"models/individual/{data_type}/"
-    filename = f"individual_{data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
+    filename = (
+        f"individual_{data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
+    )
     os.makedirs(checkpoint_dir, exist_ok=True)
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,

@@ -2,7 +2,6 @@ import functools
 import gc
 import itertools
 import os
-import random
 import time
 import warnings
 from glob import glob
@@ -14,7 +13,6 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import webdataset as wds
 from torch.multiprocessing import Pool, set_start_method
-from torch.utils.data import IterableDataset
 from tqdm import tqdm
 
 from src.model import HumanTracking
@@ -368,6 +366,7 @@ def load_dataset(
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
+    node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
         data_type=data_type,
@@ -386,14 +385,11 @@ def load_dataset(
         kps_transform=NormalizeKeypoints(),
     )
 
-    if shuffle:
-        dataset = wds.WebDataset(ResampledShards(shard_paths))
-        dataset.append(_node_splitter)
-        dataset.append(wds.shardlists.split_by_worker)
-    else:
-        dataset = wds.WebDataset(shard_paths, nodesplitter=_node_splitter)
+    dataset = wds.WebDataset(
+        shard_paths, shardshuffle=shuffle, nodesplitter=node_splitter
+    )
 
-    if shuffle and data_type == "images":
+    if shuffle:
         dataset = dataset.shuffle(100)
 
     if dataset_type == "individual":
@@ -403,48 +399,13 @@ def load_dataset(
     else:
         raise ValueError
 
-    if shuffle and data_type == "keypoints":
-        dataset = dataset.shuffle(100)
-
     return dataset
 
 
-class ResampledShards(IterableDataset):
-    def __init__(self, shard_paths, worker_seed=None):
-        super().__init__()
-        self.shards = shard_paths
-        assert isinstance(self.shards[0], str)
-        self.worker_seed = (
-            wds.utils.pytorch_worker_seed if worker_seed is None else worker_seed
-        )
-        self.epoch = -1
-
-    def __len__(self):
-        # NOTE: webdataset.shardlists.ResampledShards doesn't have __len__.
-        # So that infinite loops is occurred.
-        return len(self.shards)
-
-    def __iter__(self):
-        self.epoch += 1
-        seed = wds.utils.make_seed(
-            self.worker_seed(),
-            self.epoch,
-            os.getpid(),
-            time.time_ns(),
-            os.urandom(4),
-        )
-        if os.environ.get("WDS_SHOW_SEED", "0") == "1":
-            print(f"# ResampledShards seed {seed}")
-        self.rng = random.Random(seed)
-        for _ in range(len(self.shards)):
-            index = self.rng.randint(0, len(self.shards) - 1)
-            yield dict(url=self.shards[index])
-
-
-def _node_splitter(src):
+def _node_splitter(src, length):
     world_size = int(os.environ["WORLD_SIZE"])
     if world_size > 1:
         rank = int(os.environ["LOCAL_RANK"])
-        yield from itertools.islice(src, rank, None, world_size)
+        yield from itertools.islice(src, rank, length, world_size)
     else:
         yield from src
