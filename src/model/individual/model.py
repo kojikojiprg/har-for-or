@@ -1,4 +1,3 @@
-import gc
 from types import SimpleNamespace
 
 import torch
@@ -112,7 +111,6 @@ class IndividualActivityRecognition(LightningModule):
 
         del batch, ids, x, bboxs, mask  # release memory
         del fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
-        gc.collect()
         torch.cuda.empty_cache()
 
         return loss
