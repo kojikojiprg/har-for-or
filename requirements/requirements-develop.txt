@@ -1,6 +1,7 @@
 jupyter
 pickleshare
 
+tensorboardx
 torchsummary
 
 black

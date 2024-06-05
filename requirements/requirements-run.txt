@@ -8,10 +8,8 @@ lap
 torch
 torchvision
 lightning
-tensorboard
 torch_geometric
 webdataset
-tensorboardx
 
 ultralytics
 mmcv==2.1.0
