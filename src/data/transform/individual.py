@@ -65,6 +65,7 @@ def individual_npz_to_tensor(
     bbox_transform,
     kps_transform,
 ):
+    key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
     _id, frames, flows, bboxs, kps, img_size = npz
 
@@ -95,4 +96,5 @@ def individual_npz_to_tensor(
         x,
         torch.from_numpy(bboxs),
         torch.from_numpy(mask),
+        key,
     )

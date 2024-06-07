@@ -93,7 +93,7 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        ids, x, bboxs, mask = batch
+        ids, x, bboxs, mask, keys = batch
         ids = ids[0]
         x = x[0]
         bboxs = bboxs[0]
@@ -116,11 +116,7 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def predict_step(self, batch):
-        ids, x, bboxs, mask = batch
-        ids = ids[0]
-        x = x[0]
-        bboxs = bboxs[0]
-        mask = mask[0]
+        ids, x, bboxs, mask, keys = batch
 
         if not self.add_position_patch:
             bboxs = None
@@ -128,7 +124,21 @@ class IndividualActivityRecognition(LightningModule):
         fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
             x, mask, bboxs
         )
-        return
+        mse_x = F.mse_loss(x, fake_x).item()
+        mse_bbox = F.mse_loss(bboxs, fake_bboxs).item()
+        data = {
+            "x": x[0].cpu().numpy(),
+            "fake_x": fake_x[0].cpu().numpy(),
+            "mse_x": mse_x,
+            "bboxs": bboxs[0].cpu().numpy(),
+            "fake_bboxs": fake_bboxs[0].cpu().numpy(),
+            "mse_bboks": mse_bbox,
+            "z": z[0].cpu().numpy(),
+            "mu": mu[0].cpu().numpy(),
+            "logvar": logvar[0].cpu().numpy(),
+            "y": y[0].cpu().numpy(),
+        }
+        return data
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)

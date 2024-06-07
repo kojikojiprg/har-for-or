@@ -37,8 +37,7 @@ def _gen_edge_attr_t(pos, time, edge_indexs_t) -> NDArray:
 def group_npz_to_tensor(
     sample, data_type, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
-    npz = sample["npz"]
-    npz = np.load(io.BytesIO(npz))
+    npz = np.load(io.BytesIO(sample["npz"]))
 
     meta, ids, frames, flows, bboxs, kps, img_size = list(npz.values())
 
