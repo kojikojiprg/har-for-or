@@ -354,7 +354,7 @@ def load_dataset(
     dataset_type: str,
     data_type: str,
     config: SimpleNamespace,
-    shuffle: bool,
+    shuffle: bool = False,
 ):
     shard_paths = []
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
@@ -403,7 +403,11 @@ def load_dataset(
 
 
 def _node_splitter(src, length):
-    world_size = int(os.environ["WORLD_SIZE"])
+    if "WORLD_SIZE" in os.environ:
+        world_size = int(os.environ["WORLD_SIZE"])
+    else:
+        world_size = 1
+
     if world_size > 1:
         rank = int(os.environ["LOCAL_RANK"])
         yield from itertools.islice(src, rank, length, world_size)
