@@ -21,23 +21,7 @@ class IndividualActivityRecognition(LightningModule):
         config = self.config
         if self.model is not None:
             return
-        self.model = IndividualTemporalTransformer(
-            config.data_type,
-            config.n_clusters,
-            config.seq_len,
-            config.hidden_ndim,
-            config.latent_ndim,
-            config.nheads,
-            config.nlayers,
-            config.emb_hidden_ndim,
-            config.emb_nheads,
-            config.emb_nlayers,
-            config.dropout,
-            config.emb_dropout,
-            config.add_position_patch,
-            config.patch_size,
-            config.img_size,
-        )
+        self.model = IndividualTemporalTransformer(config)
 
     @staticmethod
     def loss_kl_gaussian(m, logv, m_p, logv_p):
@@ -93,8 +77,7 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        ids, x, bboxs, mask, keys = batch
-        ids = ids[0]
+        keys, ids, x, bboxs, mask = batch
         x = x[0]
         bboxs = bboxs[0]
         mask = mask[0]
@@ -109,14 +92,14 @@ class IndividualActivityRecognition(LightningModule):
             x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
         )
 
-        del batch, ids, x, bboxs, mask  # release memory
+        del batch, x, bboxs, mask  # release memory
         del fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
         torch.cuda.empty_cache()
 
         return loss
 
     def predict_step(self, batch):
-        ids, x, bboxs, mask, keys = batch
+        keys, ids, x, bboxs, mask = batch
 
         if not self.add_position_patch:
             bboxs = None
@@ -127,6 +110,8 @@ class IndividualActivityRecognition(LightningModule):
         mse_x = F.mse_loss(x, fake_x).item()
         mse_bbox = F.mse_loss(bboxs, fake_bboxs).item()
         data = {
+            "key": keys[0],
+            "id": ids[0],
             "x": x[0].cpu().numpy(),
             "fake_x": fake_x[0].cpu().numpy(),
             "mse_x": mse_x,

@@ -92,9 +92,9 @@ def individual_npz_to_tensor(
     del sample, npz, frames, flows, kps  # release memory
 
     return (
-        torch.tensor(_id, dtype=torch.long),
+        key,
+        _id,
         x,
         torch.from_numpy(bboxs),
         torch.from_numpy(mask),
-        key,
     )

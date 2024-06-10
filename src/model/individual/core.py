@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,66 +14,65 @@ from src.model.layers import (
 
 
 class IndividualTemporalTransformer(nn.Module):
-    def __init__(
-        self,
-        data_type: str,
-        n_clusters: int,
-        seq_len: int,
-        hidden_ndim: int,
-        latent_ndim: int,
-        nheads: int,
-        nlayers: int,
-        emb_hidden_ndim: int,
-        emb_nheads: int,
-        emb_nlayers: int,
-        dropout: float = 0.1,
-        emb_dropout: float = 0.1,
-        add_position_patch: bool = True,
-        patch_size=(16, 12),
-        img_size=(256, 192),
-    ):
+    def __init__(self, config: SimpleNamespace):
         super().__init__()
-        self.hidden_ndim = hidden_ndim
+        self.hidden_ndim = config.hidden_ndim
+        self.encoder = IndividualTemporalEncoder(config)
+        emb_npatchs = self.encoder.emb.npatchs
+        self.decoder = IndividualTemporalDecoder(config, emb_npatchs)
+
+    def forward(self, x, mask, bbox=None):
+        z, mu, logvar, y = self.encoder(x, mask, bbox)
+        fake_x, fake_bboxs, mu_prior, logvar_prior = self.decoder(z, y, mask)
+
+        return fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
+
+
+class IndividualTemporalEncoder(nn.Module):
+    def __init__(self, config: SimpleNamespace):
+        super().__init__()
+        self.hidden_ndim = config.hidden_ndim
+
         self.cls_token = nn.Parameter(
-            torch.randn((1, 1, hidden_ndim)), requires_grad=True
+            torch.randn((1, 1, config.hidden_ndim)), requires_grad=True
         )
         self.cls_mask = torch.full((1, 1), False, dtype=torch.bool, requires_grad=False)
 
         self.emb = IndividualEmbedding(
-            data_type,
-            emb_hidden_ndim,
-            hidden_ndim,
-            emb_nheads,
-            emb_nlayers,
-            emb_dropout,
-            add_position_patch,
-            patch_size,
-            img_size,
+            config.data_type,
+            config.emb_hidden_ndim,
+            config.hidden_ndim,
+            config.emb_nheads,
+            config.emb_nlayers,
+            config.emb_dropout,
+            config.add_position_patch,
+            config.patch_size,
+            config.img_size,
         )
-        emb_npatchs = self.emb.npatchs
 
-        self.pe = RotaryEmbedding(hidden_ndim)
+        self.pe = RotaryEmbedding(config.hidden_ndim)
 
-        self.encoder = IndividualTemporalEncoder(
-            n_clusters, seq_len, hidden_ndim, latent_ndim, nheads, nlayers, dropout
+        self.encoders = nn.ModuleList(
+            [
+                TransformerEncoderBlock(
+                    config.hidden_ndim, config.nheads, config.dropout
+                )
+                for _ in range(config.nlayers)
+            ]
         )
-        self.decoder = IndividualTemporalDecoder(
-            data_type,
-            n_clusters,
-            seq_len,
-            hidden_ndim,
-            latent_ndim,
-            nheads,
-            nlayers,
-            emb_hidden_ndim,
-            emb_npatchs,
-            dropout,
-            add_position_patch,
-            patch_size,
-            img_size,
+
+        self.norm = nn.LayerNorm((config.seq_len + 1, config.hidden_ndim))
+        self.ff_mu = FeedForward(
+            (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
         )
+        self.ff_logvar = FeedForward(
+            (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
+        )
+
+        self.ff_y = FeedForward(config.hidden_ndim, config.n_clusters)
 
     def forward(self, x, mask, bbox=None):
+        # embedding
         b, seq_len = x.size()[:2]
         if bbox is not None:
             x_emb = self.emb(x[~mask], bbox[~mask])
@@ -87,42 +88,9 @@ class IndividualTemporalTransformer(nn.Module):
         cls_mask = self.cls_mask.repeat(b, 1).to(next(self.parameters()).device)
         mask = torch.cat([cls_mask, mask], dim=1)
 
+        # positional embedding
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
-        z, mu, logvar, y = self.encoder(x, mask)
-        fake_x, fake_bboxs, mu_prior, logvar_prior = self.decoder(
-            x[:, 1:, :], z, y, mask[:, 1:]
-        )
-
-        return fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
-
-
-class IndividualTemporalEncoder(nn.Module):
-    def __init__(
-        self,
-        n_clusters: int,
-        seq_len: int,
-        hidden_ndim: int,
-        latent_ndim: int,
-        nheads: int,
-        nlayers: int,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-        self.encoders = nn.ModuleList(
-            [
-                TransformerEncoderBlock(hidden_ndim, nheads, dropout)
-                for _ in range(nlayers)
-            ]
-        )
-
-        self.norm = nn.LayerNorm((seq_len + 1, hidden_ndim))
-        self.ff_mu = FeedForward((seq_len + 1) * hidden_ndim, latent_ndim)
-        self.ff_logvar = FeedForward((seq_len + 1) * hidden_ndim, latent_ndim)
-
-        self.ff_y = FeedForward(hidden_ndim, n_clusters)
-
-    def forward(self, x, mask):
         # x (b, seq_len+1, hidden_ndim)
         for layer in self.encoders:
             x, attn_w = layer(x, mask)
@@ -156,70 +124,67 @@ class IndividualTemporalEncoder(nn.Module):
 
 
 class IndividualTemporalDecoder(nn.Module):
-    def __init__(
-        self,
-        data_type: str,
-        n_clusters: int,
-        seq_len: int,
-        hidden_ndim: int,
-        latent_ndim: int,
-        nheads: int,
-        nlayers: int,
-        emb_hidden_ndim: int,
-        emb_npatchs: int,
-        dropout: float = 0.1,
-        add_position_patch: bool = True,
-        patch_size: tuple = (16, 12),
-        img_size: tuple = (256, 192),
-    ):
+    def __init__(self, config: SimpleNamespace, emb_npatchs: int):
         super().__init__()
-        self.seq_len = seq_len
-        self.hidden_ndim = hidden_ndim
-        self.data_type = data_type
-        self.emb_hidden_ndim = emb_hidden_ndim
+        self.seq_len = config.seq_len
+        self.hidden_ndim = config.hidden_ndim
+        self.latent_ndim = config.latent_ndim
+        self.data_type = config.data_type
+        self.emb_hidden_ndim = config.emb_hidden_ndim
+        self.add_position_patch = config.add_position_patch
+        self.img_size = config.img_size
         self.emb_npatchs = emb_npatchs
-        self.add_position_patch = add_position_patch
-        self.img_size = img_size
 
         # p(z|y)
-        self.ff_mu = FeedForward(n_clusters, latent_ndim)
-        self.ff_logvar = FeedForward(n_clusters, latent_ndim)
+        self.ff_mu = FeedForward(config.n_clusters, config.latent_ndim)
+        self.ff_logvar = FeedForward(config.n_clusters, config.latent_ndim)
 
         # p(x|z)
-        self.ff_z = FeedForward(latent_ndim, seq_len * hidden_ndim)
+        self.emb = FeedForward(config.latent_ndim, config.hidden_ndim)
+        self.pe = RotaryEmbedding(config.hidden_ndim)
+        self.ff_z = FeedForward(config.latent_ndim, config.seq_len * config.hidden_ndim)
         self.decoders = nn.ModuleList(
             [
-                TransformerDecoderBlock(hidden_ndim, nheads, dropout)
-                for _ in range(nlayers)
+                TransformerDecoderBlock(
+                    config.hidden_ndim, config.nheads, config.dropout
+                )
+                for _ in range(config.nlayers)
             ]
         )
 
-        self.ff = FeedForward(hidden_ndim, emb_npatchs * emb_hidden_ndim)
-        if add_position_patch:
-            self.conv_bbox = nn.Conv2d(emb_hidden_ndim, 2, 1)
+        self.ff = FeedForward(config.hidden_ndim, emb_npatchs * config.emb_hidden_ndim)
+        if config.add_position_patch:
+            self.conv_bbox = nn.Conv2d(config.emb_hidden_ndim, 2, 1)
             self.act_bbox = nn.Sigmoid()
 
-        if data_type == "keypoints":
-            self.conv_kps = nn.Conv2d(emb_hidden_ndim, 2, 1)
+        if config.data_type == "keypoints":
+            self.conv_kps = nn.Conv2d(config.emb_hidden_ndim, 2, 1)
             self.act = nn.Sigmoid()
-        elif data_type == "images":
-            size = patch_size[0] * patch_size[1]
-            self.conv_imgs1 = nn.Conv2d(emb_hidden_ndim, size, 1)
+        elif config.data_type == "images":
+            size = config.patch_size[0] * config.patch_size[1]
+            self.conv_imgs1 = nn.Conv2d(config.emb_hidden_ndim, size, 1)
             self.conv_imgs2 = nn.Conv3d(1, 5, 1)
             self.act = nn.Tanh()
         else:
             raise ValueError
 
-    def forward(self, x, z, y, mask):
+    def forward(self, z, y, mask):
         # p(z|y)
         mu_prior = self.ff_mu(y)
         logvar_prior = self.ff_logvar(y)
 
+        b = z.size()[0]
+
+        # embedding fake x
+        x = z.repeat((1, self.seq_len)).contiguous()
+        x = x.view(b * self.seq_len, self.latent_ndim)
+        x = self.emb(x)
+        x = x.view(b, self.seq_len, self.hidden_ndim)
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+
         # p(x|z)
-        # x (b, seq_len, hidden_ndim)
         # z (b, latent_ndim)
         z = self.ff_z(z)  # (b, seq_len * hidden_ndim)
-        b = z.size()[0]
         z = z.view(b, self.seq_len, self.hidden_ndim)
 
         for layer in self.decoders:

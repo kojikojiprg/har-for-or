@@ -8,7 +8,7 @@ class DataModule(LightningDataModule):
         self,
         dataset: WebDataset,
         dataset_type: str,
-        batch_size: int,
+        batch_size: int = 1,
         num_workers: int = 8,
     ):
         super().__init__()
@@ -36,12 +36,8 @@ class DataModule(LightningDataModule):
 
     def predict_dataloader(self):
         if self.dataset_type == "individual":
-            return WebLoader(
-                self.dataset, num_workers=self.num_workers, pin_memory=True
-            )
+            return WebLoader(self.dataset, num_workers=1, pin_memory=True)
         elif self.dataset_type == "group":
-            return DataLoader(
-                self.dataset, num_workers=self.num_workers, pin_memory=True
-            )
+            return DataLoader(self.dataset, num_workers=1, pin_memory=True)
         else:
             raise ValueError
