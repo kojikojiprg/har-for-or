@@ -11,7 +11,7 @@ class IndividualActivityRecognition(LightningModule):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.config = config
-        self.data_type = config.data_type
+        self.feature_type = config.feature_type
         self.seq_len = config.seq_len
         self.lr = config.lr
         self.add_position_patch = config.add_position_patch

@@ -1,4 +1,4 @@
-data_type: images
+feature_type: images
 n_clusters: 10
 seq_len: 90
 stride: 30

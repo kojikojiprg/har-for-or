@@ -111,7 +111,7 @@ class TransformerEmbedding(nn.Module):
 class IndividualEmbedding(nn.Module):
     def __init__(
         self,
-        data_type: str,
+        feature_type: str,
         hidden_ndim: int,
         out_ndim: int,
         nheads: int,
@@ -123,11 +123,11 @@ class IndividualEmbedding(nn.Module):
     ):
         super().__init__()
 
-        self.data_type = data_type
-        if data_type == "keypoints":
+        self.feature_type = feature_type
+        if feature_type == "keypoints":
             self.emb_kps = KeypointsEmbedding(hidden_ndim, add_position_patch)
             self.npatchs = self.emb_kps.npatchs
-        elif data_type == "images":
+        elif feature_type == "images":
             self.emb_imgs = ImageEmbedding(
                 hidden_ndim, add_position_patch, patch_size, img_size
             )
@@ -145,9 +145,9 @@ class IndividualEmbedding(nn.Module):
         # kps (n, 17, 2)
         # images (n, 5, h, w)
         # bbox (n, 2, 2)
-        if self.data_type == "keypoints":
+        if self.feature_type == "keypoints":
             x = self.emb_kps(x, bboxs)
-        elif self.data_type == "images":
+        elif self.feature_type == "images":
             x = self.emb_imgs(x, bboxs)
         else:
             raise ValueError

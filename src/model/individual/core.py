@@ -39,7 +39,7 @@ class IndividualTemporalEncoder(nn.Module):
         self.cls_mask = torch.full((1, 1), False, dtype=torch.bool, requires_grad=False)
 
         self.emb = IndividualEmbedding(
-            config.data_type,
+            config.feature_type,
             config.emb_hidden_ndim,
             config.hidden_ndim,
             config.emb_nheads,
@@ -129,7 +129,7 @@ class IndividualTemporalDecoder(nn.Module):
         self.seq_len = config.seq_len
         self.hidden_ndim = config.hidden_ndim
         self.latent_ndim = config.latent_ndim
-        self.data_type = config.data_type
+        self.feature_type = config.feature_type
         self.emb_hidden_ndim = config.emb_hidden_ndim
         self.add_position_patch = config.add_position_patch
         self.img_size = config.img_size
@@ -157,10 +157,10 @@ class IndividualTemporalDecoder(nn.Module):
             self.conv_bbox = nn.Conv2d(config.emb_hidden_ndim, 2, 1)
             self.act_bbox = nn.Sigmoid()
 
-        if config.data_type == "keypoints":
+        if config.feature_type == "keypoints":
             self.conv_kps = nn.Conv2d(config.emb_hidden_ndim, 2, 1)
             self.act = nn.Sigmoid()
-        elif config.data_type == "images":
+        elif config.feature_type == "images":
             size = config.patch_size[0] * config.patch_size[1]
             self.conv_imgs1 = nn.Conv2d(config.emb_hidden_ndim, size, 1)
             self.conv_imgs2 = nn.Conv3d(1, 5, 1)
@@ -203,12 +203,12 @@ class IndividualTemporalDecoder(nn.Module):
             fake_x = x
             fake_bboxs = None
 
-        if self.data_type == "keypoints":
+        if self.feature_type == "keypoints":
             fake_x = fake_x.permute(0, 3, 1, 2)  # (b, ndim, seq_len, npatchs)
             fake_x = self.act(self.conv_kps(fake_x))
             fake_x = fake_x.permute(0, 2, 3, 1)  # (b, seq_len, 17, 2)
             return fake_x, fake_bboxs, mu_prior, logvar_prior
-        elif self.data_type == "images":
+        elif self.feature_type == "images":
             fake_x = fake_x.permute(0, 3, 1, 2)  # (b, ndim, seq_len, npatchs)
             fake_x = self.conv_imgs1(fake_x)
 

@@ -352,7 +352,7 @@ def _error_callback(*args):
 def load_dataset(
     data_root: str,
     dataset_type: str,
-    data_type: str,
+    feature_type: str,
     config: SimpleNamespace,
     shuffle: bool = False,
 ):
@@ -369,7 +369,7 @@ def load_dataset(
     node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
-        data_type=data_type,
+        feature_type=feature_type,
         seq_len=seq_len,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
@@ -378,7 +378,7 @@ def load_dataset(
     )
     grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
-        data_type=data_type,
+        feature_typeype=feature_type,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),

@@ -1,4 +1,4 @@
-data_type: keypoints
+feature_type: keypoints
 n_clusters: 10
 seq_len: 90
 stride: 30

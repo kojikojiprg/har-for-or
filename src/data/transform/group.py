@@ -35,7 +35,7 @@ def _gen_edge_attr_t(pos, time, edge_indexs_t) -> NDArray:
 
 
 def group_npz_to_tensor(
-    sample, data_type, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample, feature_type, frame_transform, flow_transform, bbox_transform, kps_transform
 ):
     npz = np.load(io.BytesIO(sample["npz"]))
 
@@ -45,10 +45,10 @@ def group_npz_to_tensor(
     time = torch.tensor(meta[:, 0], dtype=torch.long).contiguous()
     y = torch.tensor(ids, dtype=torch.long).contiguous()
 
-    if data_type == "keypoints":
+    if feature_type == "keypoints":
         kps = kps_transform(kps, bboxs)
         x = torch.tensor(kps, dtype=torch.float32).contiguous()
-    elif data_type == "images":
+    elif feature_type == "images":
         frames = frame_transform(frames)
         flows = flow_transform(flows)
         x = torch.cat([frames, flows], dim=1).contiguous()

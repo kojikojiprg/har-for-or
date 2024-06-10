@@ -14,23 +14,21 @@ from src.utils import yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
-    parser.add_argument("data_type", type=str, help="'keypoints' or 'images'")
+    parser.add_argument("feature_type", type=str, help="'keypoints' or 'images'")
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
     args = parser.parse_args()
     data_root = args.data_root
-    data_type = args.data_type
+    feature_type = args.feature_type
     gpu_ids = args.gpu_ids
 
     # load config
-    config_path = f"configs/individual_{data_type}.yaml"
+    config_path = f"configs/individual_{feature_type}.yaml"
     config = yaml_handler.load(config_path)
 
     # model checkpoint callback
     h, w = config.img_size
-    checkpoint_dir = f"models/individual/{data_type}/"
-    filename = (
-        f"individual_{data_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
-    )
+    checkpoint_dir = f"models/individual/{feature_type}/"
+    filename = f"individual_{feature_type}_seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
@@ -42,7 +40,7 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "_last"
 
     # load dataset
-    dataset = load_dataset(data_root, "individual", data_type, config, True)
+    dataset = load_dataset(data_root, "individual", feature_type, config, True)
     datamodule = DataModule(
         dataset, "individual", config.batch_size, config.num_workers
     )
@@ -50,7 +48,7 @@ if __name__ == "__main__":
     # create model
     model = IndividualActivityRecognition(config)
 
-    logger = TensorBoardLogger("logs/individual/", name=data_type)
+    logger = TensorBoardLogger("logs/individual/", name=feature_type)
     trainer = Trainer(
         accelerator="cuda",
         strategy="fsdp",

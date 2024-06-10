@@ -58,7 +58,7 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
 
 def individual_npz_to_tensor(
     sample,
-    data_type,
+    feature_type,
     seq_len,
     frame_transform,
     flow_transform,
@@ -79,10 +79,10 @@ def individual_npz_to_tensor(
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
 
     mask = np.any(bboxs < 0, axis=(1, 2))
-    if data_type == "keypoints":
+    if feature_type == "keypoints":
         kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
         x = torch.from_numpy(kps)
-    elif data_type == "images":
+    elif feature_type == "images":
         frames = frame_transform(frames)
         flows = flow_transform(flows)
         x = torch.cat([frames, flows], dim=1)
