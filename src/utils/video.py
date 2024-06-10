@@ -90,7 +90,7 @@ class Capture:
 class Writer:
     def __init__(self, output_path, fps, size, fmt="mp4v"):
         out_dir = os.path.dirname(output_path)
-        if not os.path.exists(out_dir):
+        if not os.path.exists(out_dir) and out_dir != "":
             os.makedirs(out_dir, exist_ok=True)
 
         # writer object
