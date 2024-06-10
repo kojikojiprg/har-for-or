@@ -1,6 +1,6 @@
 max_shard_size: 1e9  # 1GB
 seq_len: 90
-stride: 30
+stride: 10
 resize_shape:
   w: 192
   h: 256

@@ -1,7 +1,7 @@
 feature_type: images
 n_clusters: 10
 seq_len: 90
-stride: 30
+stride: 10
 img_size: [256, 192]
 
 hidden_ndim: 32

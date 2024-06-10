@@ -291,10 +291,11 @@ def _write_shard_async(
         flow_shm.close()
         del frame_que, flow_que
         copy_ht_que = list(ht_que)
+        head_val_copy = head.value
         head.value = (head.value + stride) % seq_len
 
     # sort to start from head
-    sorted_idxs = list(range(head.value, seq_len)) + list(range(0, head.value))
+    sorted_idxs = list(range(head_val_copy, seq_len)) + list(range(0, head_val_copy))
     copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
     copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
@@ -319,7 +320,7 @@ def _write_shard_async(
             meta, unique_ids, idv_frames, idv_flows, bboxs, kps, img_size
         )
         for i, _id in enumerate(unique_ids):
-            data = {"__key__": f"{video_name}_{_id}_{n_frame}", "npz": idv_npzs[i]}
+            data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
             sink.write(data)
     elif dataset_type == "group":
         data = {
