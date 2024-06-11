@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 from rotary_embedding_torch import RotaryEmbedding
 
-from .core import FeedForward, TransformerEncoderBlock
+from .feedforward import FeedForward
+from .transformer import TransformerEncoderBlock
 
 
 class KeypointsEmbedding(nn.Module):

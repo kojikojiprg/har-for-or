@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-from .feadfoward import FeedForward
+from .feedforward import FeedForward
 
 
 class TransformerEncoderBlock(nn.Module):
