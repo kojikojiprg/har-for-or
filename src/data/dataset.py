@@ -332,7 +332,7 @@ def _write_shard_async(
         )
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
-            if sink.tar_is_closed():
+            while sink.tar_is_closed():
                 time.sleep(0.5)
             sink.write(data)
     elif dataset_type == "group":
@@ -348,7 +348,7 @@ def _write_shard_async(
                 "img_size": img_size,
             },
         }
-        if sink.tar_is_closed():
+        while sink.tar_is_closed():
             time.sleep(0.5)
         sink.write(data)
     else:
@@ -395,7 +395,7 @@ def load_dataset(
     )
     grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
-        feature_typeype=feature_type,
+        feature_type=feature_type,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
         bbox_transform=NormalizeBbox(),
