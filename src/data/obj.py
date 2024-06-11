@@ -47,7 +47,7 @@ class SharedShardWriter(wds.ShardWriter):
     def add_write_que(self, data):
         self.write_que.put(data)
 
-    def finish_writing(self):
+    def set_finish_writing(self):
         self.finished = True
 
     def completed(self):
@@ -55,8 +55,12 @@ class SharedShardWriter(wds.ShardWriter):
 
     def write_async(self):
         while True:
-            self.write(self.write_que.get())
+            while self.write_que.empty():
+                time.sleep(0.001)
+                if self.completed():
+                    return  # complete writing all data (avoid infinite loop)
+
+            self.write(self.write_que.get_nowait())
 
             if self.completed():
-                break  # complete writing all data
-            time.sleep(0.001)
+                return  # complete writing all data

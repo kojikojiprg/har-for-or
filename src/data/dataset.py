@@ -105,8 +105,9 @@ def write_shards(
         sink = swm.SharedShardWriter(
             shard_pattern, maxcount=shard_maxcount, verbose=0, post=tqdm.write
         )
-        pool.apply_async(sink.write_async, error_callback=_error_callback)
-        write_shard_async_f = functools.partial(
+        ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
+        write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
+        arr_write_que_async_f = functools.partial(
             _add_write_que_async,
             frame_sna=frame_sna,
             flow_sna=flow_sna,
@@ -136,8 +137,9 @@ def write_shards(
             time.sleep(0.5)  # after delay
 
             # create and add data in write que
+            ec = functools.partial(_error_callback, *("_add_write_que_async",))
             result = pool.apply_async(
-                write_shard_async_f, (n_frame,), error_callback=_error_callback
+                arr_write_que_async_f, (n_frame,), error_callback=ec
             )
             async_results.append(result)
 
@@ -148,13 +150,13 @@ def write_shards(
                 if sleep_count > 60 * 3 / 0.5:
                     break  # exit infinite loop after 3 min
 
-        while [r.wait() for r in async_results].count(True) > 0:
-            time.sleep(0.5)  # waiting for adding write queue
+        while [r.ready() for r in async_results].count(False) > 0:
+            time.sleep(0.1)  # waiting for adding write queue
 
         # finish and waiting for complete writing
-        sink.finish_writing()
-        while not sink.completed():
-            time.sleep(0.5)
+        sink.set_finish_writing()
+        while not write_async_result.ready():
+            time.sleep(0.1)
         sink.close()
 
         # close and unlink shared memories
@@ -327,7 +329,7 @@ def _add_write_que_async(
 
 
 def _error_callback(*args):
-    print(f"Error occurred in write_shard_async process:\n{args}")
+    print(f"Error occurred in {args[0]}:\n{args[1:]}")
     sys.exit()
 
 
