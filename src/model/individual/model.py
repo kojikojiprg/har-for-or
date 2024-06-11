@@ -43,17 +43,13 @@ class IndividualActivityRecognition(LightningModule):
         logs = {}
 
         # reconstruct loss of x
-        x = x[~mask]
-        fake_x = fake_x[~mask]
-        lrc_x = F.mse_loss(x, fake_x)
+        lrc_x = F.mse_loss(x[~mask], fake_x[~mask])
         lrc_x *= self.config.lrc_x
         logs["x"] = lrc_x.item()
 
         # reconstruct loss of bbox
         if self.add_position_patch:
-            bboxs = bboxs[~mask]
-            fake_bboxs = fake_bboxs[~mask]
-            lrc_bbox = F.mse_loss(bboxs, fake_bboxs)
+            lrc_bbox = F.mse_loss(bboxs[~mask], fake_bboxs[~mask])
             lrc_bbox *= self.config.lrc_bbox
             logs["b"] = lrc_bbox.item()
 
@@ -107,8 +103,8 @@ class IndividualActivityRecognition(LightningModule):
         fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
             x, mask, bboxs
         )
-        mse_x = F.mse_loss(x, fake_x).item()
-        mse_bbox = F.mse_loss(bboxs, fake_bboxs).item()
+        mse_x = F.mse_loss(x[~mask], fake_x[~mask]).item()
+        mse_bbox = F.mse_loss(bboxs[~mask], fake_bboxs[~mask]).item()
         data = {
             "key": keys[0],
             "id": ids[0],
@@ -117,7 +113,7 @@ class IndividualActivityRecognition(LightningModule):
             "mse_x": mse_x,
             "bboxs": bboxs[0].cpu().numpy(),
             "fake_bboxs": fake_bboxs[0].cpu().numpy(),
-            "mse_bboks": mse_bbox,
+            "mse_bboxs": mse_bbox,
             "z": z[0].cpu().numpy(),
             "mu": mu[0].cpu().numpy(),
             "logvar": logvar[0].cpu().numpy(),
