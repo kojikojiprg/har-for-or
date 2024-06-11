@@ -191,7 +191,7 @@ class SharedShardWriter(wds.ShardWriter):
         super().__init__(shard_pattern, maxcount, verbose=verbose, post=post)
 
     def tar_is_closed(self):
-        return self.tarstream.tarstream.closed or self.tarstream is None
+        return self.tarstream is None or self.tarstream.tarstream.closed
 
 
 class ShardWritingManager(SyncManager):
