@@ -44,19 +44,19 @@ class SharedShardWriter(wds.ShardWriter):
         self.write_que = queue.Queue()
         self.finished = False
 
-    # def tar_is_closed(self):
-    #     return self.tarstream is None or self.tarstream.tarstream.closed
-
     def add_write_que(self, data):
         self.write_que.put(data)
 
     def finish_writing(self):
         self.finished = True
 
+    def completed(self):
+        return self.finished and self.write_que.empty()
+
     def write_async(self):
         while True:
             self.write(self.write_que.get())
 
-            if self.finished and self.write_que.empty():
-                break  # finish writing
+            if self.completed():
+                break  # complete writing all data
             time.sleep(0.001)

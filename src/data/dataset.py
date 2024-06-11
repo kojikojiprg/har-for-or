@@ -65,8 +65,6 @@ def write_shards(
     ShardWritingManager.register("Capture", video.Capture)
     ShardWritingManager.register("SharedShardWriter", SharedShardWriter)
     with Pool(n_processes) as pool, ShardWritingManager() as swm:
-        async_results = []
-
         lock = swm.Lock()
         cap = swm.Capture(video_path)
         frame_count, img_size = cap.get_frame_count(), cap.get_size()
@@ -130,12 +128,14 @@ def write_shards(
             head=head,
             que_len=seq_len,
         )
+
+        async_results = []
         for n_frame in range(seq_len, frame_count + 1, stride):
             while not check_full_f():
                 time.sleep(0.001)
             time.sleep(0.5)  # after delay
 
-            # start writing
+            # create and add data in write que
             result = pool.apply_async(
                 write_shard_async_f, (n_frame,), error_callback=_error_callback
             )
@@ -143,17 +143,24 @@ def write_shards(
 
             sleep_count = 0
             while check_full_f():
-                time.sleep(0.5)  # waiting for coping queue in wirte_async
+                time.sleep(0.5)  # waiting for coping queue in _add_write_que_async
                 sleep_count += 1
                 if sleep_count > 60 * 3 / 0.5:
-                    break  # avoid infinite loop after 3 min
+                    break  # exit infinite loop after 3 min
 
         while [r.wait() for r in async_results].count(True) > 0:
+            time.sleep(0.5)  # waiting for adding write queue
+
+        # finish and waiting for complete writing
+        sink.finish_writing()
+        while not sink.completed():
             time.sleep(0.5)
+        sink.close()
+
+        # close and unlink shared memories
         frame_sna.unlink()
         flow_sna.unlink()
-        sink.finish_writing()
-        sink.close()
+
         pbar_of.close()
         pbar_ht.close()
         pbar_w.close()
