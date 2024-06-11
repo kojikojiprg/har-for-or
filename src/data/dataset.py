@@ -2,6 +2,7 @@ import functools
 import gc
 import itertools
 import os
+import sys
 import time
 import warnings
 from glob import glob
@@ -49,7 +50,7 @@ def write_shards(
 
     json_path = os.path.join(dir_path, "json", "pose.json")
 
-    shard_maxsize = float(config.max_shard_size)
+    shard_maxcount = float(config.max_shard_count)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
     w = int(config.resize_shape.w)
@@ -63,7 +64,7 @@ def write_shards(
 
     ShardWritingManager.register("Tqdm", tqdm)
     ShardWritingManager.register("Capture", video.Capture)
-    ShardWritingManager.register("ShardWriter", wds.ShardWriter)
+    ShardWritingManager.register("SharedShardWriter", SharedShardWriter)
     with Pool(n_processes) as pool, ShardWritingManager() as swm:
         async_results = []
 
@@ -104,7 +105,9 @@ def write_shards(
         )
 
         # create shard writer and start writing
-        sink = swm.ShardWriter(shard_pattern, maxsize=shard_maxsize, verbose=0)
+        sink = swm.SharedShardWriter(
+            shard_pattern, maxcount=shard_maxcount, verbose=0, post=tqdm.write
+        )
         write_shard_async_f = functools.partial(
             _write_shard_async,
             frame_sna=frame_sna,
@@ -181,6 +184,14 @@ class SharedNDArray:
     def unlink(self):
         self.shm.close()
         self.shm.unlink()
+
+
+class SharedShardWriter(wds.ShardWriter):
+    def __init__(self, shard_pattern, maxcount, verbose=0, post=None):
+        super().__init__(shard_pattern, maxcount, verbose=verbose, post=post)
+
+    def tar_is_closed(self):
+        return self.tarstream.tarstream.closed or self.tarstream is None
 
 
 class ShardWritingManager(SyncManager):
@@ -321,6 +332,8 @@ def _write_shard_async(
         )
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
+            if sink.tar_is_closed():
+                time.sleep(0.5)
             sink.write(data)
     elif dataset_type == "group":
         data = {
@@ -335,6 +348,8 @@ def _write_shard_async(
                 "img_size": img_size,
             },
         }
+        if sink.tar_is_closed():
+            time.sleep(0.5)
         sink.write(data)
     else:
         raise ValueError
@@ -348,6 +363,7 @@ def _write_shard_async(
 
 def _error_callback(*args):
     print(f"Error occurred in write_shard_async process:\n{args}")
+    sys.exit()
 
 
 def load_dataset(
