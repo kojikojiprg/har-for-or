@@ -2,6 +2,7 @@ import functools
 import gc
 import itertools
 import os
+import queue
 import sys
 import time
 import warnings
@@ -108,8 +109,9 @@ def write_shards(
         sink = swm.SharedShardWriter(
             shard_pattern, maxcount=shard_maxcount, verbose=0, post=tqdm.write
         )
+        pool.apply_async(sink.write_async, error_callback=_error_callback)
         write_shard_async_f = functools.partial(
-            _write_shard_async,
+            _add_write_que_async,
             frame_sna=frame_sna,
             flow_sna=flow_sna,
             ht_que=ht_que,
@@ -152,10 +154,11 @@ def write_shards(
             time.sleep(0.5)
         frame_sna.unlink()
         flow_sna.unlink()
+        sink.finish_writing()
+        sink.close()
         pbar_of.close()
         pbar_ht.close()
         pbar_w.close()
-        sink.close()
     gc.collect()
 
 
@@ -189,9 +192,25 @@ class SharedNDArray:
 class SharedShardWriter(wds.ShardWriter):
     def __init__(self, shard_pattern, maxcount, verbose=0, post=None):
         super().__init__(shard_pattern, maxcount, verbose=verbose, post=post)
+        self.write_que = queue.Queue()
+        self.finished = False
 
-    def tar_is_closed(self):
-        return self.tarstream is None or self.tarstream.tarstream.closed
+    # def tar_is_closed(self):
+    #     return self.tarstream is None or self.tarstream.tarstream.closed
+
+    def add_write_que(self, data):
+        self.write_que.put(data)
+
+    def finish_writing(self):
+        self.finished = True
+
+    def write_async(self):
+        while True:
+            self.write(self.write_que.get())
+
+            if self.finished and self.write_que.empty():
+                break  # finish writing
+            time.sleep(0.001)
 
 
 class ShardWritingManager(SyncManager):
@@ -274,7 +293,7 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
         tail_ht.value = next_tail
 
 
-def _write_shard_async(
+def _add_write_que_async(
     n_frame,
     frame_sna,
     flow_sna,
@@ -332,9 +351,7 @@ def _write_shard_async(
         )
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
-            while sink.tar_is_closed():
-                time.sleep(0.5)
-            sink.write(data)
+            sink.add_write_que(data)
     elif dataset_type == "group":
         data = {
             "__key__": f"{video_name}_{n_frame}",
@@ -348,9 +365,7 @@ def _write_shard_async(
                 "img_size": img_size,
             },
         }
-        while sink.tar_is_closed():
-            time.sleep(0.5)
-        sink.write(data)
+        sink.add_write_que(data)
     else:
         raise ValueError
 
