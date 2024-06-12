@@ -39,8 +39,8 @@ class SharedNDArray:
 
 
 class SharedShardWriter(wds.ShardWriter):
-    def __init__(self, shard_pattern, maxcount, verbose=0, post=None, max_que_size=1000):
-        super().__init__(shard_pattern, maxcount, verbose=verbose, post=post)
+    def __init__(self, shard_pattern, maxcount, verbose=0):
+        super().__init__(shard_pattern, maxcount, verbose=verbose)
         self.write_que = deque()
         self.finished = False
         self.watch_dog_count = 0

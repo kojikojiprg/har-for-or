@@ -84,9 +84,9 @@ def write_shards(
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_sna = SharedNDArray(f"frame_{dataset_type}2", shape, np.uint8)
+        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_sna = SharedNDArray(f"flow_{dataset_type}2", shape, np.float32)
+        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         ec = functools.partial(_error_callback, *("_optical_flow_async",))
         pool.apply_async(
@@ -106,9 +106,7 @@ def write_shards(
         )
 
         # create shard writer and start writing
-        sink = swm.SharedShardWriter(
-            shard_pattern, maxcount=shard_maxcount, verbose=0, post=pbar_w.write
-        )
+        sink = swm.SharedShardWriter(shard_pattern, maxcount=shard_maxcount, verbose=0)
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
         arr_write_que_async_f = functools.partial(
