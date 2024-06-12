@@ -1,6 +1,6 @@
 max_shard_count: 100
 seq_len: 90
-stride: 10
+stride: 30
 resize_shape:
   w: 192
   h: 256

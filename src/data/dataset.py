@@ -84,26 +84,30 @@ def write_shards(
 
         # create shared ndarray and start optical flow
         shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
+        frame_sna = SharedNDArray(f"frame_{dataset_type}2", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
+        flow_sna = SharedNDArray(f"flow_{dataset_type}2", shape, np.float32)
         tail_frame = swm.Value("i", 0)
+        ec = functools.partial(_error_callback, *("_optical_flow_async",))
         pool.apply_async(
             _optical_flow_async,
             (cap, frame_sna, flow_sna, tail_frame, head, lock, pbar_of),
+            error_callback=ec,
         )
 
         # create shared list of indiciduals and start human tracking
         ht_que = swm.list([[] for _ in range(seq_len)])
         tail_ht = swm.Value("i", 0)
+        ec = functools.partial(_error_callback, *("_human_tracking_async",))
         pool.apply_async(
             _human_tracking_async,
             (cap, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
+            error_callback=ec,
         )
 
         # create shard writer and start writing
         sink = swm.SharedShardWriter(
-            shard_pattern, maxcount=shard_maxcount, verbose=0, post=tqdm.write
+            shard_pattern, maxcount=shard_maxcount, verbose=0, post=pbar_w.write
         )
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
@@ -301,9 +305,10 @@ def _add_write_que_async(
         idv_npzs = individual_to_npz(
             meta, unique_ids, idv_frames, idv_flows, bboxs, kps, img_size
         )
-        for i, _id in enumerate(unique_ids):
-            data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
-            sink.add_write_que(data)
+        with lock:
+            for i, _id in enumerate(unique_ids):
+                data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
+                sink.add_write_que(data)
     elif dataset_type == "group":
         data = {
             "__key__": f"{video_name}_{n_frame}",
@@ -317,7 +322,8 @@ def _add_write_que_async(
                 "img_size": img_size,
             },
         }
-        sink.add_write_que(data)
+        with lock:
+            sink.add_write_que(data)
     else:
         raise ValueError
 
