@@ -1,7 +1,7 @@
 feature_type: keypoints
 n_clusters: 10
 seq_len: 90
-stride: 10
+stride: 30
 img_size: [256, 192]
 
 hidden_ndim: 32
@@ -18,11 +18,11 @@ patch_size: [32, 24]
 
 lrc_x: 1
 lrc_bbox: 1
-lg: 1
+lg: 10
 lc: 1
 
 epochs: 100
-batch_size: 8
-accumulate_grad_batches: 64
+batch_size: 16
+accumulate_grad_batches: 32
 num_workers: 16
 lr: 0.0001

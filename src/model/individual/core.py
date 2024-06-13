@@ -50,7 +50,7 @@ class IndividualTemporalEncoder(nn.Module):
             config.img_size,
         )
 
-        self.pe = RotaryEmbedding(config.hidden_ndim)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
 
         self.encoders = nn.ModuleList(
             [
@@ -95,6 +95,7 @@ class IndividualTemporalEncoder(nn.Module):
         for layer in self.encoders:
             x, attn_w = layer(x, mask)
         # x (b, seq_len+1, hidden_ndim)
+        x = self.norm(x)
         b, seq_len_1, hidden_ndim = x.size()
 
         # q(y|x)
@@ -141,7 +142,7 @@ class IndividualTemporalDecoder(nn.Module):
 
         # p(x|z)
         self.emb = FeedForward(config.latent_ndim, config.hidden_ndim)
-        self.pe = RotaryEmbedding(config.hidden_ndim)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.ff_z = FeedForward(config.latent_ndim, config.seq_len * config.hidden_ndim)
         self.decoders = nn.ModuleList(
             [

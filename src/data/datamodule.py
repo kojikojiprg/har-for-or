@@ -20,7 +20,7 @@ class DataModule(LightningDataModule):
 
     def train_dataloader(self):
         if self.dataset_type == "individual":
-            self.dataset = self.dataset.batched(self.batch_size, partial=False)
+            self.dataset = self.dataset.batched(self.batch_size, partial=True)
             return WebLoader(
                 self.dataset, num_workers=self.num_workers, pin_memory=True
             )

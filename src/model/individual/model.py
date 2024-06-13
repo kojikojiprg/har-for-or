@@ -18,10 +18,9 @@ class IndividualActivityRecognition(LightningModule):
         self.model = None
 
     def configure_model(self):
-        config = self.config
         if self.model is not None:
             return
-        self.model = IndividualTemporalTransformer(config)
+        self.model = IndividualTemporalTransformer(self.config)
 
     @staticmethod
     def loss_kl_gaussian(m, logv, m_p, logv_p):

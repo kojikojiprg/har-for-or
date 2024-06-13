@@ -136,7 +136,7 @@ class IndividualEmbedding(nn.Module):
         else:
             raise ValueError
 
-        self.pe = RotaryEmbedding(hidden_ndim)
+        self.pe = RotaryEmbedding(hidden_ndim, learned_freq=True)
 
         self.emb_transformer = TransformerEmbedding(
             hidden_ndim, out_ndim, self.npatchs, nheads, nlayers, dropout

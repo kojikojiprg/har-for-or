@@ -51,7 +51,7 @@ if __name__ == "__main__":
     logger = TensorBoardLogger("logs/individual/", name=feature_type)
     trainer = Trainer(
         accelerator="cuda",
-        strategy="fsdp",
+        strategy="ddp",
         devices=gpu_ids,
         logger=logger,
         callbacks=[model_checkpoint],
