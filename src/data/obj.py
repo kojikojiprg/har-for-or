@@ -6,6 +6,8 @@ from multiprocessing.managers import SyncManager
 import numpy as np
 import webdataset as wds
 
+from threading import Lock
+
 
 class ShardWritingManager(SyncManager):
     pass
@@ -42,12 +44,14 @@ class SharedShardWriter(wds.ShardWriter):
     def __init__(self, shard_pattern, maxcount, verbose=0):
         super().__init__(shard_pattern, maxcount, verbose=verbose)
         self.write_que = deque()
+        self.lock = Lock()
         self.finished = False
         self.watch_dog_count = 0
         self.verbose = bool(verbose)
 
     def add_write_que(self, data):
-        self.write_que.append(data)
+        with self.lock:
+            self.write_que.append(data)
         if self.verbose:
             print(f"Put, qsize:{self.write_que_size()}")
 
@@ -71,7 +75,8 @@ class SharedShardWriter(wds.ShardWriter):
                     raise RuntimeError("The dog barked in SharedShardWriter.write_async process!")
             self.watch_dog_count = 0
 
-            data = self.write_que.popleft()
+            with self.lock:
+                data = self.write_que.popleft()
             if data is None:
                 return  # complete writing all data
             self.write(data)

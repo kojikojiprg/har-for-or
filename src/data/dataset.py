@@ -273,9 +273,6 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
         else:
             idvs_tmp = [idv for idv in json_data if idv["n_frame"] == n_frame]
 
-        if len(idvs_tmp) == 0:
-            idvs_tmp = [dict(n_frame=n_frame)]  # for check data in _add_write_que_async
-
         with lock:
             ht_que[tail_ht.value] = idvs_tmp
             pbar.update()
@@ -340,10 +337,6 @@ def _add_write_que_async(
     assert (
         copy_n_frames_que == list(range(n_frame - seq_len, n_frame))
     ), f"copy_n_frames_que:{copy_n_frames_que}"
-    copy_ht_n_frames = [items[0]["n_frame"] for items in copy_ht_que]
-    assert (
-        copy_ht_n_frames == copy_n_frames_que
-    ), f"copy_ht_n_frames:{copy_ht_n_frames}, copy_n_frames_que:{n_frames_que}"
 
     # clip frames and flows by bboxs
     idv_frames, idv_flows = clip_images_by_bbox(
@@ -364,10 +357,9 @@ def _add_write_que_async(
         idv_npzs = individual_to_npz(
             meta, unique_ids, idv_frames, idv_flows, bboxs, kps, img_size
         )
-        with lock:
-            for i, _id in enumerate(unique_ids):
-                data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
-                sink.add_write_que(data)
+        for i, _id in enumerate(unique_ids):
+            data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
+            sink.add_write_que(data)
     elif dataset_type == "group":
         data = {
             "__key__": f"{video_name}_{n_frame}",
@@ -381,8 +373,7 @@ def _add_write_que_async(
                 "img_size": img_size,
             },
         }
-        with lock:
-            sink.add_write_que(data)
+        sink.add_write_que(data)
     else:
         raise ValueError
 
