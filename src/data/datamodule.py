@@ -36,8 +36,8 @@ class DataModule(LightningDataModule):
 
     def predict_dataloader(self):
         if self.dataset_type == "individual":
-            return WebLoader(self.dataset, num_workers=1, pin_memory=True)
+            return WebLoader(self.dataset, num_workers=16, pin_memory=True)
         elif self.dataset_type == "group":
-            return DataLoader(self.dataset, num_workers=1, pin_memory=True)
+            return DataLoader(self.dataset, num_workers=16, pin_memory=True)
         else:
             raise ValueError
