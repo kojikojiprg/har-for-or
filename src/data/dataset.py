@@ -1,8 +1,8 @@
+import copy
 import functools
 import gc
 import itertools
 import os
-import sys
 import time
 import warnings
 from glob import glob
@@ -65,9 +65,11 @@ def write_shards(
     ShardWritingManager.register("Capture", video.Capture)
     ShardWritingManager.register("SharedShardWriter", SharedShardWriter)
     with Pool(n_processes) as pool, ShardWritingManager() as swm:
+        async_results = []
         lock = swm.Lock()
-        cap = swm.Capture(video_path)
-        frame_count, img_size = cap.get_frame_count(), cap.get_size()
+        cap_ot = swm.Capture(video_path)
+        cap_ht = swm.Capture(video_path)
+        frame_count, img_size = cap_ot.get_frame_count(), cap_ot.get_size()
         head = swm.Value("i", 0)
 
         # create progress bars
@@ -83,34 +85,48 @@ def write_shards(
         )
 
         # create shared ndarray and start optical flow
+        n_frames_que = swm.list([None for _ in range(seq_len)])
         shape = (seq_len, img_size[1], img_size[0], 3)
         frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
         flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
         tail_frame = swm.Value("i", 0)
         ec = functools.partial(_error_callback, *("_optical_flow_async",))
-        pool.apply_async(
+        result = pool.apply_async(
             _optical_flow_async,
-            (cap, frame_sna, flow_sna, tail_frame, head, lock, pbar_of),
+            (
+                cap_ot,
+                n_frames_que,
+                frame_sna,
+                flow_sna,
+                tail_frame,
+                head,
+                lock,
+                pbar_of,
+            ),
             error_callback=ec,
         )
+        async_results.append(result)
 
         # create shared list of indiciduals and start human tracking
         ht_que = swm.list([[] for _ in range(seq_len)])
         tail_ht = swm.Value("i", 0)
         ec = functools.partial(_error_callback, *("_human_tracking_async",))
-        pool.apply_async(
+        result = pool.apply_async(
             _human_tracking_async,
-            (cap, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
+            (cap_ht, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
             error_callback=ec,
         )
+        async_results.append(result)
 
         # create shard writer and start writing
         sink = swm.SharedShardWriter(shard_pattern, maxcount=shard_maxcount, verbose=0)
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
+        async_results.append(write_async_result)
         arr_write_que_async_f = functools.partial(
             _add_write_que_async,
+            n_frames_que=n_frames_que,
             frame_sna=frame_sna,
             flow_sna=flow_sna,
             ht_que=ht_que,
@@ -131,15 +147,19 @@ def write_shards(
             head=head,
             que_len=seq_len,
         )
+        ec = functools.partial(_error_callback, *("_add_write_que_async",))
 
-        async_results = []
         for n_frame in range(seq_len, frame_count + 1, stride):
+            watch_dog_count = 0
             while not check_full_f():
+                async_results = _monitoring_async_tasks(async_results)
                 time.sleep(0.001)
+                watch_dog_count += 1
+                if watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
+                    raise RuntimeError("The dog barked in write_shards process!")
             time.sleep(0.5)  # after delay
 
             # create and add data in write que
-            ec = functools.partial(_error_callback, *("_add_write_que_async",))
             result = pool.apply_async(
                 arr_write_que_async_f, (n_frame,), error_callback=ec
             )
@@ -147,9 +167,10 @@ def write_shards(
 
             sleep_count = 0
             while check_full_f():
-                time.sleep(0.5)  # waiting for coping queue in _add_write_que_async
+                async_results = _monitoring_async_tasks(async_results)
+                time.sleep(0.001)  # waiting for coping queue in _add_write_que_async
                 sleep_count += 1
-                if sleep_count > 60 * 3 / 0.5:
+                if sleep_count > 60 * 3 / 0.001:
                     break  # exit infinite loop after 3 min
 
         while [r.ready() for r in async_results].count(False) > 0:
@@ -171,6 +192,23 @@ def write_shards(
     gc.collect()
 
 
+def _monitoring_async_tasks(async_results):
+    proceeding_thred_idxs = []
+    for i, result in enumerate(async_results):
+        if result.ready():
+            result.get()
+        else:
+            proceeding_thred_idxs.append(i)
+
+    async_results = [async_results[i] for i in proceeding_thred_idxs]
+
+    return async_results
+
+
+def _error_callback(*args):
+    print(f"Error occurred in {args[0]}:\n{args[1:]}")
+
+
 def _check_full(tail_frame, tail_ht, head, que_len):
     is_frame_que_full = (tail_frame.value + 1) % que_len == head.value
     is_idv_que_full = (tail_ht.value + 1) % que_len == head.value
@@ -178,27 +216,31 @@ def _check_full(tail_frame, tail_ht, head, que_len):
     return is_frame_que_full and is_idv_que_full and is_eq
 
 
-def _optical_flow_async(cap, frame_sna, flow_sna, tail_frame, head, lock, pbar):
+def _optical_flow_async(
+    cap, n_frames_que, frame_sna, flow_sna, tail_frame, head, lock, pbar
+):
     frame_que, frame_shm = frame_sna.ndarray()
     flow_que, flow_shm = flow_sna.ndarray()
     que_len = frame_que.shape[0]
 
-    with lock:
-        frame_count = cap.get_frame_count()
-        prev_frame = cap.read(0)[1]
-        cap.set_pos_frame_count(0)  # reset read position
+    frame_count = cap.get_frame_count()
+    prev_frame = cap.read(0)[1]
+    cap.set_pos_frame_count(0)  # reset read position
 
-        frame_que[tail_frame.value] = prev_frame
-        tail_frame.value = 1
+    n_frames_que[tail_frame.value] = 0
+    frame_que[tail_frame.value] = prev_frame
+    y, x = prev_frame.shape[:2]
+    flow_que[tail_frame.value] = np.zeros((y, x, 2), np.float32)
+    tail_frame.value = 1
     pbar.update()
 
     for n_frame in range(1, frame_count):
-        with lock:
-            frame = cap.read(n_frame)[1]
+        frame = cap.read()[1]
         flow = video.optical_flow(prev_frame, frame)
         prev_frame = frame
 
         with lock:
+            n_frames_que[tail_frame.value] = n_frame
             frame_que[tail_frame.value] = frame
             flow_que[tail_frame.value] = flow
         pbar.update()
@@ -213,7 +255,7 @@ def _optical_flow_async(cap, frame_sna, flow_sna, tail_frame, head, lock, pbar):
 
     frame_shm.close()
     flow_shm.close()
-    del frame_que, flow_que
+    del cap, frame_que, flow_que
 
 
 def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pbar):
@@ -223,16 +265,16 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
     if not do_human_tracking:
         json_data = json_handler.load(json_path)
 
-    with lock:
-        frame_count = cap.get_frame_count()
-
+    frame_count = cap.get_frame_count()
     for n_frame in range(frame_count):
         if do_human_tracking:
-            with lock:
-                frame = cap.read(n_frame)[1]
+            frame = cap.read()[1]
             idvs_tmp = model.predict(frame, n_frame)
         else:
             idvs_tmp = [idv for idv in json_data if idv["n_frame"] == n_frame]
+
+        if len(idvs_tmp) == 0:
+            idvs_tmp = [dict(n_frame=n_frame)]  # for check data in _add_write_que_async
 
         with lock:
             ht_que[tail_ht.value] = idvs_tmp
@@ -246,9 +288,12 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
             time.sleep(0.001)
         tail_ht.value = next_tail
 
+    del cap
+
 
 def _add_write_que_async(
     n_frame,
+    n_frames_que,
     frame_sna,
     flow_sna,
     ht_que,
@@ -262,27 +307,43 @@ def _add_write_que_async(
     stride,
     resize,
 ):
-    assert (
-        n_frame % seq_len == head.value
-    ), f"n_frame % seq_len:{n_frame % seq_len}, head:{head.value}"
     with lock:
         # copy queue
         frame_que, frame_shm = frame_sna.ndarray()
         flow_que, flow_shm = flow_sna.ndarray()
-        copy_frame_que = frame_que.copy()
-        copy_flow_que = flow_que.copy()
+        copy_frame_que = copy.deepcopy(frame_que)
+        copy_flow_que = copy.deepcopy(flow_que)
         frame_shm.close()
         flow_shm.close()
         del frame_que, flow_que
-        copy_ht_que = list(ht_que)
-        head_val_copy = head.value
+        copy_n_frames_que = copy.deepcopy(list(n_frames_que))
+        copy_ht_que = copy.deepcopy(list(ht_que))
+
+        # update head
+        head_val_copy = int(head.value)
         head.value = (head.value + stride) % seq_len
 
     # sort to start from head
     sorted_idxs = list(range(head_val_copy, seq_len)) + list(range(0, head_val_copy))
+    copy_n_frames_que = [copy_n_frames_que[idx] for idx in sorted_idxs]
     copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
     copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
+
+    # check data
+    assert (
+        n_frame % seq_len == head_val_copy
+    ), f"n_frame % seq_len:{n_frame % seq_len}, head:{head_val_copy}"
+    assert (
+        n_frame == copy_n_frames_que[-1] + 1
+    ), f"n_frame:{n_frame}, copy_n_frames_que[-1] + 1:{copy_n_frames_que[-1] + 1}"
+    assert (
+        copy_n_frames_que == list(range(n_frame - seq_len, n_frame))
+    ), f"copy_n_frames_que:{copy_n_frames_que}"
+    copy_ht_n_frames = [items[0]["n_frame"] for items in copy_ht_que]
+    assert (
+        copy_ht_n_frames == copy_n_frames_que
+    ), f"copy_ht_n_frames:{copy_ht_n_frames}, copy_n_frames_que:{n_frames_que}"
 
     # clip frames and flows by bboxs
     idv_frames, idv_flows = clip_images_by_bbox(
@@ -325,16 +386,10 @@ def _add_write_que_async(
     else:
         raise ValueError
 
-    # pbar.write(f"Complete writing n_frame:{n_frame}")
     pbar.update()
     del data
     del copy_frame_que, copy_flow_que, copy_ht_que
     gc.collect()
-
-
-def _error_callback(*args):
-    print(f"Error occurred in {args[0]}:\n{args[1:]}")
-    sys.exit()
 
 
 def load_dataset(
