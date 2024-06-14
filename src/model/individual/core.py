@@ -61,15 +61,14 @@ class IndividualTemporalEncoder(nn.Module):
             ]
         )
 
-        self.norm = nn.LayerNorm((config.seq_len + 1, config.hidden_ndim))
+        self.ff_y = FeedForward(config.hidden_ndim, config.n_clusters)
+
         self.ff_mu = FeedForward(
             (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
         )
         self.ff_logvar = FeedForward(
             (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
         )
-
-        self.ff_y = FeedForward(config.hidden_ndim, config.n_clusters)
 
     def forward(self, x, mask, bbox=None):
         # embedding
@@ -95,33 +94,21 @@ class IndividualTemporalEncoder(nn.Module):
         for layer in self.encoders:
             x, attn_w = layer(x, mask)
         # x (b, seq_len+1, hidden_ndim)
-        x = self.norm(x)
         b, seq_len_1, hidden_ndim = x.size()
 
         # q(y|x)
         y = x[:, 0, :]  # cls token
         y = self.ff_y(y.view(b, hidden_ndim))
-        y = F.sigmoid(y)
-        y = self.gumbel_softmax_sampling(y, y.size(), 0.5)
+        y = F.softmax(y, dim=1)
 
         # q(z|x, y)
         x = x.view(b, seq_len_1 * hidden_ndim)
-        mu = self.ff_mu(x)  # average
-        logvar = self.ff_logvar(x)  # log(sigma^2)
+        mu = self.ff_mu(x)
+        logvar = self.ff_logvar(x)
         ep = torch.randn_like(logvar)
         z = mu + torch.exp(logvar / 2) * ep
         # z, mu, log_sig (b, latent_ndim)
         return z, mu, logvar, y
-
-    def sample_gumbel(self, shape, eps=1e-20):
-        u = torch.rand(shape)
-        return -torch.log(-torch.log(u + eps))
-
-    def gumbel_softmax_sampling(self, pi, shape, tau, eps=1e-20):
-        log_pi = torch.log(pi + eps)
-        g = self.sample_gumbel(shape).to(next(self.parameters()).device)
-        y = F.softmax((log_pi + g) / tau, dim=1)
-        return y
 
 
 class IndividualTemporalDecoder(nn.Module):
@@ -171,6 +158,7 @@ class IndividualTemporalDecoder(nn.Module):
 
     def forward(self, z, y, mask):
         # p(z|y)
+        y = self.gumbel_softmax_sampling(y, y.size(), 1.0)
         mu_prior = self.ff_mu(y)
         logvar_prior = self.ff_logvar(y)
 
@@ -223,3 +211,13 @@ class IndividualTemporalDecoder(nn.Module):
             h, w = self.img_size
             fake_x = fake_x.view(b, seq_len, 5, h, w)  # (b, seq_len, 5, h, w)
             return fake_x, fake_bboxs, mu_prior, logvar_prior
+
+    def sample_gumbel(self, shape, eps=1e-20):
+        u = torch.rand(shape)
+        return -torch.log(-torch.log(u + eps))
+
+    def gumbel_softmax_sampling(self, pi, shape, tau, eps=1e-20):
+        log_pi = torch.log(pi + eps)
+        g = self.sample_gumbel(shape).to(next(self.parameters()).device)
+        y = F.softmax((log_pi + g) / tau, dim=1)
+        return y
