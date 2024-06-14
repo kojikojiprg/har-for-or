@@ -67,9 +67,9 @@ def write_shards(
     with Pool(n_processes) as pool, ShardWritingManager() as swm:
         async_results = []
         lock = swm.Lock()
-        cap_ot = swm.Capture(video_path)
+        cap_of = swm.Capture(video_path)
         cap_ht = swm.Capture(video_path)
-        frame_count, img_size = cap_ot.get_frame_count(), cap_ot.get_size()
+        frame_count, img_size = cap_of.get_frame_count(), cap_of.get_size()
         head = swm.Value("i", 0)
 
         # create progress bars
@@ -95,7 +95,7 @@ def write_shards(
         result = pool.apply_async(
             _optical_flow_async,
             (
-                cap_ot,
+                cap_of,
                 n_frames_que,
                 frame_sna,
                 flow_sna,
