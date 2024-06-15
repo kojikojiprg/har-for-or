@@ -58,11 +58,9 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
 
 def individual_npz_to_tensor(
     sample,
-    feature_type,
     seq_len,
     frame_transform,
     flow_transform,
-    bbox_transform,
     kps_transform,
 ):
     key = sample["__key__"]
@@ -78,23 +76,15 @@ def individual_npz_to_tensor(
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
 
-    mask = np.any(bboxs < 0, axis=(1, 2))
-    if feature_type == "keypoints":
-        kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
-        x = torch.from_numpy(kps)
-    elif feature_type == "images":
-        frames = frame_transform(frames)
-        flows = flow_transform(flows)
-        x = torch.cat([frames, flows], dim=1)
+    frames = frame_transform(frames)
+    flows = flow_transform(flows)
+    pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
 
-    bboxs[~mask] = bbox_transform(bboxs[~mask], img_size)
+    kps = kps_transform(kps, img_size)
+    kps = torch.from_numpy(kps).to(torch.float32)
 
-    del sample, npz, frames, flows, kps  # release memory
+    mask = torch.from_numpy(np.any(bboxs < 0, axis=(1, 2))).to(torch.bool)
 
-    return (
-        key,
-        _id,
-        x,
-        torch.from_numpy(bboxs),
-        torch.from_numpy(mask),
-    )
+    del sample, npz, frames, flows  # release memory
+
+    return key, _id, pixcels, kps, mask

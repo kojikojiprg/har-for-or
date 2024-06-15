@@ -11,10 +11,8 @@ class IndividualActivityRecognition(LightningModule):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.config = config
-        self.feature_type = config.feature_type
         self.seq_len = config.seq_len
         self.lr = config.lr
-        self.add_position_patch = config.add_position_patch
         self.model = None
 
     def configure_model(self):
@@ -37,20 +35,19 @@ class IndividualActivityRecognition(LightningModule):
         return (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
 
     def loss_func(
-        self, x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
+        self, x_vis, fake_x_vis, x_spc, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y, mask
     ):
         logs = {}
 
         # reconstruct loss of x
-        lrc_x = F.mse_loss(x[~mask], fake_x[~mask])
-        lrc_x *= self.config.lrc_x
-        logs["x"] = lrc_x.item()
+        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask])
+        lrc_x_vis *= self.config.lrc_x_vis
+        logs["x_vis"] = lrc_x_vis.item()
 
         # reconstruct loss of bbox
-        if self.add_position_patch:
-            lrc_bbox = F.mse_loss(bboxs[~mask], fake_bboxs[~mask])
-            lrc_bbox *= self.config.lrc_bbox
-            logs["b"] = lrc_bbox.item()
+        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask])
+        lrc_x_spc *= self.config.lrc_x_spc
+        logs["x_spc"] = lrc_x_spc.item()
 
         # Gaussian loss
         lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
@@ -63,56 +60,57 @@ class IndividualActivityRecognition(LightningModule):
         lc *= self.config.lc
         logs["c"] = lc.item()
 
-        loss = lrc_x + lg + lc
-        if self.add_position_patch:
-            loss += lrc_bbox
+        loss = lrc_x_vis + lrc_x_spc + lg + lc
         logs["l"] = loss.item()
 
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
         return loss
 
     def training_step(self, batch, batch_idx):
-        keys, ids, x, bboxs, mask = batch
-        x = x[0]
-        bboxs = bboxs[0]
+        keys, ids, x_vis, x_spc, mask = batch
+        x_vis = x_vis[0]
+        x_spc = x_spc[0]
         mask = mask[0]
 
-        if not self.add_position_patch:
-            bboxs = None
-
-        fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
-            x, mask, bboxs
+        fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+            x_vis, x_spc, mask
         )
         loss = self.loss_func(
-            x, fake_x, bboxs, fake_bboxs, mu, logvar, mu_prior, logvar_prior, y, mask
+            x_vis,
+            fake_x_vis,
+            x_spc,
+            fake_x_spc,
+            mu,
+            logvar,
+            mu_prior,
+            logvar_prior,
+            y,
+            mask,
         )
 
-        del batch, x, bboxs, mask  # release memory
-        del fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y
+        del batch, x_vis, x_spc, mask  # release memory
+        del fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y
         torch.cuda.empty_cache()
 
         return loss
 
     def predict_step(self, batch):
-        keys, ids, x, bboxs, mask = batch
+        keys, ids, x_vis, x_spc, mask = batch
 
-        if not self.add_position_patch:
-            bboxs = None
-
-        fake_x, fake_bboxs, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
-            x, mask, bboxs
+        fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+            x_vis, x_spc, mask
         )
-        mse_x = F.mse_loss(x[~mask], fake_x[~mask]).item()
-        mse_bbox = F.mse_loss(bboxs[~mask], fake_bboxs[~mask]).item()
+        mse_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask]).item()
+        mse_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask]).item()
         data = {
             "key": keys[0],
             "id": ids[0],
-            "x": x[0].cpu().numpy(),
-            "fake_x": fake_x[0].cpu().numpy(),
-            "mse_x": mse_x,
-            "bboxs": bboxs[0].cpu().numpy(),
-            "fake_bboxs": fake_bboxs[0].cpu().numpy(),
-            "mse_bboxs": mse_bbox,
+            "x_vis": x_vis[0].cpu().numpy(),
+            "fake_x_vis": fake_x_vis[0].cpu().numpy(),
+            "mse_x_vis": mse_x_vis,
+            "x_spc": x_spc[0].cpu().numpy(),
+            "fake_x_spc": fake_x_spc[0].cpu().numpy(),
+            "mse_x_spc": mse_x_spc,
             "z": z[0].cpu().numpy(),
             "mu": mu[0].cpu().numpy(),
             "logvar": logvar[0].cpu().numpy(),

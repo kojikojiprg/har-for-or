@@ -1,34 +1,12 @@
-import numpy as np
 import torch
 import torchvision.transforms.functional as F
 from numpy.typing import NDArray
 from torchvision.transforms import Compose, Normalize
 
 
-class NormalizeBbox:
-    def __call__(self, bbox, img_size):
-        return bbox / img_size
-
-
 class NormalizeKeypoints:
-    def __call__(self, kps, bbox):
-        ndim = kps.ndim
-        if ndim == 4:
-            n_ids, seq_len = kps.shape[:2]
-            bbox = bbox.reshape(n_ids, seq_len, 2, 2)
-            kps = kps - bbox[:, :, 0].reshape(n_ids, seq_len, 1, 2)
-            kps /= (bbox[:, :, 1] - bbox[:, :, 0]).reshape(n_ids, seq_len, 1, 2)
-            kps = np.clip(kps, 0, 1)
-            return kps
-        elif ndim == 3:
-            n = kps.shape[0]
-            bbox = bbox.reshape(n, 2, 2)
-            kps = kps - bbox[:, 0].reshape(n, 1, 2)
-            kps /= (bbox[:, 1] - bbox[:, 0]).reshape(n, 1, 2)
-            kps = np.clip(kps, 0, 1)
-            return kps
-        else:
-            raise ValueError
+    def __call__(self, kps, img_size):
+        return kps / img_size
 
 
 class TimeSeriesToTensor:

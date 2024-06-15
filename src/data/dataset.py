@@ -21,7 +21,6 @@ from .obj import ShardWritingManager, SharedNDArray, SharedShardWriter
 from .transform import (
     FlowToTensor,
     FrameToTensor,
-    NormalizeBbox,
     NormalizeKeypoints,
     clip_images_by_bbox,
     collect_human_tracking,
@@ -334,8 +333,8 @@ def _add_write_que_async(
     assert (
         n_frame == copy_n_frames_que[-1] + 1
     ), f"n_frame:{n_frame}, copy_n_frames_que[-1] + 1:{copy_n_frames_que[-1] + 1}"
-    assert (
-        copy_n_frames_que == list(range(n_frame - seq_len, n_frame))
+    assert copy_n_frames_que == list(
+        range(n_frame - seq_len, n_frame)
     ), f"copy_n_frames_que:{copy_n_frames_que}"
 
     # clip frames and flows by bboxs
@@ -386,7 +385,6 @@ def _add_write_que_async(
 def load_dataset(
     data_root: str,
     dataset_type: str,
-    feature_type: str,
     config: SimpleNamespace,
     shuffle: bool = False,
 ):
@@ -403,19 +401,15 @@ def load_dataset(
     node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
-        feature_type=feature_type,
         seq_len=seq_len,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
-        bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )
     grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
-        feature_type=feature_type,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
-        bbox_transform=NormalizeBbox(),
         kps_transform=NormalizeKeypoints(),
     )
 

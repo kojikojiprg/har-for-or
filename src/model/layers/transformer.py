@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-from .feedforward import FeedForward
+from .feedforward import SwiGLU
 
 
 class TransformerEncoderBlock(nn.Module):
@@ -13,7 +13,7 @@ class TransformerEncoderBlock(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
 
         self.norm2 = nn.LayerNorm(ndim, eps=1e-5)
-        self.ff = FeedForward(ndim)
+        self.ff = SwiGLU(ndim)
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x, mask=None, need_weights=False):
@@ -55,7 +55,7 @@ class TransformerDecoderBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
         self.norm3 = nn.LayerNorm(ndim, eps=1e-5)
-        self.ff = FeedForward(ndim)
+        self.ff = SwiGLU(ndim)
         self.dropout3 = nn.Dropout(dropout)
 
     def forward(self, x, z, mask=None):

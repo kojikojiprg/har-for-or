@@ -9,7 +9,7 @@ from src.data.graph import DynamicSpatialTemporalGraph
 
 
 def group_npz_to_tensor(
-    sample, feature_type, frame_transform, flow_transform, bbox_transform, kps_transform
+    sample, frame_transform, flow_transform, kps_transform
 ):
     npz = np.load(io.BytesIO(sample["npz"]))
 
@@ -19,15 +19,14 @@ def group_npz_to_tensor(
     time = torch.tensor(meta[:, 0], dtype=torch.long).contiguous()
     y = torch.tensor(ids, dtype=torch.long).contiguous()
 
-    if feature_type == "keypoints":
-        kps = kps_transform(kps, bboxs)
-        x = torch.tensor(kps, dtype=torch.float32).contiguous()
-    elif feature_type == "images":
-        frames = frame_transform(frames)
-        flows = flow_transform(flows)
-        x = torch.cat([frames, flows], dim=1).contiguous()
+    frames = frame_transform(frames)
+    flows = flow_transform(flows)
+    pixcels = torch.cat([frames, flows], dim=1).contiguous()
 
-    bboxs = bbox_transform(bboxs, img_size)
+    kps = kps_transform(kps, bboxs)
+    kps = torch.tensor(kps, dtype=torch.float32).contiguous()
+
+    bboxs = kps_transform(bboxs, img_size)
     bbox_centers = [_calc_bbox_center(b) for b in bboxs]
     bboxs = torch.tensor(bboxs, dtype=torch.float32).contiguous()
 
@@ -52,7 +51,7 @@ def group_npz_to_tensor(
     del sample, npz, frames, flows  # release memory
 
     graph = DynamicSpatialTemporalGraph(
-        x, y, bboxs, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t
+        x, y, bbox_centers, time, edge_index_s, edge_attr_s, edge_index_t, edge_attr_t
     )
     return graph
 
