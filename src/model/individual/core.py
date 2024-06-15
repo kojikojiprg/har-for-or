@@ -6,8 +6,8 @@ import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 
 from src.model.layers import (
+    MLP,
     IndividualEmbedding,
-    SwiGLU,
     TransformerDecoderBlock,
     TransformerEncoderBlock,
 )
@@ -59,12 +59,10 @@ class IndividualTemporalEncoder(nn.Module):
             ]
         )
 
-        self.ff_y = nn.Linear(config.hidden_ndim, config.n_clusters)
+        self.ff_y = MLP(config.hidden_ndim, config.n_clusters)
 
-        self.ff_mu = nn.Linear(
-            (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
-        )
-        self.ff_logvar = nn.Linear(
+        self.ff_mu = MLP((config.seq_len + 1) * config.hidden_ndim, config.latent_ndim)
+        self.ff_logvar = MLP(
             (config.seq_len + 1) * config.hidden_ndim, config.latent_ndim
         )
 
@@ -118,13 +116,13 @@ class IndividualTemporalDecoder(nn.Module):
         self.vis_npatchs = vis_npatchs
 
         # p(z|y)
-        self.ff_mu = nn.Linear(config.n_clusters, config.latent_ndim)
-        self.ff_logvar = nn.Linear(config.n_clusters, config.latent_ndim)
+        self.ff_mu = MLP(config.n_clusters, config.latent_ndim)
+        self.ff_logvar = MLP(config.n_clusters, config.latent_ndim)
 
         # p(x|z)
-        self.emb = SwiGLU(config.latent_ndim, config.hidden_ndim)
+        self.emb = MLP(config.latent_ndim, config.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
-        self.ff_z = SwiGLU(config.latent_ndim, config.seq_len * config.hidden_ndim)
+        self.ff_z = MLP(config.latent_ndim, config.seq_len * config.hidden_ndim)
         self.decoders = nn.ModuleList(
             [
                 TransformerDecoderBlock(
@@ -134,14 +132,20 @@ class IndividualTemporalDecoder(nn.Module):
             ]
         )
 
-        self.ff = SwiGLU(config.hidden_ndim, config.hidden_ndim * 2)
+        self.ff = MLP(config.hidden_ndim, config.hidden_ndim * 2)
 
-        size = config.patch_size[0] * config.patch_size[1]
-        self.lin_vis1 = SwiGLU(config.hidden_ndim, config.emb_hidden_ndim * vis_npatchs)
-        self.lin_vis2 = SwiGLU(config.emb_hidden_ndim, size * 5)
-        self.act_vis = nn.Tanh()
+        emb_hidden_ndim = config.emb_hidden_ndim
+        self.lin_vis = MLP(config.hidden_ndim, config.hidden_ndim * vis_npatchs)
+        self.conv_transpose = nn.Sequential(
+            nn.ConvTranspose3d(emb_hidden_ndim, emb_hidden_ndim // 2, (1, 6, 6)),
+            nn.SiLU(),
+            nn.ConvTranspose3d(emb_hidden_ndim // 2, emb_hidden_ndim // 4, (1, 12, 8)),
+            nn.SiLU(),
+            nn.ConvTranspose3d(emb_hidden_ndim // 4, 5, (1, 16, 12)),
+            nn.Tanh(),
+        )
 
-        self.lin_spc = SwiGLU(config.hidden_ndim, 17 * 2)
+        self.lin_spc = MLP(config.hidden_ndim, 17 * 2)
         self.act_spc = nn.Sigmoid()
 
     def forward(self, z, y, mask):
@@ -168,18 +172,21 @@ class IndividualTemporalDecoder(nn.Module):
             x = layer(x, z, mask)
         # x (b, seq_len, hidden_ndim)
 
+        # reconstruct
         x = x.view(-1, self.hidden_ndim)
         x = self.ff(x)
         fake_x_vis, fake_x_spc = x[:, : self.hidden_ndim], x[:, self.hidden_ndim :]
 
-        fake_x_vis = self.lin_vis1(fake_x_vis)
+        # reconstruct x_vis
+        fake_x_vis = self.lin_vis(fake_x_vis)
         fake_x_vis = fake_x_vis.view(
-            b * self.seq_len * self.vis_npatchs, self.emb_hidden_ndim
+            b * self.seq_len, self.emb_hidden_ndim, self.vis_npatchs, 1, 1
         )
-        fake_x_vis = self.act_vis(self.lin_vis2(fake_x_vis))
+        fake_x_vis = self.conv_transpose(fake_x_vis)
         h, w = self.img_size
         fake_x_vis = fake_x_vis.view(b, self.seq_len, 5, h, w)
 
+        # reconstruct x_spc
         fake_x_spc = self.act_spc(self.lin_spc(fake_x_spc))
         fake_x_spc = fake_x_spc.view(b, self.seq_len, 17, 2)
 

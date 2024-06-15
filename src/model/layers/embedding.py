@@ -3,7 +3,6 @@ import torch.nn as nn
 from rotary_embedding_torch import RotaryEmbedding
 
 from .feedforward import MLP, SwiGLU
-from .i3d import InceptionI3d
 from .transformer import TransformerEncoderBlock
 
 
@@ -69,9 +68,17 @@ class PixcelEmbedding(nn.Module):
         self.patch_size = patch_size
         self.npatchs = self.get_npatchs(img_size, patch_size)
 
-        self.i3d = InceptionI3d(5, final_endpoint="Mixed_3c")
-        self.conv = nn.Conv2d(self.i3d.out_ndim, hidden_ndim, 1)
-        self.pool = nn.AvgPool2d((4, 3))
+        self.conv = nn.Sequential(
+            nn.Conv2d(5, hidden_ndim // 4, 1),
+            nn.SiLU(),
+            nn.Conv2d(hidden_ndim // 4, hidden_ndim // 2, (13, 9)),
+            nn.SiLU(),
+            nn.MaxPool2d((5, 5), 1, 0),
+            nn.Conv2d(hidden_ndim // 2, hidden_ndim, (11, 7)),
+            nn.SiLU(),
+            nn.MaxPool2d((5, 5), 1, 0),
+            nn.AvgPool2d((2, 2)),
+        )
 
         self.transformer = TransformerEmbedding(
             hidden_ndim, out_ndim, nheads, nlayers, dropout
@@ -94,11 +101,8 @@ class PixcelEmbedding(nn.Module):
 
         imgs = imgs.permute(0, 2, 1, 3, 4).contiguous()
         b, nimgs, c, h, w = imgs.size()
-        imgs = imgs.view(b * nimgs, c, 1, h, w)
-        imgs = self.i3d(imgs)
-        imgs = imgs.view(b * nimgs, -1, 4, 3)
+        imgs = imgs.view(b * nimgs, c, h, w)
         imgs = self.conv(imgs)
-        imgs = self.pool(imgs)
         imgs = imgs.view(b, nimgs, self.hidden_ndim)
         # imgs (b, nimgs, ndim)
 
@@ -125,7 +129,7 @@ class IndividualEmbedding(nn.Module):
         self.emb_spc = KeypointsEmbedding(
             hidden_ndim, out_ndim, nheads, nlayers, dropout
         )
-        self.ff = SwiGLU(out_ndim * 2, out_ndim)
+        self.ff = MLP(out_ndim * 2, out_ndim)
 
     def forward(self, x_vis, x_spc):
         # f_vis (b, 5, h, w)

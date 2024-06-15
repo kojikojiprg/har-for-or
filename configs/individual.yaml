@@ -3,20 +3,20 @@ seq_len: 90
 stride: 30
 img_size: [256, 192]
 
-hidden_ndim: 256
+hidden_ndim: 64
 latent_ndim: 32
-nheads: 8
+nheads: 4
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 256
-emb_nheads: 8
+emb_hidden_ndim: 64
+emb_nheads: 4
 emb_nlayers: 3
 emb_dropout: 0.1
 patch_size: [32, 24]
 
-lrc_x_vis: 1
+lrc_x_vis: 2
 lrc_x_spc: 1
-lg: 10
+lg: 2
 lc: 1
 
 epochs: 100
