@@ -156,8 +156,10 @@ def write_shards(
                 watch_dog_count += 1
                 if watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
                     raise RuntimeError("The dog barked in write_shards process!")
+
             while n_frame != n_frames_que[tail_of.value] + 1:
-                time.sleep(0.1)  # waiting for shared memory has been changed
+                async_results = _monitoring_async_tasks(async_results)
+                time.sleep(0.001)  # waiting for shared memory has been updated
 
             # create and add data in write que
             result = pool.apply_async(
@@ -174,11 +176,13 @@ def write_shards(
                     break  # exit infinite loop after 3 min
 
         while [r.ready() for r in async_results].count(False) > 0:
-            time.sleep(0.1)  # waiting for adding write queue
+            async_results = _monitoring_async_tasks(async_results)
+            time.sleep(0.001)  # waiting for adding write queue
 
         # finish and waiting for complete writing
         sink.set_finish_writing()
         while not write_async_result.ready():
+            async_results = _monitoring_async_tasks(async_results)
             time.sleep(0.1)
         sink.close()
 
@@ -342,6 +346,12 @@ def _add_write_que_async(
     idv_frames, idv_flows = clip_images_by_bbox(
         copy_frame_que, copy_flow_que, copy_ht_que, resize
     )
+    if len(idv_frames) == 0:
+        # There are no individuals within frames for seq_len (not error)
+        pbar.update()
+        del copy_frame_que, copy_flow_que, copy_ht_que
+        gc.collect()
+        return
 
     # collect human tracking data
     unique_ids = set(
