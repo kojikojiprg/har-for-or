@@ -2,8 +2,8 @@
 
 # Environments
 - Ubuntu: 20.04
-- Python: 3.9.15
-- CUDA: 12.0
+- Python: 3.10.14
+- CUDA: 12.1
 
 # Setup
 ```
