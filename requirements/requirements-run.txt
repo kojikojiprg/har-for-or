@@ -10,9 +10,6 @@ torchvision
 lightning
 torch_geometric
 webdataset
+deepspeed
 
 ultralytics
-mmcv==2.1.0
-mmdet
-mmpose
-mmpretrain
