@@ -1,16 +1,6 @@
+wheel
 numpy
 scipy
 matplotlib
 opencv-python
 PyYAML
-lap
-
-torch
-torchvision
-lightning
-torch_geometric
-webdataset
-rotary_embedding_torch
-deepspeed
-
-ultralytics

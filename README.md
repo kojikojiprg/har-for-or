@@ -8,10 +8,9 @@
 # Setup
 ```
 pip install -U pip
-pip install wheel
-pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
-pip install mmcv==2.1.0 --no-cache-dir
-pip install mmdet mmpose mmpretrain
+pip install -r requirements/requirements-run.txt
+pip install -r requirementa/requirements-model.txt --extra-index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements/requirements-develop.txt
 ```
 
 # Prepairing Bounding Boxes and Keypoints
