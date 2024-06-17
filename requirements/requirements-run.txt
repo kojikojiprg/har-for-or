@@ -10,6 +10,7 @@ torchvision
 lightning
 torch_geometric
 webdataset
+rotary_embedding_torch
 deepspeed
 
 ultralytics
