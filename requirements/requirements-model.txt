@@ -12,6 +12,7 @@ mmdet
 mmpose
 mmpretrain
 
-tensorboardx
+tensorboard
+tensorboardX
 torchsummary
 lap
