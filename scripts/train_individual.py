@@ -33,7 +33,6 @@ if __name__ == "__main__":
         filename=filename + "-loss-min",
         monitor="l",
         mode="min",
-        save_weights_only=True,
         save_last=True,
     )
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last.pt"
