@@ -6,7 +6,9 @@ from torchvision.transforms import Compose, Normalize
 
 class NormalizeKeypoints:
     def __call__(self, kps, img_size):
-        return kps / img_size
+        kps = kps / img_size  # [0, 1]
+        kps = kps * 2 - 1  # [-1, 1]
+        return kps
 
 
 class TimeSeriesToTensor:

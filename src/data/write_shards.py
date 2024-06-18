@@ -344,11 +344,11 @@ def _add_write_que_async(
     )
     unique_ids = sorted(list(unique_ids))
     meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que, unique_ids)
-    img_size = np.array(copy_frame_que.shape[1:3])
+    frame_size = np.array(copy_frame_que.shape[1:3])  # (h, w)
 
     if dataset_type == "individual":
         idv_npzs = individual_to_npz(
-            meta, unique_ids, idv_frames, idv_flows, bboxs, kps, img_size
+            meta, unique_ids, idv_frames, idv_flows, bboxs, kps, frame_size
         )
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
@@ -363,7 +363,7 @@ def _add_write_que_async(
                 "flow": idv_flows,
                 "bbox": bboxs,
                 "keypoints": kps,
-                "img_size": img_size,
+                "frame_size": frame_size,
             },
         }
         sink.add_write_que(data)

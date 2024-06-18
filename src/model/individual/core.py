@@ -150,7 +150,7 @@ class IndividualTemporalDecoder(nn.Module):
         )
 
         self.lin_spc = MLP(emb_hidden_ndim, 17 * 2)
-        self.act_spc = nn.Sigmoid()
+        self.act_spc = nn.Tanh()
 
     def forward(self, z, y, mask):
         # p(z|y)

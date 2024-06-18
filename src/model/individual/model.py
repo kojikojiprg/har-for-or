@@ -35,7 +35,17 @@ class IndividualActivityRecognition(LightningModule):
         return (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
 
     def loss_func(
-        self, x_vis, fake_x_vis, x_spc, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y, mask
+        self,
+        x_vis,
+        fake_x_vis,
+        x_spc,
+        fake_x_spc,
+        mu,
+        logvar,
+        mu_prior,
+        logvar_prior,
+        y,
+        mask,
     ):
         logs = {}
 

@@ -25,7 +25,7 @@ def collect_human_tracking(human_tracking_data, unique_ids):
     )
 
 
-def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
+def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, frame_size):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
     frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
@@ -50,7 +50,7 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, img_size):
             "flow": flows_idvs[i],
             "bbox": bboxs_idvs[i],
             "keypoints": kps_idvs[i],
-            "img_size": img_size,
+            "frame_size": frame_size,  # (h, w)
         }
         idvs.append(data)
     return idvs
@@ -65,7 +65,7 @@ def individual_npz_to_tensor(
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
-    _id, frames, flows, bboxs, kps, img_size = npz
+    _id, frames, flows, bboxs, kps, frame_size = npz
 
     if len(bboxs) < seq_len:
         # padding
@@ -80,7 +80,7 @@ def individual_npz_to_tensor(
     flows = flow_transform(flows)
     pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
 
-    kps = kps_transform(kps, img_size)
+    kps = kps_transform(kps, frame_size[::-1])  # frame_size: (h, w)
     kps = torch.from_numpy(kps).to(torch.float32)
 
     mask = torch.from_numpy(np.any(bboxs < 0, axis=(1, 2))).to(torch.bool)
