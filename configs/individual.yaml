@@ -20,7 +20,7 @@ patch_size: [32, 24]
 # optim
 lrc_x_vis: 2
 lrc_x_spc: 1
-lg: 2
+lg: 5
 lc: 1
 lr: 0.0001
 
