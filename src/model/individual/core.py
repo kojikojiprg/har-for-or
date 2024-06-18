@@ -74,7 +74,6 @@ class IndividualTemporalEncoder(nn.Module):
             next(self.parameters()).device
         )
         x[~mask] = x_emb
-        # TODO: check x
 
         # concat cls token
         x = torch.cat([self.cls_token.repeat(b, 1, 1), x], dim=1)
@@ -132,20 +131,25 @@ class IndividualTemporalDecoder(nn.Module):
             ]
         )
 
-        self.ff = MLP(config.hidden_ndim, config.hidden_ndim * 2)
+        self.ff = MLP(config.hidden_ndim, config.emb_hidden_ndim * 2)
 
         emb_hidden_ndim = config.emb_hidden_ndim
-        self.lin_vis = MLP(config.hidden_ndim, config.hidden_ndim * vis_npatchs)
+        self.lin_vis = MLP(emb_hidden_ndim, emb_hidden_ndim * vis_npatchs * 4)
         self.conv_transpose = nn.Sequential(
-            nn.ConvTranspose3d(emb_hidden_ndim, emb_hidden_ndim // 2, (1, 6, 6)),
+            nn.ConvTranspose2d(emb_hidden_ndim, emb_hidden_ndim // 2, 7, 2, bias=False),
+            nn.BatchNorm2d(emb_hidden_ndim // 2),
             nn.SiLU(),
-            nn.ConvTranspose3d(emb_hidden_ndim // 2, emb_hidden_ndim // 4, (1, 12, 8)),
+            nn.ConvTranspose2d(
+                emb_hidden_ndim // 2, emb_hidden_ndim // 4, (9, 5), 2, bias=False
+            ),
+            nn.BatchNorm2d(emb_hidden_ndim // 4),
             nn.SiLU(),
-            nn.ConvTranspose3d(emb_hidden_ndim // 4, 5, (1, 16, 12)),
+            nn.ConvTranspose2d(emb_hidden_ndim // 4, 5, (8, 4), bias=False),
+            nn.BatchNorm2d(5),
             nn.Tanh(),
         )
 
-        self.lin_spc = MLP(config.hidden_ndim, 17 * 2)
+        self.lin_spc = MLP(emb_hidden_ndim, 17 * 2)
         self.act_spc = nn.Sigmoid()
 
     def forward(self, z, y, mask):
@@ -175,14 +179,17 @@ class IndividualTemporalDecoder(nn.Module):
         # reconstruct
         x = x.view(-1, self.hidden_ndim)
         x = self.ff(x)
-        fake_x_vis, fake_x_spc = x[:, : self.hidden_ndim], x[:, self.hidden_ndim :]
+        fake_x_vis, fake_x_spc = x[:, : self.emb_hidden_ndim], x[:, self.emb_hidden_ndim :]
 
         # reconstruct x_vis
         fake_x_vis = self.lin_vis(fake_x_vis)
         fake_x_vis = fake_x_vis.view(
-            b * self.seq_len, self.emb_hidden_ndim, self.vis_npatchs, 1, 1
+            b * self.seq_len * self.vis_npatchs, self.emb_hidden_ndim, 2, 2
         )
         fake_x_vis = self.conv_transpose(fake_x_vis)
+        ph, pw = fake_x_vis.size()[-2:]
+        fake_x_vis = fake_x_vis.view(b, self.seq_len, self.vis_npatchs, 5, ph, pw)
+        fake_x_vis = fake_x_vis.permute(0, 1, 3, 2, 4, 5).contiguous()
         h, w = self.img_size
         fake_x_vis = fake_x_vis.view(b, self.seq_len, 5, h, w)
 

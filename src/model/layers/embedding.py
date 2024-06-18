@@ -60,8 +60,8 @@ class PixcelEmbedding(nn.Module):
         nheads,
         nlayers,
         dropout,
-        patch_size=(16, 12),
-        img_size=(256, 192),
+        patch_size,
+        img_size,
     ):
         super().__init__()
         self.hidden_ndim = hidden_ndim
@@ -69,14 +69,17 @@ class PixcelEmbedding(nn.Module):
         self.npatchs = self.get_npatchs(img_size, patch_size)
 
         self.conv = nn.Sequential(
-            nn.Conv2d(5, hidden_ndim // 4, 1),
+            nn.Conv2d(5, hidden_ndim // 4, 1, bias=False),
+            nn.BatchNorm2d(hidden_ndim // 4),
             nn.SiLU(),
-            nn.Conv2d(hidden_ndim // 4, hidden_ndim // 2, (13, 9)),
+            nn.Conv2d(hidden_ndim // 4, hidden_ndim // 2, 4, 2, bias=False),
+            nn.BatchNorm2d(hidden_ndim // 2),
             nn.SiLU(),
-            nn.MaxPool2d((5, 5), 1, 0),
-            nn.Conv2d(hidden_ndim // 2, hidden_ndim, (11, 7)),
+            nn.MaxPool2d((3, 3), 1, 0),
+            nn.Conv2d(hidden_ndim // 2, hidden_ndim, (3, 3), 2, bias=False),
+            nn.BatchNorm2d(hidden_ndim),
             nn.SiLU(),
-            nn.MaxPool2d((5, 5), 1, 0),
+            nn.MaxPool2d((4, 2), 1, 0),
             nn.AvgPool2d((2, 2)),
         )
 
@@ -118,9 +121,9 @@ class IndividualEmbedding(nn.Module):
         out_ndim: int,
         nheads: int,
         nlayers: int,
-        dropout: float = 0.1,
-        patch_size=(16, 12),
-        img_size=(256, 192),
+        dropout: float,
+        patch_size,
+        img_size,
     ):
         super().__init__()
         self.emb_vis = PixcelEmbedding(

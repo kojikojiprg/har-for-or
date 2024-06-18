@@ -63,14 +63,14 @@ class IndividualActivityRecognition(LightningModule):
         loss = lrc_x_vis + lrc_x_spc + lg + lc
         logs["l"] = loss.item()
 
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=False)
+        self.log_dict(logs, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, mask = batch
-        x_vis = x_vis[0]
-        x_spc = x_spc[0]
-        mask = mask[0]
+        x_vis = x_vis[0].detach()
+        x_spc = x_spc[0].detach()
+        mask = mask[0].detach()
 
         fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
             x_vis, x_spc, mask

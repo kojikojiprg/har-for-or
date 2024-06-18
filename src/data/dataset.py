@@ -3,6 +3,7 @@ import functools
 import gc
 import itertools
 import os
+import tarfile
 import time
 import warnings
 from glob import glob
@@ -51,8 +52,7 @@ def write_shards(
     shard_maxcount = float(config.max_shard_count)
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    w = int(config.resize_shape.w)
-    h = int(config.resize_shape.h)
+    h, w = config.img_size
     shard_pattern = (
         f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-%06d.tar"
     )
@@ -122,7 +122,6 @@ def write_shards(
         sink = swm.SharedShardWriter(shard_pattern, maxcount=shard_maxcount, verbose=0)
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
-        async_results.append(write_async_result)
         arr_write_que_async_f = functools.partial(
             _add_write_que_async,
             n_frames_que=n_frames_que,
@@ -149,13 +148,9 @@ def write_shards(
         ec = functools.partial(_error_callback, *("_add_write_que_async",))
 
         for n_frame in range(seq_len, frame_count + 1, stride):
-            watch_dog_count = 0
             while not check_full_f():
                 async_results = _monitoring_async_tasks(async_results)
                 time.sleep(0.001)
-                watch_dog_count += 1
-                if watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
-                    raise RuntimeError("The dog barked in write_shards process!")
 
             while n_frame != n_frames_que[tail_of.value] + 1:
                 async_results = _monitoring_async_tasks(async_results)
@@ -409,6 +404,10 @@ def load_dataset(
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
+    n_samples = (len(shard_paths) - 1) * config.max_shard_count
+    with tarfile.open(shard_paths[-1]) as tar:
+        n_samples += len(tar.getnames())
+
     node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
     idv_npz_to_tensor = functools.partial(
         individual_npz_to_tensor,
@@ -438,7 +437,7 @@ def load_dataset(
     else:
         raise ValueError
 
-    return dataset
+    return dataset, n_samples
 
 
 def _node_splitter(src, length):

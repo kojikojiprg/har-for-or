@@ -33,7 +33,7 @@ if __name__ == "__main__":
     video_paths = sorted(glob(os.path.join(args.data_root, "*.mp4")))
     dataset_type = args.dataset_type
 
-    cfg_path = os.path.join(args.config_dir, f"dataset_{dataset_type}.yaml")
+    cfg_path = os.path.join(args.config_dir, f"{dataset_type}.yaml")
     config = yaml_handler.load(cfg_path)
     config_ht = yaml_handler.load(args.config_human_tracking_path)
     device = f"cuda:{args.gpu}"
