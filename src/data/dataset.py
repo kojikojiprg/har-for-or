@@ -3,15 +3,12 @@ import functools
 import gc
 import itertools
 import os
-import tarfile
 import time
 import warnings
-from glob import glob
 from types import SimpleNamespace
 
 warnings.filterwarnings("ignore")
 import numpy as np
-import webdataset as wds
 from torch.multiprocessing import Pool, set_start_method
 from tqdm import tqdm
 
@@ -19,16 +16,7 @@ from src.model import HumanTracking
 from src.utils import json_handler, video
 
 from .obj import ShardWritingManager, SharedNDArray, SharedShardWriter
-from .transform import (
-    FlowToTensor,
-    FrameToTensor,
-    NormalizeKeypoints,
-    clip_images_by_bbox,
-    collect_human_tracking,
-    group_npz_to_tensor,
-    individual_npz_to_tensor,
-    individual_to_npz,
-)
+from .transform import clip_images_by_bbox, collect_human_tracking, individual_to_npz
 
 set_start_method("spawn", force=True)
 
@@ -386,68 +374,3 @@ def _add_write_que_async(
     del data
     del copy_frame_que, copy_flow_que, copy_ht_que
     gc.collect()
-
-
-def load_dataset(
-    data_root: str,
-    dataset_type: str,
-    config: SimpleNamespace,
-    shuffle: bool = False,
-):
-    shard_paths = []
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
-
-    seq_len = int(config.seq_len)
-    stride = int(config.stride)
-    h, w = config.img_size
-    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
-    for dir_path in data_dirs:
-        shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
-
-    n_samples = (len(shard_paths) - 1) * config.max_shard_count
-    with tarfile.open(shard_paths[-1]) as tar:
-        n_samples += len(tar.getnames())
-
-    node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
-    idv_npz_to_tensor = functools.partial(
-        individual_npz_to_tensor,
-        seq_len=seq_len,
-        frame_transform=FrameToTensor(),
-        flow_transform=FlowToTensor(),
-        kps_transform=NormalizeKeypoints(),
-    )
-    grp_npz_to_tensor = functools.partial(
-        group_npz_to_tensor,
-        frame_transform=FrameToTensor(),
-        flow_transform=FlowToTensor(),
-        kps_transform=NormalizeKeypoints(),
-    )
-
-    dataset = wds.WebDataset(
-        shard_paths, shardshuffle=shuffle, nodesplitter=node_splitter
-    )
-
-    if shuffle:
-        dataset = dataset.shuffle(100)
-
-    if dataset_type == "individual":
-        dataset = dataset.map(idv_npz_to_tensor)
-    elif dataset_type == "group":
-        dataset = dataset.map(grp_npz_to_tensor)
-    else:
-        raise ValueError
-
-    return dataset, n_samples
-
-
-def _node_splitter(src, length):
-    if "WORLD_SIZE" in os.environ:
-        world_size = int(os.environ["WORLD_SIZE"])
-    else:
-        world_size = 1
-
-    if world_size > 1:
-        rank = int(os.environ["LOCAL_RANK"])
-        yield from itertools.islice(src, rank, length, world_size)
-    else:
-        yield from src

@@ -5,10 +5,9 @@ import sys
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
-from webdataset import WebLoader
 
 sys.path.append(".")
-from src.data import load_dataset
+from src.data import train_dataloader
 from src.model import IndividualActivityRecognition
 from src.utils import yaml_handler
 
@@ -40,12 +39,7 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last.pt"
 
     # load dataset
-    dataset, n_samples = load_dataset(data_root, "individual", config, True)
-    dataset = dataset.batched(config.batch_size, partial=False)
-
-    dataloader = WebLoader(dataset, num_workers=config.num_workers, pin_memory=True)
-    n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
-    dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples - 1)
+    dataloader = train_dataloader(data_root, "individual", config, gpu_ids)
 
     # create model
     model = IndividualActivityRecognition(config)
