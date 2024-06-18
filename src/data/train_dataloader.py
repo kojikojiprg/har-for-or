@@ -16,7 +16,7 @@ from .transform import (
 )
 
 
-def train_dataloader(
+def individual_train_dataloader(
     data_root: str, dataset_type: str, config: SimpleNamespace, gpu_ids: list
 ) -> wds.WebLoader:
     shard_paths = []
@@ -28,10 +28,6 @@ def train_dataloader(
     shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
     for dir_path in data_dirs:
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
-
-    n_samples = (len(shard_paths) - 1) * config.max_shard_count
-    with tarfile.open(shard_paths[-1]) as tar:
-        n_samples += len(tar.getnames())
 
     node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
     idv_npz_to_tensor = functools.partial(
@@ -60,7 +56,11 @@ def train_dataloader(
 
     dataset = dataset.batched(config.batch_size, partial=False)
 
+    # create dataloader
     dataloader = wds.WebLoader(dataset, num_workers=config.num_workers, pin_memory=True)
+    n_samples = (len(shard_paths) - 1) * config.max_shard_count
+    with tarfile.open(shard_paths[-1]) as tar:
+        n_samples += len(tar.getnames())
     n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
     dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples - 1)
 

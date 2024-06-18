@@ -7,7 +7,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 
 sys.path.append(".")
-from src.data import train_dataloader
+from src.data import individual_train_dataloader
 from src.model import IndividualActivityRecognition
 from src.utils import yaml_handler
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last.pt"
 
     # load dataset
-    dataloader = train_dataloader(data_root, "individual", config, gpu_ids)
+    dataloader = individual_train_dataloader(data_root, "individual", config, gpu_ids)
 
     # create model
     model = IndividualActivityRecognition(config)
