@@ -1,14 +1,15 @@
+import numpy as np
 import torch
 import torchvision.transforms.functional as F
 from numpy.typing import NDArray
 from torchvision.transforms import Compose, Normalize
 
 
-class NormalizeKeypoints:
-    def __call__(self, kps, img_size):
-        kps = kps / img_size  # [0, 1]
-        kps = kps * 2 - 1  # [-1, 1]
-        return kps
+class NormalizePoint:
+    def __call__(self, pt, img_size):
+        pt = pt - (np.array(img_size) / 2)
+        pt /= img_size  # [-1, 1]
+        return pt
 
 
 class TimeSeriesToTensor:

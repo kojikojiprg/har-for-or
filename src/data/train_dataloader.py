@@ -10,7 +10,7 @@ import webdataset as wds
 from .transform import (
     FlowToTensor,
     FrameToTensor,
-    NormalizeKeypoints,
+    NormalizePoint,
     group_npz_to_tensor,
     individual_npz_to_tensor,
 )
@@ -35,13 +35,13 @@ def individual_train_dataloader(
         seq_len=seq_len,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
-        kps_transform=NormalizeKeypoints(),
+        point_transform=NormalizePoint(),
     )
     grp_npz_to_tensor = functools.partial(
         group_npz_to_tensor,
         frame_transform=FrameToTensor(),
         flow_transform=FlowToTensor(),
-        kps_transform=NormalizeKeypoints(),
+        point_transform=NormalizePoint(),
     )
 
     dataset = wds.WebDataset(shard_paths, shardshuffle=True, nodesplitter=node_splitter)
@@ -62,7 +62,7 @@ def individual_train_dataloader(
     with tarfile.open(shard_paths[-1]) as tar:
         n_samples += len(tar.getnames())
     n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
-    dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples - 1)
+    dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples)
 
     return dataloader
 

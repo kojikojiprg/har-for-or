@@ -15,9 +15,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
+    parser.add_argument(
+        "-l", "--load_checkpoint", required=False, action="store_true", default=False
+    )
     args = parser.parse_args()
     data_root = args.data_root
     gpu_ids = args.gpu_ids
+    load_checkpoint = args.load_checkpoint
 
     # load config
     config_path = "configs/individual.yaml"
@@ -26,7 +30,7 @@ if __name__ == "__main__":
     # model checkpoint callback
     h, w = config.img_size
     checkpoint_dir = "models/individual/"
-    filename = f"individual-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}.pt"
+    filename = f"individual-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
@@ -35,7 +39,11 @@ if __name__ == "__main__":
         mode="min",
         save_last=True,
     )
-    model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last.pt"
+    model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last"
+    if load_checkpoint:
+        checkpoint_path = model_checkpoint.CHECKPOINT_NAME_LAST
+    else:
+        checkpoint_path = None
 
     # load dataset
     dataloader = individual_train_dataloader(data_root, "individual", config, gpu_ids)
@@ -54,4 +62,4 @@ if __name__ == "__main__":
         accumulate_grad_batches=config.accumulate_grad_batches,
         benchmark=True,
     )
-    trainer.fit(model, train_dataloaders=dataloader)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=checkpoint_path)

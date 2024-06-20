@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
-from .core import IndividualTemporalTransformer
+from .core import Px_z, Pz_y, Q
 
 
 class IndividualActivityRecognition(LightningModule):
@@ -13,12 +13,27 @@ class IndividualActivityRecognition(LightningModule):
         self.config = config
         self.seq_len = config.seq_len
         self.lr = config.lr
-        self.model = None
+        self.Q = None
+        self.Pz_y = None
+        self.Px_z = None
 
     def configure_model(self):
-        if self.model is not None:
+        if self.Q is not None:
             return
-        self.model = IndividualTemporalTransformer(self.config)
+        self.Q = Q(self.config)
+        vis_npatchs = self.Q.emb.emb_vis.npatchs
+        self.Pz_y = Pz_y(self.config)
+        self.Px_z = Px_z(self.config, vis_npatchs)
+
+    def forward(self, x_vis, x_spc, mask):
+        z, mu, logvar, y = self.Q(x_vis, x_spc, mask)
+
+        resampled_y = F.gumbel_softmax(y, self.config.tau)
+
+        z_prior, mu_prior, logvar_prior = self.Pz_y(resampled_y)
+        fake_x_vis, fake_x_spc = self.Px_z(z, mask)
+
+        return fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
 
     @staticmethod
     def loss_kl_gaussian(m, logv, m_p, logv_p):
@@ -73,7 +88,7 @@ class IndividualActivityRecognition(LightningModule):
         loss = lrc_x_vis + lrc_x_spc + lg + lc
         logs["l"] = loss.item()
 
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
+        self.log_dict(logs, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -82,7 +97,7 @@ class IndividualActivityRecognition(LightningModule):
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
 
-        fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
             x_vis, x_spc, mask
         )
         loss = self.loss_func(
@@ -99,7 +114,7 @@ class IndividualActivityRecognition(LightningModule):
         )
 
         del batch, x_vis, x_spc, mask  # release memory
-        del fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y
+        del fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
         torch.cuda.empty_cache()
 
         return loss
@@ -107,7 +122,7 @@ class IndividualActivityRecognition(LightningModule):
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, mask = batch
 
-        fake_x_vis, fake_x_spc, z, mu, logvar, mu_prior, logvar_prior, y = self.model(
+        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
             x_vis, x_spc, mask
         )
         mse_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask]).item()
@@ -121,10 +136,10 @@ class IndividualActivityRecognition(LightningModule):
             "x_spc": x_spc[0].cpu().numpy(),
             "fake_x_spc": fake_x_spc[0].cpu().numpy(),
             "mse_x_spc": mse_x_spc,
-            "z": z[0].cpu().numpy(),
             "mu": mu[0].cpu().numpy(),
             "logvar": logvar[0].cpu().numpy(),
             "y": y[0].cpu().numpy(),
+            "mask": mask[0].cpu().numpy(),
         }
         return data
 

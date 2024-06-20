@@ -9,7 +9,7 @@ from src.data.graph import DynamicSpatialTemporalGraph
 
 
 def group_npz_to_tensor(
-    sample, frame_transform, flow_transform, kps_transform
+    sample, frame_transform, flow_transform, point_transform
 ):
     npz = np.load(io.BytesIO(sample["npz"]))
 
@@ -23,10 +23,10 @@ def group_npz_to_tensor(
     flows = flow_transform(flows)
     pixcels = torch.cat([frames, flows], dim=1).contiguous()
 
-    kps = kps_transform(kps, bboxs)
+    kps = point_transform(kps, bboxs)
     kps = torch.tensor(kps, dtype=torch.float32).contiguous()
 
-    bboxs = kps_transform(bboxs, img_size)
+    bboxs = point_transform(bboxs, img_size)
     bbox_centers = [_calc_bbox_center(b) for b in bboxs]
     bboxs = torch.tensor(bboxs, dtype=torch.float32).contiguous()
 

@@ -11,7 +11,7 @@ class TransformerEmbedding(nn.Module):
         super().__init__()
         self.feature = nn.Parameter(torch.randn((1, 1, in_ndim)), requires_grad=True)
 
-        self.pe = RotaryEmbedding(in_ndim + 1, learned_freq=True)
+        self.pe = RotaryEmbedding(in_ndim + 1, learned_freq=False)
         self.layers = nn.ModuleList(
             [TransformerEncoderBlock(in_ndim, nheads, dropout) for _ in range(nlayers)]
         )
@@ -34,8 +34,9 @@ class TransformerEmbedding(nn.Module):
         return x
 
 
-class KeypointsEmbedding(nn.Module):
-    npatchs = 17
+class PointEmbedding(nn.Module):
+    # npatchs = 17
+    npatchs = 2
 
     def __init__(self, hidden_ndim, out_ndim, nheads, nlayers, dropout):
         super().__init__()
@@ -44,12 +45,12 @@ class KeypointsEmbedding(nn.Module):
             hidden_ndim, out_ndim, nheads, nlayers, dropout
         )
 
-    def forward(self, kps):
-        # kps (b, 17, 2)
-        kps = self.lin(kps)  # (b, 17, ndim)
+    def forward(self, pt):
+        # pt (b, npatchs, 2)
+        pt = self.lin(pt)  # (b, npatchs, ndim)
 
-        kps = self.transformer(kps)
-        return kps  # (b, ndim)
+        pt = self.transformer(pt)
+        return pt  # (b, ndim)
 
 
 class PixcelEmbedding(nn.Module):
@@ -129,14 +130,14 @@ class IndividualEmbedding(nn.Module):
         self.emb_vis = PixcelEmbedding(
             hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
         )
-        self.emb_spc = KeypointsEmbedding(
+        self.emb_spc = PointEmbedding(
             hidden_ndim, out_ndim, nheads, nlayers, dropout
         )
         self.ff = MLP(out_ndim * 2, out_ndim)
 
     def forward(self, x_vis, x_spc):
         # f_vis (b, 5, h, w)
-        # f_spc (b, 17, 2)
+        # f_spc (b, npoints, 2)
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
         x = torch.cat([x_vis, x_spc], dim=1)
