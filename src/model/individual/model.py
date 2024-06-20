@@ -65,12 +65,12 @@ class IndividualActivityRecognition(LightningModule):
         logs = {}
 
         # reconstruct loss of x
-        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask])
+        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="mean")
         lrc_x_vis *= self.config.lrc_x_vis
         logs["x_vis"] = lrc_x_vis.item()
 
         # reconstruct loss of bbox
-        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask])
+        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="sum")
         lrc_x_spc *= self.config.lrc_x_spc
         logs["x_spc"] = lrc_x_spc.item()
 
@@ -126,12 +126,12 @@ class IndividualActivityRecognition(LightningModule):
             x_vis, x_spc, mask
         )
         mse_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask]).item()
-        mse_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask]).item()
+        mse_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="sum").item()
         data = {
             "key": keys[0],
-            "id": ids[0],
-            "x_vis": x_vis[0].cpu().numpy(),
-            "fake_x_vis": fake_x_vis[0].cpu().numpy(),
+            "id": ids[0].cpu().numpy().item(),
+            "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+            "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
             "mse_x_vis": mse_x_vis,
             "x_spc": x_spc[0].cpu().numpy(),
             "fake_x_spc": fake_x_spc[0].cpu().numpy(),
