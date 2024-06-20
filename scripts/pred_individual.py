@@ -3,10 +3,8 @@
 import sys
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from sklearn.manifold import TSNE
 from tqdm import tqdm
 from webdataset import WebLoader
 
@@ -120,13 +118,6 @@ if __name__ == "__main__":
     vis.plot_mse(mse_x_spc_dict, max_n_frame, stride, f"{data_dir}/pred_x_spc.jpg")
 
     # plot latent feature
-    tsne = TSNE(n_components=2, random_state=0, perplexity=30, n_iter=1000)
-    mu_embedded = tsne.fit_transform(np.array(latent_features["mu"]))
+    X = np.array(latent_features["mu"])
     labels = np.array(latent_features["label"])
-    unique_labels = np.unique(labels)
-    for label in unique_labels:
-        mu_cluster = mu_embedded[labels == label]
-        plt.scatter(mu_cluster.T[0], mu_cluster.T[1], s=2, label=label, alpha=0.7)
-    plt.legend()
-    plt.savefig(f"{data_dir}/pred_mu_tsne.jpg", bbox_inches="tight")
-    plt.close()
+    vis.plot_tsne(X, labels, f"{data_dir}/pred_mu_tsne.jpg")

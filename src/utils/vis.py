@@ -1,6 +1,7 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.manifold import TSNE
 
 EDGE_INDEX = [
     (0, 1),
@@ -191,5 +192,17 @@ def plot_mse(mse_x_dict, frame_count, stride, figpath):
     # plt.legend()
     plt.xlim(0, n_samples)
     plt.xlabel("sec")
+    plt.savefig(figpath, bbox_inches="tight")
+    plt.close()
+
+
+def plot_tsne(X, labels, figpath):
+    tsne = TSNE(n_components=2, random_state=42, perplexity=10, n_iter=1000)
+    embedded = tsne.fit_transform(X)
+    unique_labels = np.unique(labels)
+    for label in unique_labels:
+        mu_cluster = embedded[labels == label]
+        plt.scatter(mu_cluster.T[0], mu_cluster.T[1], s=2, label=label, alpha=0.7)
+    plt.legend(bbox_to_anchor=(1.01, 1))
     plt.savefig(figpath, bbox_inches="tight")
     plt.close()
