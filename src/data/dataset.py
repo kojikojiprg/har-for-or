@@ -16,11 +16,10 @@ from .transform import (
 )
 
 
-def individual_train_dataloader(
-    data_root: str, dataset_type: str, config: SimpleNamespace, gpu_ids: list
+def load_dataset(
+    data_dirs: str, dataset_type: str, config: SimpleNamespace, shuffle: bool
 ) -> wds.WebLoader:
     shard_paths = []
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
@@ -30,37 +29,49 @@ def individual_train_dataloader(
         shard_paths += sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
 
     node_splitter = functools.partial(_node_splitter, length=len(shard_paths))
-    idv_npz_to_tensor = functools.partial(
-        individual_npz_to_tensor,
-        seq_len=seq_len,
-        frame_transform=FrameToTensor(),
-        flow_transform=FlowToTensor(),
-        point_transform=NormalizePoint(),
+    dataset = wds.WebDataset(
+        shard_paths, shardshuffle=shuffle, nodesplitter=node_splitter
     )
-    grp_npz_to_tensor = functools.partial(
-        group_npz_to_tensor,
-        frame_transform=FrameToTensor(),
-        flow_transform=FlowToTensor(),
-        point_transform=NormalizePoint(),
-    )
-
-    dataset = wds.WebDataset(shard_paths, shardshuffle=True, nodesplitter=node_splitter)
-    dataset = dataset.shuffle(100)
+    if shuffle:
+        dataset = dataset.shuffle(100)
 
     if dataset_type == "individual":
+        idv_npz_to_tensor = functools.partial(
+            individual_npz_to_tensor,
+            seq_len=seq_len,
+            frame_transform=FrameToTensor(),
+            flow_transform=FlowToTensor(),
+            point_transform=NormalizePoint(),
+        )
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":
+        grp_npz_to_tensor = functools.partial(
+            group_npz_to_tensor,
+            frame_transform=FrameToTensor(),
+            flow_transform=FlowToTensor(),
+            point_transform=NormalizePoint(),
+        )
         dataset = dataset.map(grp_npz_to_tensor)
     else:
         raise ValueError
 
+    n_samples = (len(shard_paths) - 1) * config.max_shard_count
+    with tarfile.open(shard_paths[-1]) as tar:
+        n_samples += len(tar.getnames())
+
+    return dataset, n_samples
+
+
+def individual_train_dataloader(
+    data_root: str, dataset_type: str, config: SimpleNamespace, gpu_ids: list
+) -> wds.WebLoader:
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+
+    dataset, n_samples = load_dataset(data_dirs, dataset_type, config, True)
     dataset = dataset.batched(config.batch_size, partial=False)
 
     # create dataloader
     dataloader = wds.WebLoader(dataset, num_workers=config.num_workers, pin_memory=True)
-    n_samples = (len(shard_paths) - 1) * config.max_shard_count
-    with tarfile.open(shard_paths[-1]) as tar:
-        n_samples += len(tar.getnames())
     n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
     dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples)
 
