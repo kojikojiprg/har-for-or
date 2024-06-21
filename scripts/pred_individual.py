@@ -42,7 +42,7 @@ if __name__ == "__main__":
     video_path = f"{data_dir}.mp4"
     cap = video.Capture(video_path)
     max_n_frame = cap.frame_count
-    img_size = cap.size
+    frame_size = cap.size
 
     # create writers
     wrt_x_vis = video.Writer(f"{data_dir}/pred_x_vis.mp4", cap.fps, cap.size)
@@ -93,15 +93,15 @@ if __name__ == "__main__":
                     )
 
                     frame_vis = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, img_size, "x_vis"
+                        frame.copy(), results_tmp, idx_data, frame_size, "x_vis"
                     )
                     wrt_x_vis.write(frame_vis)
                     frame_spc = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, img_size, "x_spc"
+                        frame.copy(), results_tmp, idx_data, frame_size, "x_spc"
                     )
                     wrt_x_spc.write(frame_spc)
                     frame_cluster = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, img_size, "cluster"
+                        frame.copy(), results_tmp, idx_data, frame_size, "cluster"
                     )
                     wrt_cluster.write(frame_cluster)
 

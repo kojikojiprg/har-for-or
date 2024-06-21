@@ -6,9 +6,9 @@ from torchvision.transforms import Compose, Normalize
 
 
 class NormalizePoint:
-    def __call__(self, pt, img_size):
-        pt = pt - (np.array(img_size) / 2)
-        pt /= img_size  # [-1, 1]
+    def __call__(self, pt, frame_size):
+        pt = pt / np.array(frame_size)  # [0, 1]
+        pt = 2 * pt - 1  # [-1, 1]
         return pt
 
 

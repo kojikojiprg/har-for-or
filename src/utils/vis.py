@@ -89,7 +89,7 @@ def draw_bbox(frame: np.array, bbox: np.array, color: tuple):
     return frame
 
 
-def plot_on_frame(frame, results, idx_data, img_size, content):
+def plot_on_frame(frame, results, idx_data, frame_size, content):
     cm = plt.get_cmap("tab10")
     for data in results:
         _id = data["id"]
@@ -105,7 +105,7 @@ def plot_on_frame(frame, results, idx_data, img_size, content):
             frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
         )
 
-        bbox = (bbox.copy() * img_size) + np.array(img_size) / 2
+        bbox = (bbox.copy() + 1) / 2 * frame_size
         if content == "x_vis":
             fake_img = data["fake_x_vis"][idx_data]
             mse_x_vis = data["mse_x_vis"]
@@ -134,7 +134,7 @@ def plot_on_frame(frame, results, idx_data, img_size, content):
             fake_bbox = data["fake_x_spc"][idx_data]
 
             # bbox and fake_bbox
-            fake_bbox = (fake_bbox.copy() * img_size) + np.array(img_size) / 2
+            fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
             frame = draw_bbox(frame, bbox, color=(0, 255, 0))
             frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
 
@@ -167,7 +167,7 @@ def plot_on_frame(frame, results, idx_data, img_size, content):
     return frame
 
 
-def plot_mse(mse_x_dict, frame_count, stride, figpath):
+def plot_mse(mse_x_dict, frame_count, stride, figpath=None, is_show=False):
     vals_dict = {}
     for _id, mse_dict in mse_x_dict.items():
         if len(mse_dict) < 2:
@@ -186,23 +186,31 @@ def plot_mse(mse_x_dict, frame_count, stride, figpath):
     vals = np.array(list(vals_dict.values())).T
     mse_mean = np.nanmean(vals, axis=1)
 
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(12, 4))
     plt.plot(vals, color="black", linewidth=1, alpha=0.5, label=ids)
     plt.plot(mse_mean, color="red", label="mean")
     # plt.legend()
     plt.xlim(0, n_samples)
     plt.xlabel("sec")
-    plt.savefig(figpath, bbox_inches="tight")
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight")
+    if is_show:
+        plt.show()
     plt.close()
 
 
-def plot_tsne(X, labels, figpath):
+def plot_tsne(X, labels, figpath=None, is_show=False):
     tsne = TSNE(n_components=2, random_state=42, perplexity=10, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
+    cm = plt.get_cmap("tab10")
     for label in unique_labels:
         mu_cluster = embedded[labels == label]
-        plt.scatter(mu_cluster.T[0], mu_cluster.T[1], s=2, label=label, alpha=0.7)
+        c = cm(int(label))
+        plt.scatter(mu_cluster.T[0], mu_cluster.T[1], s=2, c=c, label=label)
     plt.legend(bbox_to_anchor=(1.01, 1))
-    plt.savefig(figpath, bbox_inches="tight")
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight")
+    if is_show:
+        plt.show()
     plt.close()
