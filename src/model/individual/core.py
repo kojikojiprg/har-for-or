@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 
 from src.model.layers import (
@@ -44,7 +43,9 @@ class Q(nn.Module):
             ]
         )
 
-        self.px_y = MLP(config.hidden_ndim, config.n_clusters)
+        self.qy_x = nn.Sequential(
+            MLP(config.hidden_ndim, config.n_clusters), nn.Softmax(dim=1)
+        )
 
         self.ff_mu = MLP((config.seq_len + 1) * config.hidden_ndim, config.latent_ndim)
         self.ff_logvar = MLP(
@@ -76,8 +77,7 @@ class Q(nn.Module):
 
         # q(y|x)
         y = x[:, 0, :]  # cls token
-        y = self.px_y(y.view(b, hidden_ndim))
-        y = F.softmax(y, dim=1)
+        y = self.qy_x(y.view(b, hidden_ndim))
 
         # q(z|x, y)
         x = x.view(b, seq_len_1 * hidden_ndim)
@@ -132,10 +132,10 @@ class Px_z(nn.Module):
             ]
         )
 
-        # self.ff = MLP(config.hidden_ndim, config.emb_hidden_ndim * 2)
+        self.ff = MLP(config.hidden_ndim, config.emb_hidden_ndim * 2)
 
         emb_hidden_ndim = config.emb_hidden_ndim
-        self.lin_vis = MLP(config.hidden_ndim, emb_hidden_ndim * vis_npatchs * 4)
+        self.lin_vis = MLP(config.emb_hidden_ndim, emb_hidden_ndim * vis_npatchs * 4)
         self.conv_transpose = nn.Sequential(
             nn.ConvTranspose3d(
                 emb_hidden_ndim, emb_hidden_ndim // 2, (1, 7, 7), (1, 2, 2), bias=False
@@ -157,7 +157,7 @@ class Px_z(nn.Module):
         )
 
         self.lin_spc = nn.Sequential(
-            MLP(config.hidden_ndim * config.seq_len, 2 * 2 * config.seq_len),
+            MLP(config.emb_hidden_ndim * config.seq_len, 2 * 2 * config.seq_len),
             nn.LayerNorm(2 * 2 * config.seq_len),
             nn.Tanh(),
         )
@@ -168,37 +168,36 @@ class Px_z(nn.Module):
         # embedding fake x
         fake_x = self.emb(z)
         fake_x = fake_x.view(b, self.seq_len, self.hidden_ndim)
-        fake_x = self.pe.rotate_queries_or_keys(fake_x, seq_dim=1)
+        fake_x = self.pe.rotate_queries_or_keys(fake_x, seq_dim=1, offset=1)
 
         z = self.ff_z(z)
         z = z.view(b, self.seq_len, self.hidden_ndim)
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1, offset=1)
 
         for layer in self.decoders:
             fake_x = layer(fake_x, z, mask)
         # fake_x (b, seq_len, hidden_ndim)
 
         # reconstruct
-        # fake_x = fake_x.view(b * self.seq_len, self.hidden_ndim)
-        # fake_x = self.ff(fake_x)
-        # fake_x_vis, fake_x_spc = (
-        #     fake_x[:, : self.emb_hidden_ndim],
-        #     fake_x[:, self.emb_hidden_ndim :],
-        # )
-        # fake_x_vis, fake_x_spc (b, seq_len, emb_hidden_ndim)
+        fake_x = fake_x.view(b * self.seq_len, self.hidden_ndim)
+        fake_x = self.ff(fake_x)
+        fake_x_vis, fake_x_spc = (
+            fake_x[:, : self.emb_hidden_ndim],
+            fake_x[:, self.emb_hidden_ndim :],
+        )
+        # fake_x_vis, fake_x_spc (b * seq_len, emb_hidden_ndim)
 
         # reconstruct x_vis
-        fake_x_vis = self.lin_vis(fake_x)
+        fake_x_vis = self.lin_vis(fake_x_vis)
         fake_x_vis = fake_x_vis.view(
             b * self.seq_len, self.emb_hidden_ndim, self.vis_npatchs, 2, 2
         )
         fake_x_vis = self.conv_transpose(fake_x_vis)
-        ph, pw = fake_x_vis.size()[-2:]
-        fake_x_vis = fake_x_vis.view(b * self.seq_len, 5, self.vis_npatchs, ph, pw)
         h, w = self.img_size
         fake_x_vis = fake_x_vis.view(b, self.seq_len, 5, h, w)
 
         # reconstruct x_spc
-        fake_x_spc = fake_x.view(b, self.seq_len * self.hidden_ndim)
+        fake_x_spc = fake_x_spc.reshape(b, self.seq_len * self.emb_hidden_ndim)
         fake_x_spc = self.lin_spc(fake_x_spc)
         fake_x_spc = fake_x_spc.view(b, self.seq_len, 2, 2)
 

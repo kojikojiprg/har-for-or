@@ -69,20 +69,30 @@ class PixcelEmbedding(nn.Module):
         self.patch_size = patch_size
         self.npatchs = self.get_npatchs(img_size, patch_size)
 
-        self.conv = nn.Sequential(
+        self.conv1 = nn.Sequential(
             nn.Conv2d(5, hidden_ndim // 4, 1, bias=False),
+            nn.SiLU(),
             nn.BatchNorm2d(hidden_ndim // 4),
-            nn.SiLU(),
-            nn.Conv2d(hidden_ndim // 4, hidden_ndim // 2, 4, 2, bias=False),
-            nn.BatchNorm2d(hidden_ndim // 2),
-            nn.SiLU(),
-            nn.MaxPool2d((3, 3), 1, 0),
-            nn.Conv2d(hidden_ndim // 2, hidden_ndim, (3, 3), 2, bias=False),
-            nn.BatchNorm2d(hidden_ndim),
-            nn.SiLU(),
-            nn.MaxPool2d((4, 2), 1, 0),
-            nn.AvgPool2d((2, 2)),
         )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(hidden_ndim // 4, hidden_ndim // 2, 5, bias=False),
+            nn.SiLU(),
+            nn.BatchNorm2d(hidden_ndim // 2),
+            nn.MaxPool2d(5, 1, 0),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(hidden_ndim // 2, hidden_ndim, 5, bias=False),
+            nn.SiLU(),
+            nn.BatchNorm2d(hidden_ndim),
+            nn.MaxPool2d(5, 1, 0),
+        )
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(hidden_ndim, hidden_ndim, 3, bias=False),
+            nn.SiLU(),
+            nn.BatchNorm2d(hidden_ndim),
+            nn.MaxPool2d(3, 1, 0),
+        )
+        self.flatten = nn.Linear(hidden_ndim * 12 * 4, hidden_ndim)
 
         self.transformer = TransformerEmbedding(
             hidden_ndim, out_ndim, nheads, nlayers, dropout
@@ -106,8 +116,12 @@ class PixcelEmbedding(nn.Module):
         imgs = imgs.permute(0, 2, 1, 3, 4).contiguous()
         b, nimgs, c, h, w = imgs.size()
         imgs = imgs.view(b * nimgs, c, h, w)
-        imgs = self.conv(imgs)
-        imgs = imgs.view(b, nimgs, self.hidden_ndim)
+        imgs = self.conv1(imgs)
+        imgs = self.conv2(imgs)
+        imgs = self.conv3(imgs)
+        imgs = self.conv4(imgs)
+        imgs = imgs.view(b, nimgs, self.hidden_ndim * 12 * 4)
+        imgs = self.flatten(imgs)
         # imgs (b, nimgs, ndim)
 
         imgs = self.transformer(imgs)

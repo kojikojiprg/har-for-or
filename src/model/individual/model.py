@@ -8,11 +8,12 @@ from .core import Px_z, Pz_y, Q
 
 
 class IndividualActivityRecognition(LightningModule):
-    def __init__(self, config: SimpleNamespace):
+    def __init__(self, config: SimpleNamespace, is_pretrain: bool = False):
         super().__init__()
         self.config = config
         self.seq_len = config.seq_len
         self.lr = config.lr
+        self.is_pretrain = is_pretrain
         self.Q = None
         self.Pz_y = None
         self.Px_z = None
@@ -25,6 +26,10 @@ class IndividualActivityRecognition(LightningModule):
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
 
+        if self.is_pretrain:
+            self.Q.qy_x.requires_grad_(False)
+            self.Pz_y.requires_grad_(False)
+
     def forward(self, x_vis, x_spc, mask):
         z, mu, logvar, y = self.Q(x_vis, x_spc, mask)
 
@@ -34,6 +39,16 @@ class IndividualActivityRecognition(LightningModule):
         fake_x_vis, fake_x_spc = self.Px_z(z, mask)
 
         return fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
+
+    @staticmethod
+    def loss_x_vis(x_vis, fake_x_vis, mask):
+        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="none")
+        return lrc_x_vis.mean(dim=[1, 2, 3]).sum()
+
+    @staticmethod
+    def loss_x_spc(x_spc, fake_x_spc, mask):
+        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="none")
+        return lrc_x_spc.mean(dim=[1, 2]).sum()
 
     @staticmethod
     def loss_kl_gaussian(m, logv, m_p, logv_p):
@@ -65,14 +80,21 @@ class IndividualActivityRecognition(LightningModule):
         logs = {}
 
         # reconstruct loss of x
-        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="mean")
+        lrc_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
         lrc_x_vis *= self.config.lrc_x_vis
         logs["x_vis"] = lrc_x_vis.item()
 
         # reconstruct loss of bbox
-        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="sum")
+        lrc_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
         lrc_x_spc *= self.config.lrc_x_spc
         logs["x_spc"] = lrc_x_spc.item()
+
+        if self.is_pretrain:
+            loss = lrc_x_vis + lrc_x_spc
+            logs["l"] = loss.item()
+
+            self.log_dict(logs, prog_bar=True, on_step=False, on_epoch=True)
+            return loss
 
         # Gaussian loss
         lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
@@ -125,17 +147,17 @@ class IndividualActivityRecognition(LightningModule):
         fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
             x_vis, x_spc, mask
         )
-        mse_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask]).item()
-        mse_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="sum").item()
+        mse_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
+        mse_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
         data = {
             "key": keys[0],
             "id": ids[0].cpu().numpy().item(),
             "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
             "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-            "mse_x_vis": mse_x_vis,
+            "mse_x_vis": mse_x_vis.item(),
             "x_spc": x_spc[0].cpu().numpy(),
             "fake_x_spc": fake_x_spc[0].cpu().numpy(),
-            "mse_x_spc": mse_x_spc,
+            "mse_x_spc": mse_x_spc.item(),
             "mu": mu[0].cpu().numpy(),
             "logvar": logvar[0].cpu().numpy(),
             "y": y[0].cpu().numpy(),
