@@ -13,7 +13,10 @@ class TransformerEmbedding(nn.Module):
 
         self.pe = RotaryEmbedding(in_ndim + 1, learned_freq=False)
         self.layers = nn.ModuleList(
-            [TransformerEncoderBlock(in_ndim, nheads, dropout) for _ in range(nlayers)]
+            [
+                TransformerEncoderBlock(in_ndim, nheads, dropout).clone()
+                for _ in range(nlayers)
+            ]
         )
         self.ff = SwiGLU(in_ndim, out_ndim)
 
@@ -35,21 +38,22 @@ class TransformerEmbedding(nn.Module):
 
 
 class PointEmbedding(nn.Module):
-    # npatchs = 17
-    npatchs = 2
-
-    def __init__(self, hidden_ndim, out_ndim, nheads, nlayers, dropout):
+    def __init__(self, hidden_ndim, point_type):
         super().__init__()
-        self.lin = MLP(2, hidden_ndim)
-        self.transformer = TransformerEmbedding(
-            hidden_ndim, out_ndim, nheads, nlayers, dropout
+        if point_type == "bbox":
+            self.npatchs = 2
+        elif point_type == "keypoints":
+            self.npatchs = 17
+
+        self.lin = nn.Sequential(
+            MLP(2 * self.npatchs, hidden_ndim), nn.LayerNorm(hidden_ndim), nn.SiLU()
         )
 
     def forward(self, pt):
         # pt (b, npatchs, 2)
+        pt = pt.view(-1, self.npatchs * 2)
         pt = self.lin(pt)  # (b, npatchs, ndim)
 
-        pt = self.transformer(pt)
         return pt  # (b, ndim)
 
 
@@ -141,17 +145,17 @@ class IndividualEmbedding(nn.Module):
         img_size,
     ):
         super().__init__()
-        self.emb_vis = PixcelEmbedding(
-            hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
-        )
-        self.emb_spc = PointEmbedding(
-            hidden_ndim, out_ndim, nheads, nlayers, dropout
-        )
-        self.ff = MLP(out_ndim * 2, out_ndim)
+        # self.emb_vis = PixcelEmbedding(
+        #     hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
+        # )
+        self.emb_vis = PointEmbedding(hidden_ndim, "keypoints")
+        self.emb_spc = PointEmbedding(hidden_ndim, "bbox")
+        self.ff = MLP(hidden_ndim * 2, out_ndim)
 
     def forward(self, x_vis, x_spc):
-        # f_vis (b, 5, h, w)
-        # f_spc (b, npoints, 2)
+        # # f_vis (b, 5, h, w)
+        # f_vis (b, 17, 2)
+        # f_spc (b, 2, 2)
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
         x = torch.cat([x_vis, x_spc], dim=1)

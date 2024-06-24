@@ -5,11 +5,32 @@ from numpy.typing import NDArray
 from torchvision.transforms import Compose, Normalize
 
 
-class NormalizePoint:
-    def __call__(self, pt, frame_size):
-        pt = pt / np.array(frame_size)  # [0, 1]
-        pt = 2 * pt - 1  # [-1, 1]
-        return pt
+class NormalizeBbox:
+    def __call__(self, bbox, frame_size):
+        bbox = bbox / np.array(frame_size)  # [0, 1]
+        bbox = 2 * bbox - 1  # [-1, 1]
+        return bbox
+
+
+class NormalizeKeypoints:
+    def __call__(self, kps, bbox):
+        ndim = kps.ndim
+        if ndim == 4:
+            n_ids, seq_len = kps.shape[:2]
+            bbox = bbox.reshape(n_ids, seq_len, 2, 2)
+            kps = kps - bbox[:, :, 0].reshape(n_ids, seq_len, 1, 2)
+            kps /= (bbox[:, :, 1] - bbox[:, :, 0]).reshape(n_ids, seq_len, 1, 2)
+            kps = 2 * kps - 1
+            return kps
+        elif ndim == 3:
+            n = kps.shape[0]
+            bbox = bbox.reshape(n, 2, 2)
+            kps = kps - bbox[:, 0].reshape(n, 1, 2)
+            kps /= (bbox[:, 1] - bbox[:, 0]).reshape(n, 1, 2)
+            kps = 2 * kps - 1
+            return kps
+        else:
+            raise ValueError
 
 
 class TimeSeriesToTensor:

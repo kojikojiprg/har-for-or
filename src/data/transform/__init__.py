@@ -1,7 +1,8 @@
 from .base import (
     FlowToTensor,
     FrameToTensor,
-    NormalizePoint,
+    NormalizeBbox,
+    NormalizeKeypoints,
     TimeSeriesTensorResize,
     TimeSeriesToTensor,
 )

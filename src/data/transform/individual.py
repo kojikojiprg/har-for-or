@@ -61,7 +61,8 @@ def individual_npz_to_tensor(
     seq_len,
     frame_transform,
     flow_transform,
-    point_transform,
+    bbox_transform,
+    kps_transform,
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
@@ -70,21 +71,25 @@ def individual_npz_to_tensor(
     if len(bboxs) < seq_len:
         # padding
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
-        frames = np.pad(frames, pad_shape, constant_values=-1)
-        flows = np.pad(flows, pad_shape, constant_values=-1e10)
+        # frames = np.pad(frames, pad_shape, constant_values=-1)
+        # flows = np.pad(flows, pad_shape, constant_values=-1e10)
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
-        # kps = np.pad(kps, pad_shape, constant_values=-1e10)
+        kps = np.pad(kps, pad_shape, constant_values=-1e10)
 
-    frames = frame_transform(frames)
-    flows = flow_transform(flows)
-    pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
+    # frames = frame_transform(frames)
+    # flows = flow_transform(flows)
+    # pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
 
     mask = torch.from_numpy(np.any(bboxs < 0, axis=(1, 2))).to(torch.bool)
 
-    bboxs[~mask] = point_transform(bboxs[~mask], frame_size[::-1])  # frame_size: (h, w)
+    kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
+    kps = torch.from_numpy(kps).to(torch.float32)
+
+    bboxs[~mask] = bbox_transform(bboxs[~mask], frame_size[::-1])  # frame_size: (h, w)
     bboxs = torch.from_numpy(bboxs).to(torch.float32)
 
-    del sample, npz, frames, flows, kps  # release memory
+    del sample, npz, frames, flows  # release memory
 
-    return key, _id, pixcels, bboxs, mask
+    # return key, _id, pixcels, bboxs, mask
+    return key, _id, kps, bboxs, mask

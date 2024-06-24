@@ -43,26 +43,28 @@ class IndividualActivityRecognition(LightningModule):
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
         lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="none")
-        return lrc_x_vis.mean(dim=[1, 2, 3]).sum()
+        # return lrc_x_vis.mean(dim=[1, 2, 3]).sum()
+        return lrc_x_vis.mean()
 
     @staticmethod
     def loss_x_spc(x_spc, fake_x_spc, mask):
         lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="none")
-        return lrc_x_spc.mean(dim=[1, 2]).sum()
+        return lrc_x_spc.mean()
 
     @staticmethod
-    def loss_kl_gaussian(m, logv, m_p, logv_p):
-        return -0.5 * torch.sum(
+    def loss_kl_gaussian(mu1, logv1, mu2, logv2):
+        # mu, log (b, seq_len, latent_ndim)
+        return -0.5 * torch.mean(
             1
-            + logv
-            - logv_p
-            - logv.exp() / logv_p.exp()
-            - (m_p - m) ** 2 / logv_p.exp()
+            + logv1
+            - logv2
+            - logv1.exp() / logv2.exp()
+            - (mu2 - mu1) ** 2 / logv2.exp()
         )
 
     @staticmethod
     def loss_kl_clustering(q, p, eps=1e-20):
-        return (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
+        return (q * torch.log(q + eps) - q * torch.log(p + eps)).sum()
 
     def loss_func(
         self,
@@ -93,7 +95,7 @@ class IndividualActivityRecognition(LightningModule):
             loss = lrc_x_vis + lrc_x_spc
             logs["l"] = loss.item()
 
-            self.log_dict(logs, prog_bar=True, on_step=False, on_epoch=True)
+            self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
             return loss
 
         # Gaussian loss
@@ -110,7 +112,7 @@ class IndividualActivityRecognition(LightningModule):
         loss = lrc_x_vis + lrc_x_spc + lg + lc
         logs["l"] = loss.item()
 
-        self.log_dict(logs, prog_bar=True, on_step=False, on_epoch=True)
+        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -143,6 +145,9 @@ class IndividualActivityRecognition(LightningModule):
 
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, mask = batch
+        x_vis = x_vis.to(next(self.parameters()).device)
+        x_spc = x_spc.to(next(self.parameters()).device)
+        mask = mask.to(next(self.parameters()).device)
 
         fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
             x_vis, x_spc, mask
@@ -152,8 +157,10 @@ class IndividualActivityRecognition(LightningModule):
         data = {
             "key": keys[0],
             "id": ids[0].cpu().numpy().item(),
-            "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-            "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+            # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+            # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+            "x_vis": x_vis[0].cpu().numpy(),
+            "fake_x_vis": fake_x_vis[0].cpu().numpy(),
             "mse_x_vis": mse_x_vis.item(),
             "x_spc": x_spc[0].cpu().numpy(),
             "fake_x_spc": fake_x_spc[0].cpu().numpy(),

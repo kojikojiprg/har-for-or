@@ -50,6 +50,8 @@ if __name__ == "__main__":
     model = IndividualActivityRecognition(config, is_pretrain)
     if not is_pretrain:
         pre_checkpoint_path = os.path.join(checkpoint_dir, f"{filename}-pre-last.ckpt")
+        if not os.path.exists(pre_checkpoint_path):
+            pre_checkpoint_path = None
     else:
         pre_checkpoint_path = None
 

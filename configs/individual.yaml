@@ -7,12 +7,12 @@ img_size: [256, 192]
 # model
 n_clusters: 10
 tau: 1.0
-hidden_ndim: 64
+hidden_ndim: 128
 latent_ndim: 32
 nheads: 4
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 32
+emb_hidden_ndim: 128
 emb_nheads: 4
 emb_nlayers: 6
 emb_dropout: 0.1
@@ -21,12 +21,12 @@ patch_size: [32, 24]
 # optim
 lrc_x_vis: 1
 lrc_x_spc: 1
-lg: 2
+lg: 1
 lc: 1
-lr: 0.0001
+lr: 0.00001
 
 # training
 epochs: 100
-batch_size: 1
-accumulate_grad_batches: 32
+batch_size: 32
+accumulate_grad_batches: 1
 num_workers: 8

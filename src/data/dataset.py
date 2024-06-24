@@ -10,7 +10,8 @@ import webdataset as wds
 from .transform import (
     FlowToTensor,
     FrameToTensor,
-    NormalizePoint,
+    NormalizeBbox,
+    NormalizeKeypoints,
     group_npz_to_tensor,
     individual_npz_to_tensor,
 )
@@ -41,7 +42,8 @@ def load_dataset(
             seq_len=seq_len,
             frame_transform=FrameToTensor(),
             flow_transform=FlowToTensor(),
-            point_transform=NormalizePoint(),
+            bbox_transform=NormalizeBbox(),
+            kps_transform=NormalizeKeypoints(),
         )
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":
@@ -49,7 +51,7 @@ def load_dataset(
             group_npz_to_tensor,
             frame_transform=FrameToTensor(),
             flow_transform=FlowToTensor(),
-            point_transform=NormalizePoint(),
+            point_transform=NormalizeBbox(),
         )
         dataset = dataset.map(grp_npz_to_tensor)
     else:

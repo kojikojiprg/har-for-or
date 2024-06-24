@@ -1,5 +1,7 @@
-# import os
 # from glob import glob
+import argparse
+import os
+import pickle
 import sys
 
 import cv2
@@ -14,27 +16,33 @@ from src.model import IndividualActivityRecognition
 from src.utils import video, vis, yaml_handler
 
 if __name__ == "__main__":
-    data_root = "../datasets/dataset03/train/01"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_root", type=str)
+    parser.add_argument("-g", "--gpu_id", type=int, default=None)
+    args = parser.parse_args()
+    data_root = args.data_root
+    gpu_id = args.gpu_id
+
     # data_dirs = sorted(glob(os.path.join(data_root, "*/")))
     data_dirs = [data_root]
     data_dir = data_dirs[0]
 
     checkpoint_path = (
-        "models/individual/individual-seq_len90-stride30-256x192-loss-min-v2.ckpt"
+        "models/individual/individual-seq_len90-stride30-256x192-last.ckpt"
     )
     config = yaml_handler.load("configs/individual.yaml")
     seq_len = config.seq_len
     stride = config.stride
-    gpu_id = 0
     device = f"cuda:{gpu_id}"
 
     # load dataset
     dataset, n_samples = load_dataset(data_dirs, "individual", config, False)
-    dataloader = WebLoader(dataset, num_workers=config.num_workers, pin_memory=True)
+    dataloader = WebLoader(dataset, num_workers=1, pin_memory=True)
 
     # load model
     model = IndividualActivityRecognition(config)
     model.configure_model()
+    model = model.to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["state_dict"])
 
@@ -53,6 +61,8 @@ if __name__ == "__main__":
     mse_x_vis_dict = {}
     mse_x_spc_dict = {}
     latent_features = {"label": [], "mu": [], "logvar": [], "z": []}
+    save_dir = os.path.join(data_dir, "pred")
+    os.makedirs(save_dir, exist_ok=True)
 
     model.eval()
     with torch.no_grad():
@@ -61,7 +71,12 @@ if __name__ == "__main__":
         for batch in tqdm(dataloader, total=n_samples):
             result = model.predict_step(batch)
             n_frame = int(result["key"].split("_")[1])
+            key = result["key"]
             _id = result["id"]
+
+            path = os.path.join(save_dir, f"{key}.pkl")
+            with open(path, "wb") as f:
+                pickle.dump(result, f)
 
             # collect mse
             if _id not in mse_x_vis_dict:
@@ -118,6 +133,6 @@ if __name__ == "__main__":
     vis.plot_mse(mse_x_spc_dict, max_n_frame, stride, f"{data_dir}/pred_x_spc.jpg")
 
     # plot latent feature
-    X = np.array(latent_features["mu"])
+    X = np.array(latent_features["mu"]).reshape(-1, config.seq_len * config.latent_ndim)
     labels = np.array(latent_features["label"])
     vis.plot_tsne(X, labels, f"{data_dir}/pred_mu_tsne.jpg")

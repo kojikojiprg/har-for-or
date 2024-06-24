@@ -106,17 +106,27 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
         )
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
+        # bbox = bbox.copy() * frame_size
         if content == "x_vis":
-            fake_img = data["fake_x_vis"][idx_data]
+            # fake_img = data["fake_x_vis"][idx_data]
+            kps = data["x_vis"][idx_data]
+            fake_kps = data["fake_x_vis"][idx_data]
             mse_x_vis = data["mse_x_vis"]
 
             # resize imgs and write
-            x1, y1, x2, y2 = bbox.reshape(4).astype(int)
-            fake_img = cv2.resize(fake_img, (x2 - x1, y2 - y1))
-            fake_img = fake_img[:, :, :3]
-            mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-            fake_img = ((fake_img * std) + mean) * 255
-            frame[y1:y2, x1:x2] = (fake_img).astype(np.uint8)
+            # x1, y1, x2, y2 = bbox.reshape(4).astype(int)
+            # fake_img = cv2.resize(fake_img, (x2 - x1, y2 - y1))
+            # fake_img = fake_img[:, :, :3]
+            # mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+            # fake_img = ((fake_img * std) + mean) * 255
+            # frame[y1:y2, x1:x2] = (fake_img).astype(np.uint8)
+
+            kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+            fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+            # kps = kps.copy() * (bbox[1] - bbox[0]) + bbox[0]
+            # fake_kps = fake_kps.copy() * (bbox[1] - bbox[0]) + bbox[0]
+            frame = draw_skeleton(frame, kps, color=(0, 255, 0))
+            frame = draw_skeleton(frame, fake_kps, color=(0, 0, 255))
 
             # mse
             pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
@@ -135,6 +145,7 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
 
             # bbox and fake_bbox
             fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
+            # fake_bbox = fake_bbox.copy() * frame_size
             frame = draw_bbox(frame, bbox, color=(0, 255, 0))
             frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
 
@@ -167,7 +178,7 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
     return frame
 
 
-def plot_mse(mse_x_dict, frame_count, stride, figpath=None, is_show=False):
+def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=False):
     vals_dict = {}
     for _id, mse_dict in mse_x_dict.items():
         if len(mse_dict) < 2:
@@ -184,14 +195,62 @@ def plot_mse(mse_x_dict, frame_count, stride, figpath=None, is_show=False):
 
     ids = list(vals_dict.keys())
     vals = np.array(list(vals_dict.values())).T
-    mse_mean = np.nanmean(vals, axis=1)
+    mse_ratio = np.count_nonzero(vals > th, axis=1) / np.count_nonzero(
+        np.nan_to_num(vals), axis=1
+    )
 
-    plt.figure(figsize=(12, 4))
-    plt.plot(vals, color="black", linewidth=1, alpha=0.5, label=ids)
-    plt.plot(mse_mean, color="red", label="mean")
+    num = 5
+    b = np.ones(num) / num
+    mse_ratio = np.convolve(mse_ratio, b, mode="same")
+
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 1, 1)
+    ax1.plot(vals, color="black", linewidth=1, alpha=0.3, label=ids)
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("sec")
+    ax1.set_ylim(0, 0.5)
+    ax1.set_ylabel(ylabel)
+
+    ax2 = ax1.twinx()
+    ax2.plot(mse_ratio, color="red", linewidth=1, label="mean")
+    ax2.set_ylim(0, 1)
+    ax2.set_ylabel(f"ratio (mse>{th})")
+
     # plt.legend()
-    plt.xlim(0, n_samples)
-    plt.xlabel("sec")
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight")
+    if is_show:
+        plt.show()
+    plt.close()
+
+
+def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=False):
+    vals_dict = {}
+    for label, count_dict in labels_dict.items():
+        if len(count_dict) < 2:
+            continue
+        n_frames = np.array(list(count_dict.keys()))
+        counts = np.array(list(count_dict.values()))
+
+        idxs = n_frames // stride
+        n_samples = frame_count // stride + 1
+        vals = np.full((n_samples,), np.nan, np.float32)
+        vals[idxs] = counts
+
+        vals_dict[label] = vals
+
+    ids = list(vals_dict.keys())
+    vals = np.array(list(vals_dict.values())).T
+
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 1, 1)
+    ax1.plot(vals, linewidth=1, label=ids)
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("sec")
+    ax1.set_ylabel("count")
+    plt.legend()
+
+    # plt.legend()
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:
