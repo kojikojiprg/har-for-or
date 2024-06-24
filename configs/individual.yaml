@@ -5,14 +5,14 @@ stride: 30
 img_size: [256, 192]
 
 # model
-n_clusters: 10
+n_clusters: 5
 tau: 1.0
-hidden_ndim: 128
+hidden_ndim: 512
 latent_ndim: 32
 nheads: 4
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 128
+emb_hidden_ndim: 512
 emb_nheads: 4
 emb_nlayers: 6
 emb_dropout: 0.1
@@ -21,8 +21,8 @@ patch_size: [32, 24]
 # optim
 lrc_x_vis: 1
 lrc_x_spc: 1
-lg: 1
-lc: 1
+lg: 2
+lc: 2
 lr: 0.00001
 
 # training

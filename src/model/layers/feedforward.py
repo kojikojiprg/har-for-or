@@ -9,9 +9,9 @@ class SwiGLU(nn.Module):
         if out_ndim is None:
             out_ndim = in_ndim
         hdim = int(in_ndim * 4 * (2 / 3))
-        self.w1 = nn.Linear(in_ndim, hdim, bias=False)
-        self.w2 = nn.Linear(hdim, out_ndim, bias=False)
-        self.w3 = nn.Linear(in_ndim, hdim, bias=False)
+        self.w1 = nn.Linear(in_ndim, hdim)
+        self.w2 = nn.Linear(hdim, out_ndim)
+        self.w3 = nn.Linear(in_ndim, hdim)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -28,6 +28,8 @@ class MLP(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout),
             nn.Linear(hdim, out_ndim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):

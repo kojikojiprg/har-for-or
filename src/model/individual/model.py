@@ -42,29 +42,40 @@ class IndividualActivityRecognition(LightningModule):
 
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
+        b, seq_len = x_vis.size()[:2]
         lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="none")
-        # return lrc_x_vis.mean(dim=[1, 2, 3]).sum()
-        return lrc_x_vis.mean()
+        if x_vis.ndim == 5:
+            lrc_x_vis = lrc_x_vis.mean(dim=[1, 2, 3]).sum()
+        elif x_vis.ndim == 4:
+            lrc_x_vis = lrc_x_vis.mean(dim=[1, 2]).sum()
+        else:
+            raise ValueError
+        return lrc_x_vis / (b * seq_len)
 
     @staticmethod
     def loss_x_spc(x_spc, fake_x_spc, mask):
+        b, seq_len = x_spc.size()[:2]
         lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="none")
-        return lrc_x_spc.mean()
+        lrc_x_spc = lrc_x_spc.mean(dim=[1, 2]).sum()
+        return lrc_x_spc / (b * seq_len)
 
     @staticmethod
-    def loss_kl_gaussian(mu1, logv1, mu2, logv2):
+    def loss_kl_gaussian(mu1, logv1, mu2, logv2, mask):
+        b, seq_len, latent_ndim = mu1.size()
         # mu, log (b, seq_len, latent_ndim)
-        return -0.5 * torch.mean(
+        lg = -0.5 * torch.sum(
             1
-            + logv1
-            - logv2
-            - logv1.exp() / logv2.exp()
-            - (mu2 - mu1) ** 2 / logv2.exp()
+            + logv1[~mask]
+            - logv2[~mask]
+            - logv1[~mask].exp() / logv2[~mask].exp()
+            - (mu2[~mask] - mu1[~mask]) ** 2 / logv2[~mask].exp()
         )
+        return lg / (b * seq_len * latent_ndim)
 
     @staticmethod
     def loss_kl_clustering(q, p, eps=1e-20):
-        return (q * torch.log(q + eps) - q * torch.log(p + eps)).sum()
+        lc = (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
+        return lc
 
     def loss_func(
         self,
@@ -99,7 +110,7 @@ class IndividualActivityRecognition(LightningModule):
             return loss
 
         # Gaussian loss
-        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, mask)
         lg *= self.config.lg
         logs["g"] = lg.item()
 
