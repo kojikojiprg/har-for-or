@@ -208,12 +208,12 @@ def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=
     ax1.plot(vals, color="black", linewidth=1, alpha=0.3, label=ids)
     ax1.set_xlim(0, n_samples)
     ax1.set_xlabel("sec")
-    ax1.set_ylim(0, 0.5)
+    ax1.set_ylim(0, 1.0)
     ax1.set_ylabel(ylabel)
 
     ax2 = ax1.twinx()
     ax2.plot(mse_ratio, color="red", linewidth=1, label="mean")
-    ax2.set_ylim(0, 1)
+    ax2.set_ylim(0, 10)
     ax2.set_ylabel(f"ratio (mse>{th})")
 
     # plt.legend()
@@ -258,11 +258,11 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
     plt.close()
 
 
-def plot_tsne(X, labels, figpath=None, is_show=False):
+def plot_tsne(X, labels, figpath=None, is_show=False, cmap="tab10"):
     tsne = TSNE(n_components=2, random_state=42, perplexity=10, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
-    cm = plt.get_cmap("tab10")
+    cm = plt.get_cmap(cmap)
     for label in unique_labels:
         mu_cluster = embedded[labels == label]
         c = cm(int(label))

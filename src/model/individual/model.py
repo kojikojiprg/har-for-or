@@ -28,17 +28,7 @@ class IndividualActivityRecognition(LightningModule):
 
         if self.is_pretrain:
             self.Q.qy_x.requires_grad_(False)
-            self.Pz_y.requires_grad_(False)
-
-    def forward(self, x_vis, x_spc, mask):
-        z, mu, logvar, y = self.Q(x_vis, x_spc, mask)
-
-        resampled_y = F.gumbel_softmax(y, self.config.tau)
-
-        z_prior, mu_prior, logvar_prior = self.Pz_y(resampled_y)
-        fake_x_vis, fake_x_spc = self.Px_z(z, mask)
-
-        return fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
+            # self.Pz_y.requires_grad_(False)
 
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
@@ -60,6 +50,11 @@ class IndividualActivityRecognition(LightningModule):
         return lrc_x_spc / (b * seq_len)
 
     @staticmethod
+    def loss_kl_clustering(q, p, eps=1e-10):
+        lc = (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
+        return lc
+
+    @staticmethod
     def loss_kl_gaussian(mu1, logv1, mu2, logv2, mask):
         b, seq_len, latent_ndim = mu1.size()
         # mu, log (b, seq_len, latent_ndim)
@@ -68,14 +63,9 @@ class IndividualActivityRecognition(LightningModule):
             + logv1[~mask]
             - logv2[~mask]
             - logv1[~mask].exp() / logv2[~mask].exp()
-            - (mu2[~mask] - mu1[~mask]) ** 2 / logv2[~mask].exp()
+            - (mu1[~mask] - mu2[~mask]) ** 2 / logv2[~mask].exp()
         )
         return lg / (b * seq_len * latent_ndim)
-
-    @staticmethod
-    def loss_kl_clustering(q, p, eps=1e-20):
-        lc = (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
-        return lc
 
     def loss_func(
         self,
@@ -95,24 +85,12 @@ class IndividualActivityRecognition(LightningModule):
         # reconstruct loss of x
         lrc_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
         lrc_x_vis *= self.config.lrc_x_vis
-        logs["x_vis"] = lrc_x_vis.item()
+        logs["vis"] = lrc_x_vis.item()
 
         # reconstruct loss of bbox
         lrc_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
         lrc_x_spc *= self.config.lrc_x_spc
-        logs["x_spc"] = lrc_x_spc.item()
-
-        if self.is_pretrain:
-            loss = lrc_x_vis + lrc_x_spc
-            logs["l"] = loss.item()
-
-            self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
-            return loss
-
-        # Gaussian loss
-        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, mask)
-        lg *= self.config.lg
-        logs["g"] = lg.item()
+        logs["spc"] = lrc_x_spc.item()
 
         # clustering loss
         y_prior = (torch.ones(y.size()) / y.size(1)).to(next(self.parameters()).device)
@@ -120,11 +98,25 @@ class IndividualActivityRecognition(LightningModule):
         lc *= self.config.lc
         logs["c"] = lc.item()
 
-        loss = lrc_x_vis + lrc_x_spc + lg + lc
-        logs["l"] = loss.item()
+        # Gaussian loss
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, mask)
+        lg *= self.config.lg
+        logs["g"] = lg.item()
 
+        if self.is_pretrain:
+            loss = lrc_x_vis + lrc_x_spc + lg
+        else:
+            loss = lrc_x_vis + lrc_x_spc + lc + lg
+
+        logs["l"] = loss.item()
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
         return loss
+
+    def forward(self, x_vis, x_spc, mask, stage):
+        z, mu, logvar, y = self.Q(x_vis, x_spc, mask, stage)
+        fake_x_vis, fake_x_spc = self.Px_z(z, mask)
+        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+        return fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, mask = batch
@@ -133,7 +125,7 @@ class IndividualActivityRecognition(LightningModule):
         mask = mask[0].detach()
 
         fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
-            x_vis, x_spc, mask
+            x_vis, x_spc, mask, "train"
         )
         loss = self.loss_func(
             x_vis,
@@ -148,10 +140,6 @@ class IndividualActivityRecognition(LightningModule):
             mask,
         )
 
-        del batch, x_vis, x_spc, mask  # release memory
-        del fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
-        torch.cuda.empty_cache()
-
         return loss
 
     def predict_step(self, batch):
@@ -159,29 +147,39 @@ class IndividualActivityRecognition(LightningModule):
         x_vis = x_vis.to(next(self.parameters()).device)
         x_spc = x_spc.to(next(self.parameters()).device)
         mask = mask.to(next(self.parameters()).device)
+        if x_vis.ndim == 5:
+            ids = ids[0]
+            x_vis = x_vis[0]
+            x_spc = x_spc[0]
+            mask = mask[0]
 
         fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
-            x_vis, x_spc, mask
+            x_vis, x_spc, mask, "pred"
         )
         mse_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
         mse_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
-        data = {
-            "key": keys[0],
-            "id": ids[0].cpu().numpy().item(),
-            # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-            # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-            "x_vis": x_vis[0].cpu().numpy(),
-            "fake_x_vis": fake_x_vis[0].cpu().numpy(),
-            "mse_x_vis": mse_x_vis.item(),
-            "x_spc": x_spc[0].cpu().numpy(),
-            "fake_x_spc": fake_x_spc[0].cpu().numpy(),
-            "mse_x_spc": mse_x_spc.item(),
-            "mu": mu[0].cpu().numpy(),
-            "logvar": logvar[0].cpu().numpy(),
-            "y": y[0].cpu().numpy(),
-            "mask": mask[0].cpu().numpy(),
-        }
-        return data
+
+        results = []
+        for i in range(len(keys)):
+            data = {
+                "key": keys[i][0],
+                "id": ids[i].cpu().numpy().item(),
+                # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+                # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
+                "x_vis": x_vis[i].cpu().numpy(),
+                "fake_x_vis": fake_x_vis[i].cpu().numpy(),
+                "mse_x_vis": mse_x_vis.item(),
+                "x_spc": x_spc[i].cpu().numpy(),
+                "fake_x_spc": fake_x_spc[i].cpu().numpy(),
+                "mse_x_spc": mse_x_spc.item(),
+                "mu": mu[i].cpu().numpy(),
+                "logvar": logvar[i].cpu().numpy(),
+                "y": y[i].cpu().numpy(),
+                "mask": mask[i].cpu().numpy(),
+            }
+            results.append(data)
+        return results
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        # return torch.optim.Adam(self.parameters(), lr=self.lr)
+        return torch.optim.RAdam(self.parameters(), lr=self.lr)

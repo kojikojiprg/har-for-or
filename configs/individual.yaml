@@ -5,28 +5,28 @@ stride: 30
 img_size: [256, 192]
 
 # model
-n_clusters: 5
-tau: 1.0
-hidden_ndim: 512
+n_clusters: 10
+tau: 0.5
+hidden_ndim: 128
 latent_ndim: 32
-nheads: 4
-nlayers: 6
-dropout: 0.1
-emb_hidden_ndim: 512
-emb_nheads: 4
-emb_nlayers: 6
-emb_dropout: 0.1
+nheads: 8
+nlayers: 3
+dropout: 0.2
+emb_hidden_ndim: 128
+emb_nheads: 8
+emb_nlayers: 3
+emb_dropout: 0.2
 patch_size: [32, 24]
 
 # optim
 lrc_x_vis: 1
 lrc_x_spc: 1
-lg: 2
-lc: 2
-lr: 0.00001
+lg: 8
+lc: 1
+lr: 0.0001
 
 # training
 epochs: 100
-batch_size: 32
-accumulate_grad_batches: 1
-num_workers: 8
+batch_size: 64
+accumulate_grad_batches: 2
+num_workers: 12

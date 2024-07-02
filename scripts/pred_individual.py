@@ -135,4 +135,4 @@ if __name__ == "__main__":
     # plot latent feature
     X = np.array(latent_features["mu"]).reshape(-1, config.seq_len * config.latent_ndim)
     labels = np.array(latent_features["label"])
-    vis.plot_tsne(X, labels, f"{data_dir}/pred_mu_tsne.jpg")
+    vis.plot_tsne(X, labels, f"{data_dir}/pred_mu_tsne.jpg", cmap="tab10")

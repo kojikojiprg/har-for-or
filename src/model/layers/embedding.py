@@ -6,6 +6,29 @@ from .feedforward import MLP, SwiGLU
 from .transformer import TransformerEncoderBlock
 
 
+class PointEmbedding(nn.Module):
+    def __init__(self, hidden_ndim, point_type):
+        super().__init__()
+        if point_type == "bbox":
+            self.npatchs = 2
+        elif point_type == "keypoints":
+            self.npatchs = 17
+
+        self.lin = nn.Sequential(
+            nn.LayerNorm(2 * self.npatchs),
+            MLP(2 * self.npatchs, hidden_ndim),
+            MLP(hidden_ndim, hidden_ndim),
+        )
+
+    def forward(self, pt):
+        # pt (b, seq_len, npatchs, 2)
+        b, seq_len = pt.size()[:2]
+        pt = pt.view(b, seq_len, self.npatchs * 2)
+        pt = self.lin(pt)  # (b, seq_len, ndim)
+
+        return pt
+
+
 class TransformerEmbedding(nn.Module):
     def __init__(self, in_ndim, out_ndim, nheads, nlayers, dropout):
         super().__init__()
@@ -35,26 +58,6 @@ class TransformerEmbedding(nn.Module):
         x = self.ff(x)
         # x (b, out_ndim)
         return x
-
-
-class PointEmbedding(nn.Module):
-    def __init__(self, hidden_ndim, point_type):
-        super().__init__()
-        if point_type == "bbox":
-            self.npatchs = 2
-        elif point_type == "keypoints":
-            self.npatchs = 17
-
-        self.lin = nn.Sequential(
-            MLP(2 * self.npatchs, hidden_ndim), nn.LayerNorm(hidden_ndim), nn.SiLU()
-        )
-
-    def forward(self, pt):
-        # pt (b, npatchs, 2)
-        pt = pt.view(-1, self.npatchs * 2)
-        pt = self.lin(pt)  # (b, npatchs, ndim)
-
-        return pt  # (b, ndim)
 
 
 class PixcelEmbedding(nn.Module):
@@ -150,14 +153,16 @@ class IndividualEmbedding(nn.Module):
         # )
         self.emb_vis = PointEmbedding(hidden_ndim, "keypoints")
         self.emb_spc = PointEmbedding(hidden_ndim, "bbox")
+        self.norm = nn.LayerNorm(hidden_ndim * 2)
         self.ff = MLP(hidden_ndim * 2, out_ndim)
 
     def forward(self, x_vis, x_spc):
-        # # f_vis (b, 5, h, w)
-        # f_vis (b, 17, 2)
-        # f_spc (b, 2, 2)
+        # # f_vis (b, seq_len, 5, h, w)
+        # f_vis (b, seq_len, 17, 2)
+        # f_spc (b, seq_len, 2, 2)
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
-        x = torch.cat([x_vis, x_spc], dim=1)
+        x = torch.cat([x_vis, x_spc], dim=2)
+        x = self.norm(x)
         x = self.ff(x)
-        return x  # x (b, out_ndim)
+        return x  # x (b, seq_len, out_ndim)
