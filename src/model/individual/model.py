@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
-from .core import Px_z, Pz_y, Q
+from .core import Px_z, Pz_y, Qy_x, Qz_xy
 
 
 class IndividualActivityRecognition(LightningModule):
@@ -14,40 +14,31 @@ class IndividualActivityRecognition(LightningModule):
         self.seq_len = config.seq_len
         self.lr = config.lr
         self.is_pretrain = is_pretrain
-        self.Q = None
+        self.Qy_x = None
+        self.Qz_xy = None
         self.Pz_y = None
         self.Px_z = None
 
     def configure_model(self):
-        if self.Q is not None:
+        if self.Qy_x is not None:
             return
-        self.Q = Q(self.config)
-        vis_npatchs = self.Q.emb.emb_vis.npatchs
+        self.Qy_x = Qy_x(self.config)
+        self.Qz_xy = Qz_xy(self.config)
+        vis_npatchs = self.Qy_x.emb.emb_vis.npatchs
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
 
         if self.is_pretrain:
-            self.Q.qy_x.requires_grad_(False)
-            # self.Pz_y.requires_grad_(False)
+            self.Qy_x.qy_x.requires_grad_(False)
+            self.Pz_y.requires_grad_(False)
 
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
-        b, seq_len = x_vis.size()[:2]
-        lrc_x_vis = F.mse_loss(x_vis[~mask], fake_x_vis[~mask], reduction="none")
-        if x_vis.ndim == 5:
-            lrc_x_vis = lrc_x_vis.mean(dim=[1, 2, 3]).sum()
-        elif x_vis.ndim == 4:
-            lrc_x_vis = lrc_x_vis.mean(dim=[1, 2]).sum()
-        else:
-            raise ValueError
-        return lrc_x_vis / (b * seq_len)
+        return F.mse_loss(x_vis[~mask], fake_x_vis[~mask])
 
     @staticmethod
     def loss_x_spc(x_spc, fake_x_spc, mask):
-        b, seq_len = x_spc.size()[:2]
-        lrc_x_spc = F.mse_loss(x_spc[~mask], fake_x_spc[~mask], reduction="none")
-        lrc_x_spc = lrc_x_spc.mean(dim=[1, 2]).sum()
-        return lrc_x_spc / (b * seq_len)
+        return F.mse_loss(x_spc[~mask], fake_x_spc[~mask])
 
     @staticmethod
     def loss_kl_clustering(q, p, eps=1e-10):
@@ -56,16 +47,24 @@ class IndividualActivityRecognition(LightningModule):
 
     @staticmethod
     def loss_kl_gaussian(mu1, logv1, mu2, logv2, mask):
-        b, seq_len, latent_ndim = mu1.size()
         # mu, log (b, seq_len, latent_ndim)
-        lg = -0.5 * torch.sum(
+        # lg = -0.5 * torch.mean(
+        #     1
+        #     + logv1[~mask]
+        #     - logv2[~mask]
+        #     - logv1[~mask].exp() / logv2[~mask].exp()
+        #     - (mu1[~mask] - mu2[~mask]) ** 2 / logv2[~mask].exp()
+        # )
+        # return lg
+        # mu, log (b, latent_ndim)
+        lg = -0.5 * torch.mean(
             1
-            + logv1[~mask]
-            - logv2[~mask]
-            - logv1[~mask].exp() / logv2[~mask].exp()
-            - (mu1[~mask] - mu2[~mask]) ** 2 / logv2[~mask].exp()
+            + logv1
+            - logv2
+            - logv1.exp() / logv2.exp()
+            - (mu1 - mu2) ** 2 / logv2.exp()
         )
-        return lg / (b * seq_len * latent_ndim)
+        return lg
 
     def loss_func(
         self,
@@ -77,7 +76,7 @@ class IndividualActivityRecognition(LightningModule):
         logvar,
         mu_prior,
         logvar_prior,
-        y,
+        pi,
         mask,
     ):
         logs = {}
@@ -93,8 +92,8 @@ class IndividualActivityRecognition(LightningModule):
         logs["spc"] = lrc_x_spc.item()
 
         # clustering loss
-        y_prior = (torch.ones(y.size()) / y.size(1)).to(next(self.parameters()).device)
-        lc = self.loss_kl_clustering(y, y_prior)
+        y_prior = (torch.ones(pi.size()) / pi.size(1)).to(next(self.parameters()).device)
+        lc = self.loss_kl_clustering(pi, y_prior)
         lc *= self.config.lc
         logs["c"] = lc.item()
 
@@ -104,7 +103,7 @@ class IndividualActivityRecognition(LightningModule):
         logs["g"] = lg.item()
 
         if self.is_pretrain:
-            loss = lrc_x_vis + lrc_x_spc + lg
+            loss = lrc_x_vis + lrc_x_spc
         else:
             loss = lrc_x_vis + lrc_x_spc + lc + lg
 
@@ -113,10 +112,20 @@ class IndividualActivityRecognition(LightningModule):
         return loss
 
     def forward(self, x_vis, x_spc, mask, stage):
-        z, mu, logvar, y = self.Q(x_vis, x_spc, mask, stage)
-        fake_x_vis, fake_x_spc = self.Px_z(z, mask)
+        # inference
+        pi, x_emb = self.Qy_x(x_vis, x_spc)
+        if stage == "train":
+            y = F.gumbel_softmax(torch.log(pi), self.config.tau, dim=1)
+        else:
+            y = pi
+        z, mu, logvar = self.Qz_xy(x_emb, y, mask)
+
+        # generate
+        recon_x_vis, recon_x_spc = self.Px_z(z, mask)
         z_prior, mu_prior, logvar_prior = self.Pz_y(y)
-        return fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y
+        # fake_x_vis, fake_x_spc = self.Px_z(z_prior, mask)
+
+        return recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, mask = batch
@@ -124,7 +133,7 @@ class IndividualActivityRecognition(LightningModule):
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
 
-        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
+        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, pi = self(
             x_vis, x_spc, mask, "train"
         )
         loss = self.loss_func(
@@ -136,7 +145,7 @@ class IndividualActivityRecognition(LightningModule):
             logvar,
             mu_prior,
             logvar_prior,
-            y,
+            pi,
             mask,
         )
 
