@@ -347,7 +347,7 @@ def _add_write_que_async(
     frame_size = np.array(copy_frame_que.shape[1:3])  # (h, w)
 
     if dataset_type == "individual":
-        idv_npzs = individual_to_npz(
+        idv_npzs, unique_ids = individual_to_npz(
             meta, unique_ids, idv_frames, idv_flows, bboxs, kps, frame_size
         )
         for i, _id in enumerate(unique_ids):

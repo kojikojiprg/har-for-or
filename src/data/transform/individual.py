@@ -2,6 +2,7 @@ import io
 
 import numpy as np
 import torch
+from scipy import interpolate
 
 
 def collect_human_tracking(human_tracking_data, unique_ids):
@@ -25,13 +26,15 @@ def collect_human_tracking(human_tracking_data, unique_ids):
     )
 
 
-def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, frame_size):
+def individual_to_npz(
+    meta, unique_ids, frames, flows, bboxs, kps, frame_size, th_nan_ratio=0.3
+):
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
     frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
-    flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
-    bboxs_idvs = np.full((n, seq_len, 2, 2), -1e10, dtype=np.float32)
-    kps_idvs = np.full((n, seq_len, 17, 2), -1e10, dtype=np.float32)
+    flows_idvs = np.full((n, seq_len, h, w, 2), -1, dtype=np.float32)
+    bboxs_idvs = np.full((n, seq_len, 2, 2), -1, dtype=np.float32)
+    kps_idvs = np.full((n, seq_len, 17, 2), -1, dtype=np.float32)
 
     # collect data
     for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
@@ -41,6 +44,16 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, frame_size):
         flows_idvs[i, t] = flows_i
         bboxs_idvs[i, t] = bboxs_i
         kps_idvs[i, t] = kps_i
+
+    # cleansing
+    unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs = cleansing_individual(
+        unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs, th_nan_ratio
+    )
+
+    # interpolate
+    frames_idvs, flows_idvs, bboxs_idvs, kps_idvs = interpolate_individual(
+        frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
+    )
 
     idvs = []
     for i, _id in enumerate(unique_ids):
@@ -53,7 +66,60 @@ def individual_to_npz(meta, unique_ids, frames, flows, bboxs, kps, frame_size):
             "frame_size": frame_size,  # (h, w)
         }
         idvs.append(data)
-    return idvs
+    return idvs, unique_ids
+
+
+def cleansing_individual(
+    unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs, th_nan_ratio=0.3
+):
+    unique_ids = np.array(unique_ids)
+    n, seq_len = bboxs_idvs.shape[:2]
+    # delete items whose first and last are nan
+    mask_not_nan = np.all(bboxs_idvs[:, 0] >= 0, axis=(1, 2)) & np.all(
+        bboxs_idvs[:, -1] >= 0, axis=(1, 2)
+    )
+    if np.count_nonzero(mask_not_nan) < n:
+        unique_ids = unique_ids[mask_not_nan]
+        frames_idvs = frames_idvs[mask_not_nan]
+        flows_idvs = flows_idvs[mask_not_nan]
+        bboxs_idvs = bboxs_idvs[mask_not_nan]
+        kps_idvs = kps_idvs[mask_not_nan]
+
+    # delete sample with high proportion of nan
+    n, seq_len = bboxs_idvs.shape[:2]
+    nan = bboxs_idvs < 0
+    nan_ratio = np.count_nonzero(nan.reshape(n, -1), axis=1) / (seq_len * 2 * 2)
+    mask_lower_nan_ratio = nan_ratio < th_nan_ratio
+    frames_idvs = frames_idvs[mask_lower_nan_ratio]
+    flows_idvs = flows_idvs[mask_lower_nan_ratio]
+    bboxs_idvs = bboxs_idvs[mask_lower_nan_ratio]
+    kps_idvs = kps_idvs[mask_lower_nan_ratio]
+
+    return unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
+
+
+def interpolate_individual(frames_idvs, flows_idvs, bboxs_idvs, kps_idvs):
+    n, seq_len, h, w = frames_idvs.shape[:4]
+
+    mask_not_nan = np.all(bboxs_idvs > 0, axis=(2, 3))
+    frames_idvs = _interpolate(frames_idvs, mask_not_nan).reshape(n, seq_len, h, w, 3)
+    flows_idvs = _interpolate(flows_idvs, mask_not_nan).reshape(n, seq_len, h, w, 2)
+    bboxs_idvs = _interpolate(bboxs_idvs, mask_not_nan).reshape(n, seq_len, 2, 2)
+    kps_idvs = _interpolate(kps_idvs, mask_not_nan).reshape(n, seq_len, 17, 2)
+
+    return frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
+
+
+def _interpolate(y, mask):
+    n, seq_len = y.shape[:2]
+    new_y = y.copy().reshape(n, seq_len, -1)
+    for i in range(len(y)):
+        x = np.arange(seq_len)[mask[i]]
+        vals = y[i].reshape(seq_len, -1)
+        curve = interpolate.interp1d(x, vals[mask[i]], kind="cubic", axis=0)
+        new_y[i, ~mask[i]] = curve(np.arange(seq_len))[~mask[i]].astype(y.dtype)
+
+    return new_y
 
 
 def individual_npz_to_tensor(
