@@ -353,6 +353,7 @@ def _add_write_que_async(
         for i, _id in enumerate(unique_ids):
             data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
             sink.add_write_que(data)
+            del data
     elif dataset_type == "group":
         data = {
             "__key__": f"{video_name}_{n_frame}",
@@ -367,10 +368,10 @@ def _add_write_que_async(
             },
         }
         sink.add_write_que(data)
+        del data
     else:
         raise ValueError
 
     pbar.update()
-    del data
     del copy_frame_que, copy_flow_que, copy_ht_que
     gc.collect()

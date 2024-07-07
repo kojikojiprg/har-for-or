@@ -80,6 +80,9 @@ def cleansing_individual(
         bboxs_idvs = bboxs_idvs[mask_not_nan]
         kps_idvs = kps_idvs[mask_not_nan]
 
+    if len(bboxs_idvs) == 0:
+        return unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
+
     # delete sample with high proportion of nan
     n, seq_len = bboxs_idvs.shape[:2]
     nan = bboxs_idvs < 0
