@@ -99,13 +99,14 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
         if mask:
             continue
 
+        bbox = (bbox.copy() + 1) / 2 * frame_size
+
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
         frame = cv2.putText(
             frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
         )
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
         # bbox = bbox.copy() * frame_size
         if content == "x_vis":
             # fake_img = data["fake_x_vis"][idx_data]
