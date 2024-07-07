@@ -29,7 +29,7 @@ class IndividualActivityRecognition(LightningModule):
         self.Px_z = Px_z(self.config, vis_npatchs)
 
         if self.is_pretrain:
-            self.Qy_x.qy_x.requires_grad_(False)
+            # self.Qy_x.requires_grad_(False)
             self.Pz_y.requires_grad_(False)
 
     @staticmethod
@@ -57,13 +57,16 @@ class IndividualActivityRecognition(LightningModule):
         # )
         # return lg
         # mu, log (b, latent_ndim)
-        lg = -0.5 * torch.mean(
+        weight = torch.sqrt((mu1.detach() - mu2.detach()) ** 2).mean(dim=1)
+        lg = -0.5 * (
             1
             + logv1
             - logv2
             - logv1.exp() / logv2.exp()
             - (mu1 - mu2) ** 2 / logv2.exp()
         )
+        lg = lg * weight.view(-1, 1)
+        lg = torch.mean(lg)
         return lg
 
     def loss_func(
@@ -92,8 +95,10 @@ class IndividualActivityRecognition(LightningModule):
         logs["spc"] = lrc_x_spc.item()
 
         # clustering loss
-        y_prior = (torch.ones(pi.size()) / pi.size(1)).to(next(self.parameters()).device)
-        lc = self.loss_kl_clustering(pi, y_prior)
+        pi_prior = (torch.ones(pi.size()) / pi.size(1)).to(
+            next(self.parameters()).device
+        )
+        lc = self.loss_kl_clustering(pi, pi_prior)
         lc *= self.config.lc
         logs["c"] = lc.item()
 
@@ -103,27 +108,44 @@ class IndividualActivityRecognition(LightningModule):
         logs["g"] = lg.item()
 
         if self.is_pretrain:
-            loss = lrc_x_vis + lrc_x_spc
+            loss = lrc_x_vis + lrc_x_spc + lc
         else:
-            loss = lrc_x_vis + lrc_x_spc + lc + lg
+            if (self.current_epoch) % self.config.interval_kl_loss == 0:
+                loss = lrc_x_vis + lrc_x_spc + lc + lg
+            else:
+                loss = lrc_x_vis + lrc_x_spc
 
         logs["l"] = loss.item()
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
         return loss
 
     def forward(self, x_vis, x_spc, mask, stage):
-        # inference
-        pi, x_emb = self.Qy_x(x_vis, x_spc)
+        # q(y|x)
+        if (self.current_epoch) % self.config.interval_kl_loss == 0:
+            pi, x_emb = self.Qy_x(x_vis, x_spc)
+        else:
+            with torch.no_grad():
+                pi, x_emb = self.Qy_x(x_vis, x_spc)
         if stage == "train":
             y = F.gumbel_softmax(torch.log(pi), self.config.tau, dim=1)
         else:
             y = pi
+
+        # q(z|x,y)
         z, mu, logvar = self.Qz_xy(x_emb, y, mask)
 
-        # generate
-        recon_x_vis, recon_x_spc = self.Px_z(z, mask)
-        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
-        # fake_x_vis, fake_x_spc = self.Px_z(z_prior, mask)
+        # p(z|y)
+        if (self.current_epoch) % self.config.interval_kl_loss == 0:
+            z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+        else:
+            with torch.no_grad():
+                z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+
+        # p(x|z)
+        if not self.is_pretrain:
+            recon_x_vis, recon_x_spc = self.Px_z(z, mask)
+        else:
+            recon_x_vis, recon_x_spc = self.Px_z(z_prior, mask)
 
         return recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi
 
@@ -190,5 +212,5 @@ class IndividualActivityRecognition(LightningModule):
         return results
 
     def configure_optimizers(self):
-        # return torch.optim.Adam(self.parameters(), lr=self.lr)
-        return torch.optim.RAdam(self.parameters(), lr=self.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        # return torch.optim.RAdam(self.parameters(), lr=self.lr)

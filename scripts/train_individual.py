@@ -5,6 +5,7 @@ import sys
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.strategies import DDPStrategy
 
 sys.path.append(".")
 from src.data import individual_train_dataloader
@@ -56,10 +57,11 @@ if __name__ == "__main__":
     #     pre_checkpoint_path = None
     pre_checkpoint_path = None
 
+    ddp = DDPStrategy(find_unused_parameters=True)
     logger = TensorBoardLogger("logs", name="individual")
     trainer = Trainer(
         accelerator="cuda",
-        strategy="ddp",
+        strategy=ddp,
         devices=gpu_ids,
         logger=logger,
         callbacks=[model_checkpoint],

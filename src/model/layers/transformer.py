@@ -6,13 +6,13 @@ from .feedforward import SwiGLU
 class TransformerEncoderBlock(nn.Module):
     def __init__(self, ndim, nheads, dropout):
         super().__init__()
-        self.norm1 = nn.LayerNorm(ndim, eps=1e-5)
+        self.norm1 = nn.LayerNorm(ndim)
         self.attn = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
         self.dropout1 = nn.Dropout(dropout)
 
-        self.norm2 = nn.LayerNorm(ndim, eps=1e-5)
+        self.norm2 = nn.LayerNorm(ndim)
         self.ff = SwiGLU(ndim)
         self.dropout2 = nn.Dropout(dropout)
 
@@ -41,20 +41,20 @@ class TransformerEncoderBlock(nn.Module):
 class TransformerDecoderBlock(nn.Module):
     def __init__(self, ndim, nheads, dropout):
         super().__init__()
-        self.norm1 = nn.LayerNorm(ndim, eps=1e-5)
+        self.norm1 = nn.LayerNorm(ndim)
         self.attn1 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
         self.dropout1 = nn.Dropout(dropout)
 
-        self.norm2x = nn.LayerNorm(ndim, eps=1e-5)
-        self.norm2z = nn.LayerNorm(ndim, eps=1e-5)
+        self.norm2x = nn.LayerNorm(ndim)
+        self.norm2z = nn.LayerNorm(ndim)
         self.attn2 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
         self.dropout2 = nn.Dropout(dropout)
 
-        self.norm3 = nn.LayerNorm(ndim, eps=1e-5)
+        self.norm3 = nn.LayerNorm(ndim)
         self.ff = SwiGLU(ndim)
         self.dropout3 = nn.Dropout(dropout)
 

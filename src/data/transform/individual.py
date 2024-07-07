@@ -32,9 +32,9 @@ def individual_to_npz(
     h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
     frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
-    flows_idvs = np.full((n, seq_len, h, w, 2), -1, dtype=np.float32)
-    bboxs_idvs = np.full((n, seq_len, 2, 2), -1, dtype=np.float32)
-    kps_idvs = np.full((n, seq_len, 17, 2), -1, dtype=np.float32)
+    flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
+    bboxs_idvs = np.full((n, seq_len, 2, 2), -1e10, dtype=np.float32)
+    kps_idvs = np.full((n, seq_len, 17, 2), -1e10, dtype=np.float32)
 
     # collect data
     for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
@@ -48,11 +48,6 @@ def individual_to_npz(
     # cleansing
     unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs = cleansing_individual(
         unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs, th_nan_ratio
-    )
-
-    # interpolate
-    frames_idvs, flows_idvs, bboxs_idvs, kps_idvs = interpolate_individual(
-        frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
     )
 
     idvs = []
@@ -90,36 +85,13 @@ def cleansing_individual(
     nan = bboxs_idvs < 0
     nan_ratio = np.count_nonzero(nan.reshape(n, -1), axis=1) / (seq_len * 2 * 2)
     mask_lower_nan_ratio = nan_ratio < th_nan_ratio
+    unique_ids = unique_ids[mask_lower_nan_ratio]
     frames_idvs = frames_idvs[mask_lower_nan_ratio]
     flows_idvs = flows_idvs[mask_lower_nan_ratio]
     bboxs_idvs = bboxs_idvs[mask_lower_nan_ratio]
     kps_idvs = kps_idvs[mask_lower_nan_ratio]
 
     return unique_ids, frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
-
-
-def interpolate_individual(frames_idvs, flows_idvs, bboxs_idvs, kps_idvs):
-    n, seq_len, h, w = frames_idvs.shape[:4]
-
-    mask_not_nan = np.all(bboxs_idvs > 0, axis=(2, 3))
-    frames_idvs = _interpolate(frames_idvs, mask_not_nan).reshape(n, seq_len, h, w, 3)
-    flows_idvs = _interpolate(flows_idvs, mask_not_nan).reshape(n, seq_len, h, w, 2)
-    bboxs_idvs = _interpolate(bboxs_idvs, mask_not_nan).reshape(n, seq_len, 2, 2)
-    kps_idvs = _interpolate(kps_idvs, mask_not_nan).reshape(n, seq_len, 17, 2)
-
-    return frames_idvs, flows_idvs, bboxs_idvs, kps_idvs
-
-
-def _interpolate(y, mask):
-    n, seq_len = y.shape[:2]
-    new_y = y.copy().reshape(n, seq_len, -1)
-    for i in range(len(y)):
-        x = np.arange(seq_len)[mask[i]]
-        vals = y[i].reshape(seq_len, -1)
-        curve = interpolate.interp1d(x, vals[mask[i]], kind="cubic", axis=0)
-        new_y[i, ~mask[i]] = curve(np.arange(seq_len))[~mask[i]].astype(y.dtype)
-
-    return new_y
 
 
 def individual_npz_to_tensor(
@@ -129,6 +101,7 @@ def individual_npz_to_tensor(
     flow_transform,
     bbox_transform,
     kps_transform,
+    interpolate=False,
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
@@ -142,6 +115,10 @@ def individual_npz_to_tensor(
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
+
+    # interpolate
+    if interpolate:
+        frames, flows, bboxs, kps = interpolate_individual(frames, flows, bboxs, kps)
 
     # frames = frame_transform(frames)
     # flows = flow_transform(flows)
@@ -159,3 +136,27 @@ def individual_npz_to_tensor(
 
     # return key, _id, pixcels, bboxs, mask
     return key, _id, kps, bboxs, mask
+
+
+def interpolate_individual(frames, flows, bboxs, kps):
+    n, seq_len, h, w = frames.shape[:4]
+
+    mask_not_nan = np.all(bboxs > 0, axis=(2, 3))
+    frames = _interpolate(frames, mask_not_nan).reshape(n, seq_len, h, w, 3)
+    flows = _interpolate(flows, mask_not_nan).reshape(n, seq_len, h, w, 2)
+    bboxs = _interpolate(bboxs, mask_not_nan).reshape(n, seq_len, 2, 2)
+    kps = _interpolate(kps, mask_not_nan).reshape(n, seq_len, 17, 2)
+
+    return frames, flows, bboxs, kps
+
+
+def _interpolate(y, mask):
+    n, seq_len = y.shape[:2]
+    new_y = y.copy().reshape(n, seq_len, -1)
+    for i in range(len(y)):
+        x = np.arange(seq_len)[mask[i]]
+        vals = y[i].reshape(seq_len, -1)
+        curve = interpolate.interp1d(x, vals[mask[i]], kind="cubic", axis=0)
+        new_y[i, ~mask[i]] = curve(np.arange(seq_len))[~mask[i]].astype(y.dtype)
+
+    return new_y
