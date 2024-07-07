@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
-from .core import Px_z, Pz_y, Qy_x, Qz_xy
+from .vae import Px_z, Pz_y, Qy_x, Qz_xy
 
 
 class IndividualActivityRecognition(LightningModule):
