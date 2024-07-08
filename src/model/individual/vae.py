@@ -7,10 +7,13 @@ from rotary_embedding_torch import RotaryEmbedding
 from src.model.layers import MLP, IndividualEmbedding, TransformerEncoderBlock
 
 
-class Qy_x(nn.Module):
+class Q(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
+
+        self.cls = nn.Parameter(torch.randn((1, 1, self.hidden_ndim)))
+        self.cls_mask = nn.Parameter(torch.full((1, 1), False), requires_grad=False)
 
         self.emb = IndividualEmbedding(
             config.emb_hidden_ndim,
@@ -21,30 +24,6 @@ class Qy_x(nn.Module):
             config.patch_size,
             config.img_size,
         )
-
-        self.mlp = nn.Sequential(
-            nn.LayerNorm(config.seq_len * config.hidden_ndim),
-            MLP(config.seq_len * config.hidden_ndim, config.hidden_ndim),
-            nn.Linear(config.hidden_ndim, config.n_clusters),
-            nn.Softmax(dim=1),
-        )
-
-    def forward(self, x_vis, x_spc):
-        # embedding
-        b, seq_len = x_vis.size()[:2]
-        x_emb = self.emb(x_vis, x_spc)
-
-        pi = self.mlp(x_emb.view(b, seq_len * self.hidden_ndim))
-
-        return pi, x_emb
-
-
-class Qz_xy(nn.Module):
-    def __init__(self, config: SimpleNamespace):
-        super().__init__()
-        self.hidden_ndim = config.hidden_ndim
-
-        self.mlp_y = MLP(config.n_clusters, config.hidden_ndim)
 
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
 
@@ -57,6 +36,13 @@ class Qz_xy(nn.Module):
             ]
         )
 
+        self.qy_x = nn.Sequential(
+            nn.LayerNorm(config.hidden_ndim),
+            MLP(config.hidden_ndim, config.hidden_ndim),
+            nn.Linear(config.hidden_ndim, config.n_clusters),
+            nn.Softmax(dim=1),
+        )
+
         self.norm = nn.LayerNorm(config.hidden_ndim * config.seq_len)
         self.mlp_mu = nn.Sequential(
             MLP(config.hidden_ndim * config.seq_len, config.latent_ndim),
@@ -67,17 +53,14 @@ class Qz_xy(nn.Module):
             nn.Linear(config.latent_ndim, config.latent_ndim),
         )
 
-    def forward(self, x, y, mask):
-        b = y.size(0)
+    def forward(self, x_vis, x_spc, mask):
+        # embedding
+        b, seq_len = x_vis.size()[:2]
+        x = self.emb(x_vis, x_spc)
 
         # concat y to x
-        y = self.mlp_y(y)
-        y = y.view(b, 1, self.hidden_ndim)
-        x = torch.cat([y, x], dim=1)
-        cls_mask = torch.full((b, 1), False, dtype=torch.bool, requires_grad=False).to(
-            next(self.parameters()).device
-        )
-        mask = torch.cat([cls_mask, mask], dim=1)
+        x = torch.cat([self.cls.repeat((b, 1, 1)), x], dim=1)
+        mask = torch.cat([self.cls_mask.repeat((b, 1)), mask], dim=1)
 
         # positional embedding
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
@@ -86,6 +69,9 @@ class Qz_xy(nn.Module):
         for layer in self.encoders:
             x, attn_w = layer(x, mask)
         # x (b, seq_len+1, hidden_ndim)
+
+        y = x[:, 0, :]
+        pi = self.qy_x(y)
 
         x = x[:, 1:, :]
         x = x.view(b, -1)
@@ -96,7 +82,7 @@ class Qz_xy(nn.Module):
         z = mu + torch.exp(logvar / 2) * ep
         # z, mu, log_sig (b, seq_len, latent_ndim)
 
-        return z, mu, logvar
+        return z, mu, logvar, pi
 
 
 class Pz_y(nn.Module):
@@ -126,7 +112,7 @@ class Pz_y(nn.Module):
             nn.Linear(config.latent_ndim, config.latent_ndim),
         )
 
-    def forward(self, y, mask=None):
+    def forward(self, y):
         b, n_clusters = y.size()
         y = self.mlp(y.view(b, n_clusters, 1))
         y = y.permute(0, 2, 1)  # (b, seq_len, hidden_ndim)
@@ -134,7 +120,7 @@ class Pz_y(nn.Module):
         y = self.pe.rotate_queries_or_keys(y, seq_dim=1, offset=1)
 
         for layer in self.encoders:
-            y, attn_w = layer(y, mask)
+            y, attn_w = layer(y)
 
         y = y.view(b, -1)
         y = self.norm(y)
@@ -157,9 +143,8 @@ class Px_z(nn.Module):
 
         self.emb = MLP(config.latent_ndim, config.hidden_ndim * config.seq_len)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
-        self.encoders = nn.ModuleList(
+        self.decoders = nn.ModuleList(
             [
-                # TransformerDecoderBlock(
                 TransformerEncoderBlock(
                     config.hidden_ndim, config.nheads, config.dropout
                 )
@@ -186,7 +171,7 @@ class Px_z(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z, mask):
+    def forward(self, z, mask=None):
         b = z.size()[0]
 
         # embedding fake x
@@ -194,8 +179,8 @@ class Px_z(nn.Module):
         fake_x = fake_x.view(b, self.seq_len, self.hidden_ndim)
         fake_x = self.pe.rotate_queries_or_keys(fake_x, seq_dim=1, offset=1)
 
-        for layer in self.encoders:
-            fake_x, attn_w = layer(fake_x, mask)
+        for layer in self.decoders:
+            fake_x, attn_w = layer(fake_x, mask, mask_type="tgt")
         # fake_x (b, seq_len, hidden_ndim)
 
         # reconstruct
