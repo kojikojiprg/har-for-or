@@ -72,7 +72,6 @@ def write_shards(
         )
 
         # create shared ndarray and start optical flow
-        n_frames_que = swm.list([-1 for _ in range(seq_len)])
         shape = (seq_len, img_size[1], img_size[0], 3)
         frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
         shape = (seq_len, img_size[1], img_size[0], 2)
@@ -81,27 +80,29 @@ def write_shards(
         ec = functools.partial(_error_callback, *("_optical_flow_async",))
         result = pool.apply_async(
             _optical_flow_async,
-            (
-                cap_of,
-                n_frames_que,
-                frame_sna,
-                flow_sna,
-                tail_of,
-                head,
-                lock,
-                pbar_of,
-            ),
+            (cap_of, frame_sna, flow_sna, tail_of, head, lock, pbar_of),
             error_callback=ec,
         )
         async_results.append(result)
 
         # create shared list of indiciduals and start human tracking
         ht_que = swm.list([[] for _ in range(seq_len)])
+        n_frames_que = swm.list([-1 for _ in range(seq_len)])
         tail_ht = swm.Value("i", 0)
         ec = functools.partial(_error_callback, *("_human_tracking_async",))
         result = pool.apply_async(
             _human_tracking_async,
-            (cap_ht, json_path, model_ht, ht_que, tail_ht, head, lock, pbar_ht),
+            (
+                cap_ht,
+                json_path,
+                model_ht,
+                ht_que,
+                n_frames_que,
+                tail_ht,
+                head,
+                lock,
+                pbar_ht,
+            ),
             error_callback=ec,
         )
         async_results.append(result)
@@ -138,11 +139,12 @@ def write_shards(
         for n_frame in range(seq_len, frame_count + 1, stride):
             while not check_full_f():
                 async_results = _monitoring_async_tasks(async_results)
-                time.sleep(0.001)
+                time.sleep(0.01)
 
-            while n_frame != n_frames_que[tail_of.value] + 1:
+            while n_frame != n_frames_que[tail_ht.value] + 1:
                 async_results = _monitoring_async_tasks(async_results)
-                time.sleep(0.001)  # waiting for shared memory has been updated
+                time.sleep(0.1)  # waiting for shared memory has been updated
+            time.sleep(0.1)  # after delay
 
             # create and add data in write que
             result = pool.apply_async(
@@ -153,20 +155,20 @@ def write_shards(
             sleep_count = 0
             while check_full_f():
                 async_results = _monitoring_async_tasks(async_results)
-                time.sleep(0.001)  # waiting for coping queue in _add_write_que_async
+                time.sleep(0.01)  # waiting for coping queue in _add_write_que_async
                 sleep_count += 1
                 if sleep_count > 60 * 3 / 0.001:
                     break  # exit infinite loop after 3 min
 
         while [r.ready() for r in async_results].count(False) > 0:
             async_results = _monitoring_async_tasks(async_results)
-            time.sleep(0.001)  # waiting for adding write queue
+            time.sleep(0.01)  # waiting for adding write queue
 
         # finish and waiting for complete writing
         sink.set_finish_writing()
         while not write_async_result.ready():
             async_results = _monitoring_async_tasks(async_results)
-            time.sleep(0.1)
+            time.sleep(0.01)
         sink.close()
 
         # close and unlink shared memories
@@ -203,9 +205,7 @@ def _check_full(tail_of, tail_ht, head, que_len):
     return is_frame_que_full and is_idv_que_full and is_eq
 
 
-def _optical_flow_async(
-    cap, n_frames_que, frame_sna, flow_sna, tail_of, head, lock, pbar
-):
+def _optical_flow_async(cap, frame_sna, flow_sna, tail_of, head, lock, pbar):
     frame_que, frame_shm = frame_sna.ndarray()
     flow_que, flow_shm = flow_sna.ndarray()
     que_len = frame_que.shape[0]
@@ -214,7 +214,6 @@ def _optical_flow_async(
     prev_frame = cap.read(0)[1]
     cap.set_pos_frame_count(0)  # reset read position
 
-    n_frames_que[tail_of.value] = 0
     frame_que[tail_of.value] = prev_frame
     y, x = prev_frame.shape[:2]
     flow_que[tail_of.value] = np.zeros((y, x, 2), np.float32)
@@ -227,7 +226,6 @@ def _optical_flow_async(
         prev_frame = frame
 
         with lock:
-            n_frames_que[tail_of.value] = n_frame
             frame_que[tail_of.value] = frame
             flow_que[tail_of.value] = flow
         pbar.update()
@@ -245,7 +243,9 @@ def _optical_flow_async(
     del cap, frame_que, flow_que
 
 
-def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pbar):
+def _human_tracking_async(
+    cap, json_path, model, ht_que, n_frames_que, tail_ht, head, lock, pbar
+):
     que_len = len(ht_que)
 
     do_human_tracking = not os.path.exists(json_path)
@@ -262,6 +262,7 @@ def _human_tracking_async(cap, json_path, model, ht_que, tail_ht, head, lock, pb
 
         with lock:
             ht_que[tail_ht.value] = idvs_tmp
+            n_frames_que[tail_ht.value] = n_frame
             pbar.update()
 
         if n_frame + 1 == frame_count:
