@@ -9,20 +9,20 @@ from lightning.pytorch.strategies import DDPStrategy
 
 sys.path.append(".")
 from src.data import individual_train_dataloader
-from src.model import IndividualActivityRecognition
+from src.model import VAE, GAN
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
-    parser.add_argument(
-        "-p", "--pretrain", required=False, action="store_true", default=False
-    )
+    # parser.add_argument(
+    #     "-p", "--pretrain", required=False, action="store_true", default=False
+    # )
     args = parser.parse_args()
     data_root = args.data_root
     gpu_ids = args.gpu_ids
-    is_pretrain = args.pretrain
+    # is_pretrain = args.pretrain
 
     # load config
     config_path = "configs/individual.yaml"
@@ -32,8 +32,8 @@ if __name__ == "__main__":
     h, w = config.img_size
     checkpoint_dir = "models/individual/"
     filename = f"individual-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
-    if is_pretrain:
-        filename += "-pre"
+    # if is_pretrain:
+    #     filename += "-pre"
     os.makedirs(checkpoint_dir, exist_ok=True)
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
@@ -48,7 +48,8 @@ if __name__ == "__main__":
     dataloader = individual_train_dataloader(data_root, "individual", config, gpu_ids)
 
     # create model
-    model = IndividualActivityRecognition(config, is_pretrain)
+    # model = IndividualActivityRecognition(config, is_pretrain)
+    model = VAE(config)
     # if not is_pretrain:
     #     pre_checkpoint_path = os.path.join(checkpoint_dir, f"{filename}-pre-last.ckpt")
     #     if not os.path.exists(pre_checkpoint_path):
@@ -57,7 +58,8 @@ if __name__ == "__main__":
     #     pre_checkpoint_path = None
     pre_checkpoint_path = None
 
-    ddp = DDPStrategy(find_unused_parameters=True)
+    # ddp = DDPStrategy(find_unused_parameters=True)
+    ddp = DDPStrategy(find_unused_parameters=False)
     logger = TensorBoardLogger("logs", name="individual")
     trainer = Trainer(
         accelerator="cuda",

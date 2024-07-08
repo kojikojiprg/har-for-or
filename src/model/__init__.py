@@ -1,2 +1,2 @@
 from .human_tracking import HumanTracking
-from .individual import IndividualActivityRecognition
+from .individual import VAE, GAN

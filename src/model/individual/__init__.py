@@ -1,2 +1,2 @@
-from .model import IndividualActivityRecognition
-from .vae import Px_z, Pz_y, Q
+from .vae import VAE
+from .gan import GAN

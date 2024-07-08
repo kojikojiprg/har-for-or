@@ -12,7 +12,7 @@ from webdataset import WebLoader
 
 sys.path.append(".")
 from src.data import load_dataset
-from src.model import IndividualActivityRecognition
+from src.model import VAE
 from src.utils import video, vis, yaml_handler
 
 if __name__ == "__main__":
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     dataloader = WebLoader(dataset, num_workers=1, pin_memory=True)
 
     # load model
-    model = IndividualActivityRecognition(config)
+    model = VAE(config)
     model.configure_model()
     model = model.to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
