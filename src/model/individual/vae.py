@@ -134,7 +134,7 @@ class VAE(LightningModule):
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
 
-        recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi = self.core(
+        recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi = self(
             x_vis, x_spc, mask, "train"
         )
         loss = self.loss_func(
@@ -163,7 +163,7 @@ class VAE(LightningModule):
             x_spc = x_spc[0]
             mask = mask[0]
 
-        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self.core(
+        fake_x_vis, fake_x_spc, mu, logvar, mu_prior, logvar_prior, y = self(
             x_vis, x_spc, mask, "pred"
         )
         mse_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
