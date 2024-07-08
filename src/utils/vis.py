@@ -162,7 +162,7 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
                 2,
             )
         elif content == "cluster":
-            label = str(np.argmax(data["y"]))
+            label = str(np.argmax(data["c"]))
 
             color = (np.array(cm(int(label))[:3]) * 255).astype(int).tolist()
             color = tuple(color[::-1])  # RGB -> BGR
