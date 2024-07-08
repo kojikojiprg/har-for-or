@@ -39,7 +39,7 @@ class VAE(LightningModule):
         z_prior, mu_prior, logvar_prior = self.Pz_y(y)
 
         # p(x|z)
-        recon_x_vis, recon_x_spc = self.Px_z(z, mask)
+        recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
 
         return recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi
 
@@ -277,41 +277,19 @@ class Q(nn.Module):
 class Pz_y(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
-
-        self.mlp = MLP(1, config.seq_len)
-        self.emb = MLP(config.n_clusters, config.hidden_ndim)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
-
-        self.encoders = nn.ModuleList(
-            [
-                TransformerEncoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
-                )
-                for _ in range(config.nlayers)
-            ]
-        )
-
-        self.norm = nn.LayerNorm(config.hidden_ndim * config.seq_len)
+        self.mlp = MLP(config.n_clusters, config.hidden_ndim)
+        self.norm = nn.LayerNorm(config.hidden_ndim)
         self.mlp_mu = nn.Sequential(
-            MLP(config.hidden_ndim * config.seq_len, config.latent_ndim),
+            MLP(config.hidden_ndim, config.latent_ndim),
             nn.Linear(config.latent_ndim, config.latent_ndim),
         )
         self.mlp_logvar = nn.Sequential(
-            MLP(config.hidden_ndim * config.seq_len, config.latent_ndim),
+            MLP(config.hidden_ndim, config.latent_ndim),
             nn.Linear(config.latent_ndim, config.latent_ndim),
         )
 
     def forward(self, y):
-        b, n_clusters = y.size()
-        y = self.mlp(y.view(b, n_clusters, 1))
-        y = y.permute(0, 2, 1)  # (b, seq_len, hidden_ndim)
-        y = self.emb(y)
-        y = self.pe.rotate_queries_or_keys(y, seq_dim=1, offset=1)
-
-        for layer in self.encoders:
-            y, attn_w = layer(y)
-
-        y = y.view(b, -1)
+        y = self.mlp(y)
         y = self.norm(y)
         mu_prior = self.mlp_mu(y)
         logvar_prior = self.mlp_logvar(y)
@@ -327,11 +305,21 @@ class Px_z(nn.Module):
         self.seq_len = config.seq_len
         self.hidden_ndim = config.hidden_ndim
         self.emb_hidden_ndim = config.emb_hidden_ndim
-        self.img_size = config.img_size
-        self.vis_npatchs = vis_npatchs
 
-        self.emb = MLP(config.latent_ndim, config.hidden_ndim * config.seq_len)
+        self.emb = IndividualEmbedding(
+            config.emb_hidden_ndim,
+            config.hidden_ndim,
+            config.emb_nheads,
+            config.emb_nlayers,
+            config.emb_dropout,
+            config.patch_size,
+            config.img_size,
+        )
+
+        self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
+
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
+
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -360,32 +348,33 @@ class Px_z(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, z, mask=None):
-        b = z.size()[0]
+    def forward(self, x_vis, x_spc, z, mask=None):
+        b, seq_len = x_vis.size()[:2]
+        x = self.emb(x_vis, x_spc)
+        z = self.emb_z(z).view(b, 1, self.hidden_ndim)
+        x = torch.cat([z, x], dim=1)
+        mask = torch.cat([torch.full((b, 1), False).to(mask.device), mask], dim=1)
+        # x (b, seq_len + 1, hidden_ndim)
 
-        # embedding fake x
-        fake_x = self.emb(z)
-        fake_x = fake_x.view(b, self.seq_len, self.hidden_ndim)
-        fake_x = self.pe.rotate_queries_or_keys(fake_x, seq_dim=1, offset=1)
-
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
         for layer in self.encoders:
-            fake_x, attn_w = layer(fake_x, mask, mask_type="tgt")
-        # fake_x (b, seq_len, hidden_ndim)
+            x, attn_w = layer(x, mask, mask_type="tgt")
+        # x (b, seq_len, hidden_ndim)
 
         # reconstruct
-        fake_x = self.mlp(fake_x)
+        x = self.mlp(x[:, :-1, :])
         fake_x_vis, fake_x_spc = (
-            fake_x[:, :, : self.emb_hidden_ndim],
-            fake_x[:, :, self.emb_hidden_ndim :],
+            x[:, :, : self.emb_hidden_ndim],
+            x[:, :, self.emb_hidden_ndim :],
         )
         # fake_x_vis, fake_x_spc (b, seq_len, emb_hidden_ndim)
 
         # reconstruct x_vis
         fake_x_vis = self.rec_vis(fake_x_vis)
-        fake_x_vis = fake_x_vis.view(b, self.seq_len, 17, 2)
+        fake_x_vis = fake_x_vis.view(b, seq_len, 17, 2)
 
         # reconstruct x_spc
         fake_x_spc = self.rec_spc(fake_x_spc)
-        fake_x_spc = fake_x_spc.view(b, self.seq_len, 2, 2)
+        fake_x_spc = fake_x_spc.view(b, seq_len, 2, 2)
 
         return fake_x_vis, fake_x_spc
