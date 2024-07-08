@@ -7,10 +7,11 @@ class ClusteringModule(nn.Module):
         super().__init__()
         # get configs
         self._n_clusters = config.n_clusters
+        self.latent_ndim = config.latent_ndim
         self._t_alpha = config.alpha
 
         # centroids
-        y = torch.randn((config.n_clusters, config.hidden_ndim))
+        y = torch.randn((config.n_clusters, config.latent_ndim))
         self._centroids = nn.ParameterList(
             [nn.Parameter(y[i], requires_grad=True) for i in range(self._n_clusters)]
         )
@@ -26,17 +27,17 @@ class ClusteringModule(nn.Module):
         return s, c
 
     def _student_t(self, y):
-        # y (b, n_clusters, latent_ndim)
+        # y (b, latent_ndim)
         b = y.shape[0]
-        norm = torch.zeros((self._n_clusters,), dtype=torch.float32)
+        norm = torch.zeros((b, self._n_clusters), dtype=torch.float32)
         for j in range(self._n_clusters):
             diff = (y - self._centroids[j]).clone()
-            norm[j] = torch.linalg.vector_norm(diff, dim=1)
+            norm[:, j] = torch.linalg.vector_norm(diff, dim=1)
 
         s = torch.zeros((b, self._n_clusters), dtype=torch.float32)
         s_tmp = torch.zeros_like(s)
         for i in range(b):
-            s_tmp[i] = (1 + norm / self._t_alpha) ** -((self._t_alpha + 1) / 2)
+            s_tmp[i] = (1 + norm[i] / self._t_alpha) ** -((self._t_alpha + 1) / 2)
         s_tmp_sum = s_tmp.sum(dim=1)
         s = s_tmp / s_tmp_sum.view(-1, 1)
         # s (b, n_clusters)

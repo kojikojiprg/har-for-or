@@ -51,6 +51,7 @@ class TransformerEncoderBlock(nn.Module):
 class TransformerDecoderBlock(nn.Module):
     def __init__(self, ndim, nheads, dropout):
         super().__init__()
+        self.nheads = nheads
         self.norm1 = nn.LayerNorm(ndim)
         self.attn1 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
@@ -68,14 +69,20 @@ class TransformerDecoderBlock(nn.Module):
         self.ff = SwiGLU(ndim)
         self.dropout3 = nn.Dropout(dropout)
 
-    def forward(self, x, z, mask):
+    def forward(self, x, z, mask=None):
         b, seq_len = x.size()[:2]
         # x (b * seq_len, npatch, ndim)
-        tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads)
+        if mask is not None:
+            tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads)
+        else:
+            tgt_mask = None
         x = self.norm1(x)
         x = x + self.attention_block1(x, tgt_mask)
 
-        src_mask = create_src_mask(mask, b, seq_len, self.nheads)
+        if mask is not None:
+            src_mask = create_src_mask(mask, b, seq_len, self.nheads)
+        else:
+            src_mask = None
         z = self.norm2z(z)
         x = self.norm2x(x)
         x = x + self.attention_block2(x, z, src_mask)

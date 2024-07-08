@@ -48,8 +48,7 @@ if __name__ == "__main__":
     dataloader = individual_train_dataloader(data_root, "individual", config, gpu_ids)
 
     # create model
-    # model = IndividualActivityRecognition(config, is_pretrain)
-    model = VAE(config)
+    model = GAN(config)
     # if not is_pretrain:
     #     pre_checkpoint_path = os.path.join(checkpoint_dir, f"{filename}-pre-last.ckpt")
     #     if not os.path.exists(pre_checkpoint_path):
@@ -58,8 +57,8 @@ if __name__ == "__main__":
     #     pre_checkpoint_path = None
     pre_checkpoint_path = None
 
-    # ddp = DDPStrategy(find_unused_parameters=True)
-    ddp = DDPStrategy(find_unused_parameters=False)
+    ddp = DDPStrategy(find_unused_parameters=True)
+    # ddp = DDPStrategy(find_unused_parameters=False)
     logger = TensorBoardLogger("logs", name="individual")
     trainer = Trainer(
         accelerator="cuda",
@@ -68,7 +67,7 @@ if __name__ == "__main__":
         logger=logger,
         callbacks=[model_checkpoint],
         max_epochs=config.epochs,
-        accumulate_grad_batches=config.accumulate_grad_batches,
+        # accumulate_grad_batches=config.accumulate_grad_batches,
         benchmark=True,
     )
     trainer.fit(model, train_dataloaders=dataloader, ckpt_path=pre_checkpoint_path)

@@ -6,28 +6,34 @@ img_size: [256, 192]
 
 # model
 n_clusters: 10
-tau: 0.1
-hidden_ndim: 64
+tau: 0.1  # VAE gumbel softmax
+alpha: 2  # GAN freedom of student T
+hidden_ndim: 512
 latent_ndim: 32
 nheads: 8
 nlayers: 6
 dropout: 0.2
-emb_hidden_ndim: 64
+emb_hidden_ndim: 128
 emb_nheads: 8
 emb_nlayers: 6
 emb_dropout: 0.2
 patch_size: [32, 24]
 
-# optim
+# optim VAE
 lrc_x_vis: 1
 lrc_x_spc: 1
-lg: 1
-lc: 1
+lg: 8
+lc: 8
 lr: 0.0001
+
+# optim GAN
+lr_c: 0.001
+lr_ae: 0.001
+lr_g: 0.001
+lr_d: 0.0001
 
 # training
 epochs: 100
-batch_size: 16
+batch_size: 64
 accumulate_grad_batches: 1
 num_workers: 8
-interval_kl_loss: 1
