@@ -70,11 +70,14 @@ if __name__ == "__main__":
             pre_checkpoint_path = None
             clustering_init_batch = None
         else:
-            pre_checkpoint_path = os.path.join(
-                checkpoint_dir, f"{filename}-pre-last.ckpt"
-            )
-            if not os.path.exists(pre_checkpoint_path):
-                pre_checkpoint_path = None
+            if checkpoint_path is not None:
+                pre_checkpoint_path = checkpoint_path
+            else:
+                pre_checkpoint_path = os.path.join(
+                    checkpoint_dir, f"{filename}-pre-last.ckpt"
+                )
+                if not os.path.exists(pre_checkpoint_path):
+                    pre_checkpoint_path = None
 
             # load clutering init batch
             data_dirs = sorted(glob(os.path.join(data_root, "*/")))
