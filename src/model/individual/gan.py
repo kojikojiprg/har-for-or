@@ -15,19 +15,23 @@ from src.model.layers import (
 
 
 class GAN(LightningModule):
-    def __init__(self, config: SimpleNamespace):
+    def __init__(self, config: SimpleNamespace, clustering_init_batch=None):
         super().__init__()
         self.automatic_optimization = False
         self.config = config
         self.accumulate_grad_batches = config.accumulate_grad_batches
         self.update_discriminator = config.update_discriminator
+        self.update_clustering = config.update_clustering
         self.n_clusters = config.n_clusters
         self.latent_ndim = config.latent_ndim
 
         self.Ge = Encoder(config)
         self.Gd = Decoder(config)
         self.D = Discriminator(config)
-        self.C = ClusteringModule(config)
+        if clustering_init_batch is None:
+            self.C = ClusteringModule(config)
+        else:
+            self.C = ClusteringModule(config, clustering_init_batch, self.Ge)
 
     @staticmethod
     def loss_adv(c, label):
@@ -55,70 +59,72 @@ class GAN(LightningModule):
         x_vis = x_vis[0].detach()
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
-        b, seq_len = x_vis.size()[:2]
 
-        opt_c, opt_g, opt_d = self.optimizers()
-
-        # train clustering module and encoder
-        self.toggle_optimizer(opt_c)
-        y = self.Ge(x_vis, x_spc, mask)
-        s, _ = self.C(y)
-        t = self.C.update_target_distribution(s)
-        lc = self.loss_kl_clustering(s, t)
-        lc = lc / self.accumulate_grad_batches
-        self.log("c", lc, prog_bar=True, on_step=True, on_epoch=True)
-        self.manual_backward(lc)
-        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
-            opt_c.step()
-            opt_c.zero_grad()
-        self.untoggle_optimizer(opt_c)
+        opt_g, opt_d, opt_c = self.optimizers()
 
         # train generator (autoencoder)
         self.toggle_optimizer(opt_g)
-        y = self.Ge(x_vis, x_spc, mask)
-        fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, y, mask)
+        z = self.Ge(x_vis, x_spc, mask)
+        fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, z, mask)
         c_fake = self.D(fake_x_vis, fake_x_spc)
 
         # loss generator
-        lr = self.loss_x_vis(x_vis, fake_x_vis, mask) + self.loss_x_spc(
-            x_spc, fake_x_spc, mask
-        )
-        lr = lr / self.accumulate_grad_batches
-        self.log("r", lr, prog_bar=True, on_step=True, on_epoch=True)
+        l_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
+        l_vis = l_vis / self.accumulate_grad_batches
+        self.log("vis", l_vis, prog_bar=True, on_step=True, on_epoch=True)
+        l_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
+        l_spc = l_spc / self.accumulate_grad_batches
+        self.log("spc", l_spc, prog_bar=True, on_step=True, on_epoch=True)
+        lr = l_vis + l_spc
         label = torch.ones_like(c_fake)
         lg = self.loss_adv(c_fake, label)
         lg = lg / self.accumulate_grad_batches
         self.log("g", lg, prog_bar=True, on_step=True, on_epoch=True)
         self.manual_backward(lr + lg)
+
         if (batch_idx + 1) % self.accumulate_grad_batches == 0:
             opt_g.step()
-            opt_g.zero_grad()
+            opt_g.zero_grad(set_to_none=True)
         self.untoggle_optimizer(opt_g)
 
-        # # train discriminator
-        if (self.current_epoch + 1) % self.update_discriminator != 0:
-            return
-        self.toggle_optimizer(opt_d)
-        # fake sample
-        y = self.Ge(x_vis, x_spc, mask)
-        fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, y, mask)
-        c_fake = self.D(fake_x_vis.detach(), fake_x_spc.detach())
-        label_fake = torch.zeros_like(c_fake)
-        # true sample
-        c_true = self.D(x_vis, x_spc, mask)
-        label_true = torch.ones_like(c_true)
+        # train discriminator
+        if (self.current_epoch + 1) % self.update_discriminator == 0:
+            self.toggle_optimizer(opt_d)
+            # fake sample
+            z = self.Ge(x_vis, x_spc, mask)
+            fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, z, mask)
+            c_fake = self.D(fake_x_vis.detach(), fake_x_spc.detach())
+            label_fake = torch.zeros_like(c_fake)
+            # true sample
+            c_true = self.D(x_vis, x_spc, mask)
+            label_true = torch.ones_like(c_true)
 
-        # loss discriminator
-        ld_fake = self.loss_adv(c_fake, label_fake)
-        ld_true = self.loss_adv(c_true, label_true)
-        ld = (ld_fake + ld_true) / 2
-        ld = ld / self.accumulate_grad_batches
-        self.log("d", ld, prog_bar=True, on_step=True, on_epoch=True)
-        self.manual_backward(ld)
-        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
-            opt_d.step()
-            opt_d.zero_grad()
-        self.untoggle_optimizer(opt_d)
+            # loss discriminator
+            ld_fake = self.loss_adv(c_fake, label_fake)
+            ld_true = self.loss_adv(c_true, label_true)
+            ld = (ld_fake + ld_true) / 2
+            ld = ld / self.accumulate_grad_batches
+            self.log("d", ld, prog_bar=True, on_step=True, on_epoch=True)
+            self.manual_backward(ld)
+            if (batch_idx + 1) % self.accumulate_grad_batches == 0:
+                opt_d.step()
+                opt_d.zero_grad(set_to_none=True)
+            self.untoggle_optimizer(opt_d)
+
+        # train clustering module and encoder
+        if (self.current_epoch + 1) % self.update_clustering == 0:
+            self.toggle_optimizer(opt_c)
+            z = self.Ge(x_vis, x_spc, mask)
+            s, _ = self.C(z.detach())
+            t = self.C.update_target_distribution(s)
+            lc = self.loss_kl_clustering(s, t)
+            lc = lc / self.accumulate_grad_batches
+            self.log("c", lc, prog_bar=True, on_step=True, on_epoch=True)
+            self.manual_backward(lc)
+            if (batch_idx + 1) % self.accumulate_grad_batches == 0:
+                opt_c.step()
+                opt_c.zero_grad(set_to_none=True)
+            self.untoggle_optimizer(opt_c)
 
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, mask = batch
@@ -131,9 +137,9 @@ class GAN(LightningModule):
             x_spc = x_spc[0]
             mask = mask[0]
 
-        y = self.Ge(x_vis, x_spc, mask)
-        fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, y, mask)
-        s, c = self.C(y)
+        z = self.Ge(x_vis, x_spc, mask)
+        fake_x_vis, fake_x_spc = self.Gd(x_vis, x_spc, z, mask)
+        s, c = self.C(z)
 
         mse_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
         mse_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
@@ -149,24 +155,25 @@ class GAN(LightningModule):
                 "x_spc": x_spc[i].cpu().numpy(),
                 "fake_x_spc": fake_x_spc[i].cpu().numpy(),
                 "mse_x_spc": mse_x_spc.item(),
-                "y": y[i].cpu().numpy(),
-                "s": s[i].cpu().numpy(),
-                "c": c[i].cpu().numpy(),
+                "z": z[i].cpu().numpy(),
+                "label_prob": s[i].cpu().numpy(),
+                "label": c[i].cpu().numpy(),
                 "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
         return results
 
     def configure_optimizers(self):
-        opt_c = torch.optim.Adam(
-            list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c
-        )
         opt_g = torch.optim.Adam(
             list(self.Ge.parameters()) + list(self.Gd.parameters()), lr=self.config.lr_g
         )
         opt_d = torch.optim.Adam(self.D.parameters(), lr=self.config.lr_d)
+        # opt_c = torch.optim.Adam(
+        #     list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c
+        # )
+        opt_c = torch.optim.Adam(self.C.parameters(), lr=self.config.lr_c)
 
-        return [opt_c, opt_g, opt_d], []
+        return [opt_g, opt_d, opt_c], []
 
 
 class Encoder(nn.Module):
@@ -217,11 +224,11 @@ class Encoder(nn.Module):
             x, attn_w = layer(x, mask)
         # x (b, seq_len+1, hidden_ndim)
 
-        y = x[:, 0, :]
-        y = self.mlp_cls(y).view(b, self.latent_ndim)
+        z = x[:, 0, :]
+        z = self.mlp_cls(z).view(b, self.latent_ndim)
         # y (b, latent_ndim)
 
-        return y
+        return z
 
 
 class Decoder(nn.Module):
