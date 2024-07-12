@@ -73,9 +73,11 @@ def individual_train_dataloader(
     dataset = dataset.batched(config.batch_size, partial=False)
 
     # create dataloader
-    dataloader = wds.WebLoader(dataset, num_workers=config.num_workers, pin_memory=True)
+    dataloader = wds.WebLoader(dataset, num_workers=config.num_workers, pin_memory=True, persistent_workers=True)
     n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
-    dataloader.repeat(2).with_epoch(n_samples).with_length(n_samples)
+    if n_samples % config.accumulate_grad_batches != 0:
+        n_samples -= n_samples % config.accumulate_grad_batches
+    dataloader.with_epoch(n_samples).with_length(n_samples)
 
     return dataloader
 
