@@ -15,9 +15,12 @@ from src.model.layers import (
 
 
 class GAN(LightningModule):
-    def __init__(self, config: SimpleNamespace, clustering_init_batch=None):
+    def __init__(
+        self, config: SimpleNamespace, clustering_init_batch=None, pretrain=False
+    ):
         super().__init__()
         self.automatic_optimization = False
+        self.pretrain = pretrain
         self.config = config
         self.accumulate_grad_batches = config.accumulate_grad_batches
         self.update_discriminator = config.update_discriminator
@@ -28,14 +31,15 @@ class GAN(LightningModule):
         self.Ge = Encoder(config)
         self.Gd = Decoder(config)
         self.D = Discriminator(config)
-        if clustering_init_batch is None:
-            self.C = ClusteringModule(config)
-        else:
-            self.C = ClusteringModule(config, clustering_init_batch, self.Ge)
+        if not pretrain:
+            if clustering_init_batch is None:
+                self.C = ClusteringModule(config)
+            else:
+                self.C = ClusteringModule(config, clustering_init_batch, self.Ge)
 
     @staticmethod
-    def loss_adv(c, label):
-        return F.binary_cross_entropy_with_logits(c, label)
+    def loss_adv(pred, label):
+        return F.binary_cross_entropy_with_logits(pred, label)
 
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
@@ -60,7 +64,10 @@ class GAN(LightningModule):
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
 
-        opt_g, opt_d, opt_c = self.optimizers()
+        if self.pretrain:
+            opt_g, opt_d = self.optimizers()
+        else:
+            opt_g, opt_d, opt_c = self.optimizers()
 
         # train generator (autoencoder)
         self.toggle_optimizer(opt_g)
@@ -112,10 +119,10 @@ class GAN(LightningModule):
             self.untoggle_optimizer(opt_d)
 
         # train clustering module and encoder
-        if (self.current_epoch + 1) % self.update_clustering == 0:
+        if not self.pretrain and (self.current_epoch + 1) % self.update_clustering == 0:
             self.toggle_optimizer(opt_c)
             z = self.Ge(x_vis, x_spc, mask)
-            s, _ = self.C(z.detach())
+            s, _ = self.C(z)
             t = self.C.update_target_distribution(s)
             lc = self.loss_kl_clustering(s, t)
             lc = lc / self.accumulate_grad_batches
@@ -168,11 +175,10 @@ class GAN(LightningModule):
             list(self.Ge.parameters()) + list(self.Gd.parameters()), lr=self.config.lr_g
         )
         opt_d = torch.optim.Adam(self.D.parameters(), lr=self.config.lr_d)
-        # opt_c = torch.optim.Adam(
-        #     list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c
-        # )
-        opt_c = torch.optim.Adam(self.C.parameters(), lr=self.config.lr_c)
+        if self.pretrain:
+            return [opt_g, opt_d], []
 
+        opt_c = torch.optim.Adam(self.C.parameters(), lr=self.config.lr_c)
         return [opt_g, opt_d, opt_c], []
 
 

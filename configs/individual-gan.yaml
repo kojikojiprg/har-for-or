@@ -20,7 +20,7 @@ patch_size: [32, 24]
 
 # optim GAN
 lr_g: 0.0001
-lr_d: 0.0001
+lr_d: 0.0002
 lr_c: 0.001
 
 # training
@@ -29,5 +29,5 @@ batch_size: 256
 accumulate_grad_batches: 1
 num_workers: 10
 update_discriminator: 1
-update_clustering: 2
+update_clustering: 1
 n_clustering_init_batch: 1000
