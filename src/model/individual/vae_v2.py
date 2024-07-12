@@ -6,7 +6,12 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
 
-from src.model.layers import MLP, IndividualEmbedding, TransformerEncoderBlock
+from src.model.layers import (
+    MLP,
+    IndividualEmbedding,
+    TransformerDecoderBlock,
+    TransformerEncoderBlock,
+)
 
 
 class VAE(LightningModule):
@@ -25,23 +30,17 @@ class VAE(LightningModule):
         self.Q = Q(self.config)
         vis_npatchs = self.Q.emb.emb_vis.npatchs
         self.Pz_y = Pz_y(self.config)
-        self.Px_z = Px_z(self.config, vis_npatchs)
+        self.Px_z = Px_zy(self.config, vis_npatchs)
 
     def forward(self, x_vis, x_spc, mask, stage):
-        # q
-        z, mu, logvar, pi = self.Q(x_vis, x_spc, mask)
-        if stage == "train":
-            y = F.gumbel_softmax(torch.log(pi), self.config.tau, dim=1)
-        else:
-            y = pi
+        x = self.Q(x_vis, x_spc, mask)
+        y = self.Q.qy_x(x[:, 0, :], stage)
+        z, mu, logvar = self.Q.qz_xy(x[:, 1:, :], y)
 
-        # p(z|y)
         z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+        recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, y, mask)
 
-        # p(x|z)
-        recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
-
-        return recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, pi
+        return recon_x_vis, recon_x_spc, mu, logvar, mu_prior, logvar_prior, y
 
     @staticmethod
     def loss_x_vis(x_vis, fake_x_vis, mask):
@@ -63,26 +62,27 @@ class VAE(LightningModule):
     @staticmethod
     def loss_kl_gaussian(mu1, logv1, mu2, logv2, mask):
         # mu, log (b, seq_len, latent_ndim)
-        # lg = -0.5 * torch.mean(
-        #     1
-        #     + logv1[~mask]
-        #     - logv2[~mask]
-        #     - logv1[~mask].exp() / logv2[~mask].exp()
-        #     - (mu1[~mask] - mu2[~mask]) ** 2 / logv2[~mask].exp()
-        # )
-        # return lg
-        # mu, log (b, latent_ndim)
-        weight = torch.sqrt((mu1.detach() - mu2.detach()) ** 2).mean(dim=1)
-        lg = -0.5 * (
+        lg = -0.5 * torch.mean(
             1
-            + logv1
-            - logv2
-            - logv1.exp() / logv2.exp()
-            - (mu1 - mu2) ** 2 / logv2.exp()
+            + logv1[~mask]
+            - logv2[~mask]
+            - logv1[~mask].exp() / logv2[~mask].exp()
+            - (mu1[~mask] - mu2[~mask]) ** 2 / logv2[~mask].exp()
         )
-        lg = lg * weight.view(-1, 1)
-        lg = torch.mean(lg)
         return lg
+
+        # mu, log (b, latent_ndim)
+        # weight = torch.sqrt((mu1.detach() - mu2.detach()) ** 2).mean(dim=1)
+        # lg = -0.5 * (
+        #     1
+        #     + logv1
+        #     - logv2
+        #     - logv1.exp() / logv2.exp()
+        #     - (mu1 - mu2) ** 2 / logv2.exp()
+        # )
+        # lg = lg * weight.view(-1, 1)
+        # lg = torch.mean(lg)
+        # return lg
 
     def loss_func(
         self,
@@ -184,8 +184,8 @@ class VAE(LightningModule):
                 "mse_x_spc": mse_x_spc.item(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
-                "y": y[i].cpu().numpy(),
-                "c": y[i].cpu().numpy().argmax().item(),
+                "label_prob": y[i].cpu().numpy(),
+                "label": y[i].cpu().numpy().argmax().item(),
                 "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
@@ -200,6 +200,7 @@ class Q(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
+        self.tau = config.tau
 
         self.cls = nn.Parameter(torch.randn((1, 1, self.hidden_ndim)))
         self.cls_mask = nn.Parameter(torch.full((1, 1), False), requires_grad=False)
@@ -225,21 +226,23 @@ class Q(nn.Module):
             ]
         )
 
-        self.qy_x = nn.Sequential(
+        self.mlp_qy_x = nn.Sequential(
             nn.LayerNorm(config.hidden_ndim),
             MLP(config.hidden_ndim, config.hidden_ndim),
             nn.Linear(config.hidden_ndim, config.n_clusters),
-            nn.Softmax(dim=1),
+            # nn.Softmax(dim=1),
         )
 
-        self.norm = nn.LayerNorm(config.hidden_ndim * config.seq_len)
+        # q(z|x,y)
+        self.mlp_y = MLP(config.n_clusters, config.hidden_ndim)
+        self.norm = nn.LayerNorm(config.hidden_ndim)
         self.mlp_mu = nn.Sequential(
-            MLP(config.hidden_ndim * config.seq_len, config.latent_ndim),
-            nn.Linear(config.latent_ndim, config.latent_ndim),
+            MLP(config.hidden_ndim, config.hidden_ndim),
+            nn.Linear(config.hidden_ndim, config.latent_ndim),
         )
         self.mlp_logvar = nn.Sequential(
-            MLP(config.hidden_ndim * config.seq_len, config.latent_ndim),
-            nn.Linear(config.latent_ndim, config.latent_ndim),
+            MLP(config.hidden_ndim, config.hidden_ndim),
+            nn.Linear(config.hidden_ndim, config.latent_ndim),
         )
 
     def forward(self, x_vis, x_spc, mask):
@@ -259,47 +262,65 @@ class Q(nn.Module):
             x, attn_w = layer(x, mask)
         # x (b, seq_len+1, hidden_ndim)
 
-        y = x[:, 0, :]
-        pi = self.qy_x(y)
+        return x
 
-        x = x[:, 1:, :]
-        x = x.view(b, -1)
-        x = self.norm(x)
-        mu = self.mlp_mu(x)
-        logvar = self.mlp_logvar(x)
+    def qy_x(self, y, stage):
+        y = self.mlp_qy_x(y)
+        y = F.gumbel_softmax(y, self.tau, dim=1)
+        # if stage == "train":
+        #     y = F.gumbel_softmax(y, self.tau, dim=1)
+        # else:
+        #     y = F.softmax(y, dim=1)
+        return y
+
+    def qz_xy(self, z, y):
+        b = z.size(0)
+        y = self.mlp_y(y)
+        z = z + y.view(b, 1, self.hidden_ndim)
+        z = self.norm(z)
+        mu = self.mlp_mu(z)
+        logvar = self.mlp_logvar(z)
         ep = torch.randn_like(logvar)
         z = mu + torch.exp(logvar / 2) * ep
         # z, mu, log_sig (b, seq_len, latent_ndim)
 
-        return z, mu, logvar, pi
+        return z, mu, logvar
 
 
 class Pz_y(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
-        self.mlp = MLP(config.n_clusters, config.hidden_ndim)
+        self.seq_len = config.seq_len
+        self.hidden_ndim = config.hidden_ndim
+        self.mlp = nn.Sequential(
+            MLP(config.n_clusters, config.emb_hidden_ndim),
+            MLP(config.emb_hidden_ndim, config.hidden_ndim * config.seq_len),
+        )
         self.norm = nn.LayerNorm(config.hidden_ndim)
         self.mlp_mu = nn.Sequential(
-            MLP(config.hidden_ndim, config.latent_ndim),
-            nn.Linear(config.latent_ndim, config.latent_ndim),
+            MLP(config.hidden_ndim, config.hidden_ndim),
+            nn.Linear(config.hidden_ndim, config.latent_ndim),
         )
         self.mlp_logvar = nn.Sequential(
-            MLP(config.hidden_ndim, config.latent_ndim),
-            nn.Linear(config.latent_ndim, config.latent_ndim),
+            MLP(config.hidden_ndim, config.hidden_ndim),
+            nn.Linear(config.hidden_ndim, config.latent_ndim),
         )
 
     def forward(self, y):
-        y = self.mlp(y)
-        y = self.norm(y)
-        mu_prior = self.mlp_mu(y)
-        logvar_prior = self.mlp_logvar(y)
+        b = y.size(0)
+
+        z = self.mlp(y)
+        z = z.view(b, self.seq_len, self.hidden_ndim)
+        z = self.norm(z)
+        mu_prior = self.mlp_mu(z)
+        logvar_prior = self.mlp_logvar(z)
         ep = torch.randn_like(logvar_prior)
         z_prior = mu_prior + torch.exp(logvar_prior / 2) * ep
 
         return z_prior, mu_prior, logvar_prior
 
 
-class Px_z(nn.Module):
+class Px_zy(nn.Module):
     def __init__(self, config: SimpleNamespace, vis_npatchs: int):
         super().__init__()
         self.seq_len = config.seq_len
@@ -316,13 +337,15 @@ class Px_z(nn.Module):
             config.img_size,
         )
 
-        self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
+        self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
 
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
 
+        self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
+
         self.encoders = nn.ModuleList(
             [
-                TransformerEncoderBlock(
+                TransformerDecoderBlock(
                     config.hidden_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
@@ -348,21 +371,25 @@ class Px_z(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, x_vis, x_spc, z, mask=None):
+    def forward(self, x_vis, x_spc, z, y, mask=None):
         b, seq_len = x_vis.size()[:2]
         x = self.emb(x_vis, x_spc)
-        z = self.emb_z(z).view(b, 1, self.hidden_ndim)
-        x = torch.cat([z, x], dim=1)
+        y = self.emb_y(y).view(b, 1, self.hidden_ndim)
+        x = torch.cat([y, x], dim=1)
         mask = torch.cat([torch.full((b, 1), False).to(mask.device), mask], dim=1)
-        # x (b, seq_len + 1, hidden_ndim)
+        x = x[:, :-1, :]
+        mask = mask[:, :-1]
+        # x (b, seq_len, hidden_ndim)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+
+        z = self.emb_z(z)
         for layer in self.encoders:
-            x, attn_w = layer(x, mask, mask_type="tgt")
+            x = layer(x, z, mask)
         # x (b, seq_len, hidden_ndim)
 
         # reconstruct
-        x = self.mlp(x[:, :-1, :])
+        x = self.mlp(x)
         fake_x_vis, fake_x_spc = (
             x[:, :, : self.emb_hidden_ndim],
             x[:, :, self.emb_hidden_ndim :],

@@ -6,9 +6,9 @@ img_size: [256, 192]
 
 # model
 n_clusters: 10
-tau: 0.1  # VAE gumbel softmax
-hidden_ndim: 64
-latent_ndim: 32
+tau: 0.5  # VAE gumbel softmax
+hidden_ndim: 128
+latent_ndim: 10
 nheads: 8
 nlayers: 6
 dropout: 0.2
@@ -21,12 +21,12 @@ patch_size: [32, 24]
 # optim VAE
 lrc_x_vis: 1
 lrc_x_spc: 1
-lg: 8
-lc: 8
-lr: 0.001
+lg: 16
+lc: 1
+lr: 0.0001
 
 # training
 epochs: 100
-batch_size: 64
-accumulate_grad_batches: 4
-num_workers: 8
+batch_size: 256
+accumulate_grad_batches: 1
+num_workers: 10
