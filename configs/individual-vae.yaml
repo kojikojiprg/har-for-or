@@ -26,7 +26,7 @@ lc: 1
 lr: 0.0001
 
 # training
-epochs: 100
+epochs: 200
 batch_size: 256
 accumulate_grad_batches: 1
 num_workers: 10

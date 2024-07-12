@@ -23,11 +23,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "-p", "--pretrain", required=False, action="store_true", default=False
     )
+    parser.add_argument(
+        "-ckpt", "--checkpoint", required=False, type=str, default=None
+    )
     args = parser.parse_args()
     data_root = args.data_root
     model_type = args.model_type
     gpu_ids = args.gpu_ids
     pretrain = args.pretrain
+    checkpoint_path = args.checkpoint
 
     # load config
     config_path = f"configs/individual-{model_type}.yaml"
@@ -57,6 +61,10 @@ if __name__ == "__main__":
         model = VAE(config)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
         accumulate_grad_batches = config.accumulate_grad_batches
+        if checkpoint_path is not None:
+            pre_checkpoint_path = checkpoint_path
+        else:
+            pre_checkpoint_path = None
     elif model_type == "gan":
         if pretrain:
             pre_checkpoint_path = None
