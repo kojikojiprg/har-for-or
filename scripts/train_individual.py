@@ -23,9 +23,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-p", "--pretrain", required=False, action="store_true", default=False
     )
-    parser.add_argument(
-        "-ckpt", "--checkpoint", required=False, type=str, default=None
-    )
+    parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
     args = parser.parse_args()
     data_root = args.data_root
     model_type = args.model_type
@@ -61,24 +59,10 @@ if __name__ == "__main__":
         model = VAE(config)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
         accumulate_grad_batches = config.accumulate_grad_batches
-        if checkpoint_path is not None:
-            pre_checkpoint_path = checkpoint_path
-        else:
-            pre_checkpoint_path = None
     elif model_type == "gan":
         if pretrain:
-            pre_checkpoint_path = None
-            clustering_init_batch = None
+            model = GAN(config, None, pretrain)
         else:
-            if checkpoint_path is not None:
-                pre_checkpoint_path = checkpoint_path
-            else:
-                pre_checkpoint_path = os.path.join(
-                    checkpoint_dir, f"{filename}-pre-last.ckpt"
-                )
-                if not os.path.exists(pre_checkpoint_path):
-                    pre_checkpoint_path = None
-
             # load clutering init batch
             data_dirs = sorted(glob(os.path.join(data_root, "*/")))
             dataset, _ = load_dataset(data_dirs, "individual", config, shuffle=False)
@@ -101,8 +85,15 @@ if __name__ == "__main__":
                 torch.cat(mask_lst, dim=0).contiguous(),
             )
 
-        # create model
-        model = GAN(config, clustering_init_batch, pretrain)
+            # create model
+            model = GAN(config, clustering_init_batch, pretrain)
+            pretrain_checkpoint_path = f"{checkpoint_dir}/{filename}-pre-last.ckpt"
+            if os.path.exists(pretrain_checkpoint_path):
+                state_dict = torch.load(
+                    pretrain_checkpoint_path, map_location=model.device
+                )["state_dict"]
+                model.load_state_dict_without_clustering(state_dict)
+
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
         accumulate_grad_batches = 1  # manual backward loss
     else:
@@ -119,4 +110,4 @@ if __name__ == "__main__":
         accumulate_grad_batches=accumulate_grad_batches,
         benchmark=True,
     )
-    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=pre_checkpoint_path)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=checkpoint_path)

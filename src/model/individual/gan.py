@@ -31,11 +31,20 @@ class GAN(LightningModule):
         self.Ge = Encoder(config)
         self.Gd = Decoder(config)
         self.D = Discriminator(config)
-        if not pretrain:
-            if clustering_init_batch is None:
-                self.C = ClusteringModule(config)
-            else:
-                self.C = ClusteringModule(config, clustering_init_batch, self.Ge)
+        if clustering_init_batch is None:
+            self.C = ClusteringModule(config)
+        else:
+            self.C = ClusteringModule(config, clustering_init_batch, self.Ge)
+        if pretrain:
+            self.C.requires_grad_(False)
+
+    def load_state_dict_without_clustering(self, state_dict):
+        ge_params = {name.replace("Ge.", ""): params for name, params in state_dict.items() if "Ge" in name}
+        self.Ge.load_state_dict(ge_params)
+        gd_params = {name.replace("Gd.", ""): params for name, params in state_dict.items() if "Gd" in name}
+        self.Gd.load_state_dict(gd_params)
+        d_params = {name.replace("D.", ""): params for name, params in state_dict.items() if "D" in name}
+        self.D.load_state_dict(d_params)
 
     @staticmethod
     def loss_adv(pred, label):
@@ -64,10 +73,7 @@ class GAN(LightningModule):
         x_spc = x_spc[0].detach()
         mask = mask[0].detach()
 
-        if self.pretrain:
-            opt_g, opt_d = self.optimizers()
-        else:
-            opt_g, opt_d, opt_c = self.optimizers()
+        opt_g, opt_d, opt_c = self.optimizers()
 
         # train generator (autoencoder)
         self.toggle_optimizer(opt_g)
@@ -175,10 +181,7 @@ class GAN(LightningModule):
             list(self.Ge.parameters()) + list(self.Gd.parameters()), lr=self.config.lr_g
         )
         opt_d = torch.optim.Adam(self.D.parameters(), lr=self.config.lr_d)
-        if self.pretrain:
-            return [opt_g, opt_d], []
-
-        opt_c = torch.optim.Adam(self.C.parameters(), lr=self.config.lr_c)
+        opt_c = torch.optim.Adam(list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c)
         return [opt_g, opt_d, opt_c], []
 
 
