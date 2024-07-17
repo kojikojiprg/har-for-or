@@ -63,36 +63,39 @@ if __name__ == "__main__":
         if pretrain:
             model = GAN(config, None, pretrain)
         else:
-            # load clutering init batch
-            data_dirs = sorted(glob(os.path.join(data_root, "*/")))
-            dataset, _ = load_dataset(data_dirs, "individual", config, shuffle=False)
-            dataset = iter(dataset)
-            x_vis_lst = []
-            x_spc_lst = []
-            mask_lst = []
-            for i in tqdm(
-                range(config.n_clustering_init_batch),
-                ncols=100,
-                desc="load clustering init",
-            ):
-                _, _, x_vis, x_spc, mask = next(dataset)
-                x_vis_lst.append(x_vis.view(1, config.seq_len, 17, 2))
-                x_spc_lst.append(x_spc.view(1, config.seq_len, 2, 2))
-                mask_lst.append(mask.view(1, config.seq_len))
-            clustering_init_batch = (
-                torch.cat(x_vis_lst, dim=0).contiguous(),
-                torch.cat(x_spc_lst, dim=0).contiguous(),
-                torch.cat(mask_lst, dim=0).contiguous(),
-            )
+            if checkpoint_path is None:
+                # load clutering init batch
+                data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+                dataset, _ = load_dataset(data_dirs, "individual", config, shuffle=False)
+                dataset = iter(dataset)
+                x_vis_lst = []
+                x_spc_lst = []
+                mask_lst = []
+                for i in tqdm(
+                    range(config.n_clustering_init_batch),
+                    ncols=100,
+                    desc="load clustering init",
+                ):
+                    _, _, x_vis, x_spc, mask = next(dataset)
+                    x_vis_lst.append(x_vis.view(1, config.seq_len, 17, 2))
+                    x_spc_lst.append(x_spc.view(1, config.seq_len, 2, 2))
+                    mask_lst.append(mask.view(1, config.seq_len))
+                clustering_init_batch = (
+                    torch.cat(x_vis_lst, dim=0).contiguous(),
+                    torch.cat(x_spc_lst, dim=0).contiguous(),
+                    torch.cat(mask_lst, dim=0).contiguous(),
+                )
 
-            # create model
-            model = GAN(config, clustering_init_batch, pretrain)
-            pretrain_checkpoint_path = f"{checkpoint_dir}/{filename}-pre-last.ckpt"
-            if os.path.exists(pretrain_checkpoint_path):
-                state_dict = torch.load(
-                    pretrain_checkpoint_path, map_location=model.device
-                )["state_dict"]
-                model.load_state_dict_without_clustering(state_dict)
+                # create model
+                model = GAN(config, clustering_init_batch, pretrain)
+                pretrain_checkpoint_path = f"{checkpoint_dir}/{filename}-pre-last.ckpt"
+                if os.path.exists(pretrain_checkpoint_path):
+                    state_dict = torch.load(
+                        pretrain_checkpoint_path, map_location=model.device
+                    )["state_dict"]
+                    model.load_state_dict_without_clustering(state_dict)
+            else:
+                model = GAN(config, None, pretrain)
 
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
         accumulate_grad_batches = 1  # manual backward loss

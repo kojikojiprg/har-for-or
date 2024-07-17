@@ -265,9 +265,9 @@ def plot_tsne(X, labels, figpath=None, is_show=False, cmap="tab10"):
     unique_labels = np.unique(labels)
     cm = plt.get_cmap(cmap)
     for label in unique_labels:
-        mu_cluster = embedded[labels == label]
+        x = embedded[labels == label]
         c = cm(int(label))
-        plt.scatter(mu_cluster.T[0], mu_cluster.T[1], s=2, c=c, label=label)
+        plt.scatter(x.T[0], x.T[1], s=2, c=c, label=label)
     plt.legend(bbox_to_anchor=(1.01, 1))
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")

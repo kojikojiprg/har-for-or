@@ -139,8 +139,8 @@ class PixcelEmbedding(nn.Module):
 class IndividualEmbedding(nn.Module):
     def __init__(
         self,
+        emb_hidden_ndim: int,
         hidden_ndim: int,
-        out_ndim: int,
         nheads: int,
         nlayers: int,
         dropout: float,
@@ -151,18 +151,14 @@ class IndividualEmbedding(nn.Module):
         # self.emb_vis = PixcelEmbedding(
         #     hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
         # )
-        self.emb_vis = PointEmbedding(hidden_ndim, "keypoints")
-        self.emb_spc = PointEmbedding(hidden_ndim, "bbox")
-        self.norm = nn.LayerNorm(hidden_ndim * 2)
-        self.ff = MLP(hidden_ndim * 2, out_ndim)
+        self.emb_vis = PointEmbedding(emb_hidden_ndim, "keypoints")
+        self.emb_spc = PointEmbedding(emb_hidden_ndim, "bbox")
+        self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, bias=False, batch_first=True)
+        self.mlp = MLP(emb_hidden_ndim, hidden_ndim)
 
     def forward(self, x_vis, x_spc):
-        # # f_vis (b, seq_len, 5, h, w)
-        # f_vis (b, seq_len, 17, 2)
-        # f_spc (b, seq_len, 2, 2)
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
-        x = torch.cat([x_vis, x_spc], dim=2)
-        x = self.norm(x)
-        x = self.ff(x)
+        x = self.attn(x_vis, x_spc, x_spc)[0]
+        x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)

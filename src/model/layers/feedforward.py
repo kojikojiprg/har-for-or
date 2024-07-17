@@ -28,8 +28,6 @@ class MLP(nn.Module):
             nn.SiLU(),
             nn.Dropout(dropout),
             nn.Linear(hdim, out_ndim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
         )
 
     def forward(self, x):
