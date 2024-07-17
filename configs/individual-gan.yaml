@@ -7,27 +7,28 @@ img_size: [256, 192]
 # model
 n_clusters: 10
 alpha: 2  # GAN freedom of student T
-hidden_ndim: 128
-latent_ndim: 32
-nheads: 8
+hidden_ndim: 32
+latent_ndim: 16
+nheads: 4
 nlayers: 6
-dropout: 0.2
-emb_hidden_ndim: 128
-emb_nheads: 8
+dropout: 0.1
+emb_hidden_ndim: 32
+emb_nheads: 4
 emb_nlayers: 6
-emb_dropout: 0.2
+emb_dropout: 0.1
 patch_size: [32, 24]
 
 # optim GAN
-lr_g: 0.0001
-lr_d: 0.0002
-lr_c: 0.0001
+lr_g: 0.001
+lr_d: 0.001
+lr_c: 0.001
 
 # training
 epochs: 200
 batch_size: 256
 accumulate_grad_batches: 1
-num_workers: 10
+num_workers: 19
 update_discriminator: 1
 update_clustering: 1
+update_kmeans: 5
 n_clustering_init_batch: 1000

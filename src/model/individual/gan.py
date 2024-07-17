@@ -10,6 +10,7 @@ from src.model.layers import (
     MLP,
     ClusteringModule,
     IndividualEmbedding,
+    TransformerDecoderBlock,
     TransformerEncoderBlock,
 )
 
@@ -25,6 +26,7 @@ class GAN(LightningModule):
         self.accumulate_grad_batches = config.accumulate_grad_batches
         self.update_discriminator = config.update_discriminator
         self.update_clustering = config.update_clustering
+        self.update_kmeans = config.update_kmeans
         self.n_clusters = config.n_clusters
         self.latent_ndim = config.latent_ndim
 
@@ -39,11 +41,23 @@ class GAN(LightningModule):
             self.C.requires_grad_(False)
 
     def load_state_dict_without_clustering(self, state_dict):
-        ge_params = {name.replace("Ge.", ""): params for name, params in state_dict.items() if "Ge" in name}
+        ge_params = {
+            name.replace("Ge.", ""): params
+            for name, params in state_dict.items()
+            if "Ge" in name
+        }
         self.Ge.load_state_dict(ge_params)
-        gd_params = {name.replace("Gd.", ""): params for name, params in state_dict.items() if "Gd" in name}
+        gd_params = {
+            name.replace("Gd.", ""): params
+            for name, params in state_dict.items()
+            if "Gd" in name
+        }
         self.Gd.load_state_dict(gd_params)
-        d_params = {name.replace("D.", ""): params for name, params in state_dict.items() if "D" in name}
+        d_params = {
+            name.replace("D.", ""): params
+            for name, params in state_dict.items()
+            if "D" in name
+        }
         self.D.load_state_dict(d_params)
 
     @staticmethod
@@ -66,6 +80,11 @@ class GAN(LightningModule):
     def loss_kl_clustering(q, p, eps=1e-10):
         lc = (q * (torch.log(q + eps) - torch.log(p + eps))).sum()
         return lc
+
+    def loss_cross_entropy(self, s, z):
+        psuedo_labels = self.C.predict_kmeans(z).to(s.device)
+        lce = F.cross_entropy(s, psuedo_labels)
+        return lce
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, mask = batch
@@ -131,6 +150,7 @@ class GAN(LightningModule):
             s, _ = self.C(z)
             t = self.C.update_target_distribution(s)
             lc = self.loss_kl_clustering(s, t)
+            # lc = lc + self.loss_cross_entropy(s, z)
             lc = lc / self.accumulate_grad_batches
             self.log("c", lc, prog_bar=True, on_step=True, on_epoch=True)
             self.manual_backward(lc)
@@ -138,6 +158,10 @@ class GAN(LightningModule):
                 opt_c.step()
                 opt_c.zero_grad(set_to_none=True)
             self.untoggle_optimizer(opt_c)
+        # if not self.pretrain and (self.current_epoch + 1) % self.update_kmeans == 0:
+        #     self.C.update_kmeans(self.Ge)
+
+        del keys, ids, x_vis, x_spc, mask
 
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, mask = batch
@@ -181,7 +205,9 @@ class GAN(LightningModule):
             list(self.Ge.parameters()) + list(self.Gd.parameters()), lr=self.config.lr_g
         )
         opt_d = torch.optim.Adam(self.D.parameters(), lr=self.config.lr_d)
-        opt_c = torch.optim.Adam(list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c)
+        opt_c = torch.optim.Adam(
+            list(self.Ge.parameters()) + list(self.C.parameters()), lr=self.config.lr_c
+        )
         return [opt_g, opt_d, opt_c], []
 
 
@@ -211,10 +237,7 @@ class Encoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        self.mlp_cls = nn.Sequential(
-            nn.LayerNorm(config.hidden_ndim),
-            MLP(config.hidden_ndim, config.latent_ndim),
-        )
+        self.lin_cls = nn.Linear(config.hidden_ndim, config.latent_ndim)
 
     def forward(self, x_vis, x_spc, mask):
         # embedding
@@ -234,7 +257,7 @@ class Encoder(nn.Module):
         # x (b, seq_len+1, hidden_ndim)
 
         z = x[:, 0, :]
-        z = self.mlp_cls(z).view(b, self.latent_ndim)
+        z = self.lin_cls(z).view(b, self.latent_ndim)
         # y (b, latent_ndim)
 
         return z
@@ -246,6 +269,8 @@ class Decoder(nn.Module):
         self.seq_len = config.seq_len
         self.hidden_ndim = config.hidden_ndim
         self.emb_hidden_ndim = config.emb_hidden_ndim
+        self.x_vis_start = nn.Parameter(torch.zeros((1, 1, 17, 2), dtype=torch.float32), requires_grad=False)
+        self.x_spc_start = nn.Parameter(torch.zeros((1, 1, 2, 2), dtype=torch.float32), requires_grad=False)
 
         self.emb = IndividualEmbedding(
             config.emb_hidden_ndim,
@@ -256,16 +281,17 @@ class Decoder(nn.Module):
             config.patch_size,
             config.img_size,
         )
-        self.emb_y = MLP(config.latent_ndim, config.hidden_ndim)
+        self.emb_z = MLP(config.latent_ndim, config.seq_len * config.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
-        self.encoders = nn.ModuleList(
+        self.decoders = nn.ModuleList(
             [
-                TransformerEncoderBlock(
+                TransformerDecoderBlock(
                     config.hidden_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
+
         self.mlp = nn.Sequential(
             nn.LayerNorm(config.hidden_ndim),
             MLP(config.hidden_ndim, config.emb_hidden_ndim * 2),
@@ -283,21 +309,27 @@ class Decoder(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, x_vis, x_spc, y, mask=None):
+    def forward(self, x_vis, x_spc, z, mask=None):
         b, seq_len = x_vis.size()[:2]
+        x_vis = torch.cat([self.x_vis_start.repeat((b, 1, 1, 1)), x_vis], dim=1)
+        x_vis = x_vis[:, :-1]
+        x_spc = torch.cat([self.x_spc_start.repeat((b, 1, 1, 1)), x_spc], dim=1)
+        x_spc = x_spc[:, :-1]
         x = self.emb(x_vis, x_spc)
-        y = self.emb_y(y).view(b, 1, self.hidden_ndim)
-        x = torch.cat([y, x], dim=1)
         mask = torch.cat([torch.full((b, 1), False).to(mask.device), mask], dim=1)
+        mask = mask[:, :-1]
         # x (b, seq_len + 1, hidden_ndim)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
-        for layer in self.encoders:
-            x, attn_w = layer(x, mask, mask_type="tgt")
+
+        z = self.emb_z(z)
+        z = z.view(b, self.seq_len, self.hidden_ndim)
+        for layer in self.decoders:
+            x = layer(x, z, mask)
         # x (b, seq_len, hidden_ndim)
 
         # reconstruct
-        x = self.mlp(x[:, :-1, :])
+        x = self.mlp(x)
         fake_x_vis, fake_x_spc = (
             x[:, :, : self.emb_hidden_ndim],
             x[:, :, self.emb_hidden_ndim :],
@@ -345,9 +377,9 @@ class Discriminator(nn.Module):
         )
 
         self.mlp_cls = nn.Sequential(
-            nn.LayerNorm(config.hidden_ndim),
             MLP(config.hidden_ndim, config.hidden_ndim),
-            nn.Linear(config.hidden_ndim, 1),  # real, fake
+            nn.Linear(config.hidden_ndim, 1),
+            nn.Sigmoid(),  # real, fake
         )
 
     def forward(self, x_vis, x_spc, mask=None):
