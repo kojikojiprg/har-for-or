@@ -234,7 +234,8 @@ class VAE(LightningModule):
             x_spc = x_spc[0]
             mask = mask[0]
 
-        y = self.Qy_x(x_vis, x_spc, mask)
+        logits = self.Qy_x(x_vis, x_spc, mask)
+        y = F.softmax(logits, dim=1)
         z, mu, logvar = self.Qz_xy(x_vis, x_spc, y, mask)
         recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
         mse_x_vis = self.loss_x_vis(x_vis, recon_x_vis, mask)
