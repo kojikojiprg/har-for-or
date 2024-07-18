@@ -153,12 +153,12 @@ class VAE(LightningModule):
     def update_pz_y(self, opt_pz_y, b):
         self.toggle_optimizer(opt_pz_y)
 
-        y = np.random.choice(self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy())
-        y = torch.tensor(y, dtype=torch.long)
-        y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
-
         for i in range(self.config.epochs_pz_y):
+            y = np.random.choice(self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy())
+            y = torch.tensor(y, dtype=torch.long)
+            y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
             z, mu, logvar = self.Pz_y(y)
+
             mu = mu.repeat((1, self.n_clusters)).view(self.n_clusters, b, self.latent_ndim)
             norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
             pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)

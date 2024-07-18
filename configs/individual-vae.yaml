@@ -6,7 +6,7 @@ img_size: [256, 192]
 
 # model
 n_clusters: 10
-tau: 1.0
+tau: 0.5
 hidden_ndim: 128
 latent_ndim: 16
 nheads: 8
@@ -29,7 +29,7 @@ lr: 0.001
 lr_py: 0.01
 lr_pz_y: 0.01
 alpha: 2
-epochs_pz_y: 2
+epochs_pz_y: 3
 
 # training
 epochs: 200
