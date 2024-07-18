@@ -52,12 +52,12 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last"
 
     # load dataset
-    dataloader = individual_train_dataloader(data_root, "individual", config, gpu_ids)
+    dataloader, n_batches = individual_train_dataloader(data_root, "individual", config, gpu_ids)
 
     # create model
     if model_type == "vae":
-        model = VAE(config)
-        ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
+        model = VAE(config, n_batches)
+        ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
         accumulate_grad_batches = config.accumulate_grad_batches
     elif model_type == "gan":
         if pretrain:

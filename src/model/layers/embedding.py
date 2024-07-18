@@ -7,7 +7,7 @@ from .transformer import TransformerEncoderBlock
 
 
 class PointEmbedding(nn.Module):
-    def __init__(self, hidden_ndim, point_type):
+    def __init__(self, emb_hidden_ndim, point_type):
         super().__init__()
         if point_type == "bbox":
             self.npatchs = 2
@@ -15,9 +15,10 @@ class PointEmbedding(nn.Module):
             self.npatchs = 17
 
         self.lin = nn.Sequential(
-            nn.LayerNorm(2 * self.npatchs),
-            MLP(2 * self.npatchs, hidden_ndim),
-            MLP(hidden_ndim, hidden_ndim),
+            MLP(2 * self.npatchs, emb_hidden_ndim),
+            nn.SiLU(),
+            MLP(emb_hidden_ndim, emb_hidden_ndim),
+            nn.SiLU(),
         )
 
     def forward(self, pt):
@@ -153,12 +154,16 @@ class IndividualEmbedding(nn.Module):
         # )
         self.emb_vis = PointEmbedding(emb_hidden_ndim, "keypoints")
         self.emb_spc = PointEmbedding(emb_hidden_ndim, "bbox")
-        self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, bias=False, batch_first=True)
-        self.mlp = MLP(emb_hidden_ndim, hidden_ndim)
+        # self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, bias=False, batch_first=True)
+        self.mlp = nn.Sequential(
+            MLP(emb_hidden_ndim, hidden_ndim),
+            nn.SiLU(),
+        )
 
     def forward(self, x_vis, x_spc):
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
-        x = self.attn(x_vis, x_spc, x_spc)[0]
+        # x = self.attn(x_vis, x_spc, x_spc)[0]
+        x = x_vis + x_spc
         x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)

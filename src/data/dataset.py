@@ -69,17 +69,17 @@ def individual_train_dataloader(
 ) -> wds.WebLoader:
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
-    dataset, n_samples = load_dataset(data_dirs, dataset_type, config, True)
+    dataset, n_batches = load_dataset(data_dirs, dataset_type, config, True)
     dataset = dataset.batched(config.batch_size, partial=False)
 
     # create dataloader
     dataloader = wds.WebLoader(dataset, num_workers=config.num_workers, pin_memory=True, persistent_workers=True)
-    n_samples = int(n_samples / len(gpu_ids) / config.batch_size)
-    if n_samples % config.accumulate_grad_batches != 0:
-        n_samples -= n_samples % config.accumulate_grad_batches
-    dataloader.with_epoch(n_samples).with_length(n_samples)
+    n_batches = int(n_batches / len(gpu_ids) / config.batch_size)
+    if n_batches % config.accumulate_grad_batches != 0:
+        n_batches -= n_batches % config.accumulate_grad_batches
+    dataloader.with_epoch(n_batches).with_length(n_batches)
 
-    return dataloader
+    return dataloader, n_batches
 
 
 def _node_splitter(src, length):

@@ -259,11 +259,11 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
     plt.close()
 
 
-def plot_tsne(X, labels, figpath=None, is_show=False, cmap="tab10"):
+def plot_tsne(X, labels, figpath=None, is_show=False, cmap="tab10", lut=None):
     tsne = TSNE(n_components=2, random_state=42, perplexity=10, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
-    cm = plt.get_cmap(cmap)
+    cm = plt.get_cmap(cmap, lut)
     for label in unique_labels:
         x = embedded[labels == label]
         c = cm(int(label))
