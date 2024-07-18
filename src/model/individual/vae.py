@@ -196,7 +196,7 @@ class VAE(LightningModule):
         # train VAE
         self.toggle_optimizer(opt)
         logits = self.Qy_x(x_vis, x_spc, mask)
-        y = F.gumbel_softmax(logits, self.tau, hard=True, dim=1)
+        y = F.gumbel_softmax(logits, self.tau, dim=1)
         z, mu, logvar = self.Qz_xy(x_vis, x_spc, y, mask)
         z_prior, mu_prior, logvar_prior = self.Pz_y(y)
         recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
