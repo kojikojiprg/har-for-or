@@ -23,13 +23,15 @@ lrc_x_vis: 1
 lrc_x_spc: 1
 lg: 8
 lc: 1
-lr: 0.001
+lr: 0.0001
 
 # optim pz_y
 lr_py: 0.01
 lr_pz_y: 0.01
 alpha: 2
-epochs_pz_y: 3
+batch_size_pz_y: 16
+epochs_pz_y: 1
+update_interval: 5
 
 # training
 epochs: 200

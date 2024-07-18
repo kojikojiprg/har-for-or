@@ -160,10 +160,10 @@ class IndividualEmbedding(nn.Module):
             nn.SiLU(),
         )
 
-    def forward(self, x_vis, x_spc):
+    def forward(self, x_vis, x_spc, lmd=0.3):
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
         # x = self.attn(x_vis, x_spc, x_spc)[0]
-        x = x_vis + x_spc
+        x = x_vis * lmd + x_spc * (1 - lmd)
         x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)

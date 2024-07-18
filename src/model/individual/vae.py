@@ -138,6 +138,7 @@ class VAE(LightningModule):
         logvar_prior = logvar_prior.view(1, self.n_clusters, self.latent_ndim)
         pdfs = self.Py.pi * self.log_normal(z, mu_prior, logvar_prior)
         pdfs = pdfs / pdfs.sum(dim=-1).view(-1, 1)
+        # pdfs (b, n_clusters)
 
         return pdfs
 
@@ -150,16 +151,21 @@ class VAE(LightningModule):
         # init new_pi
         self.new_pi = torch.zeros_like(self.new_pi)
 
-    def update_pz_y(self, opt_pz_y, b):
+    def update_pz_y(self, opt_pz_y):
+        b = self.config.batch_size_pz_y
         self.toggle_optimizer(opt_pz_y)
 
         for i in range(self.config.epochs_pz_y):
-            y = np.random.choice(self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy())
+            y = np.random.choice(
+                self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
+            )
             y = torch.tensor(y, dtype=torch.long)
             y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
             z, mu, logvar = self.Pz_y(y)
 
-            mu = mu.repeat((1, self.n_clusters)).view(self.n_clusters, b, self.latent_ndim)
+            mu = mu.repeat((1, self.n_clusters)).view(
+                self.n_clusters, b, self.latent_ndim
+            )
             norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
             pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)
             pdfs = pdfs / pdfs.sum(dim=1).view(-1, 1)
@@ -179,14 +185,13 @@ class VAE(LightningModule):
         x_vis = x_vis[0]
         x_spc = x_spc[0]
         mask = mask[0]
-        b = mask.size(0)
 
         opt_pz_y, opt = self.optimizers()
 
         # update p(y) and p(z|y)
-        if batch_idx == 0:
+        if batch_idx == 0 and self.current_epoch % self.config.update_interval == 0:
             self.update_py()
-            self.update_pz_y(opt_pz_y, b)
+            self.update_pz_y(opt_pz_y)
 
         # train VAE
         self.toggle_optimizer(opt)
@@ -216,9 +221,14 @@ class VAE(LightningModule):
         self.untoggle_optimizer(opt)
 
         # calc new_pi
-        with torch.no_grad():
-            label_prob = self.label_prob(z)
-            self.new_pi = self.new_pi + label_prob.sum(dim=0) / (b * self.n_batches)
+        if (
+            self.current_epoch % self.config.update_interval
+            == self.config.update_interval - 1
+        ):
+            with torch.no_grad():
+                b = z.size(0)
+                label_prob = self.label_prob(z)
+                self.new_pi = self.new_pi + label_prob.sum(dim=0) / (b * self.n_batches)
 
         del keys, ids, x_vis, x_spc, mask
         del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
@@ -241,6 +251,8 @@ class VAE(LightningModule):
         mse_x_vis = self.loss_x_vis(x_vis, recon_x_vis, mask)
         mse_x_spc = self.loss_x_spc(x_spc, recon_x_spc, mask)
 
+        label_prob = self.label_prob(z)
+
         results = []
         for i in range(len(keys)):
             # label_prob = self.clustering_prob(z[i], mu[i], logvar[i], mask[i])
@@ -257,15 +269,19 @@ class VAE(LightningModule):
                 "mse_x_spc": mse_x_spc.item(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
-                "label_prob": y[i].cpu().numpy(),
-                "label": y[i].cpu().numpy().argmax().item(),
+                "label_prob": label_prob[i].cpu().numpy(),
+                "label": label_prob[i].cpu().numpy().argmax().item(),
+                "y": y[i].cpu().numpy(),
+                "y_argmax": y[i].cpu().numpy().argmax().item(),
                 "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
         return results
 
     def configure_optimizers(self):
-        opt_pz_y = torch.optim.Adam(self.parameters(), lr=self.config.lr_pz_y, maximize=True)
+        opt_pz_y = torch.optim.Adam(
+            self.parameters(), lr=self.config.lr_pz_y, maximize=True
+        )
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return [opt_pz_y, opt], []
 
