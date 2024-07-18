@@ -264,7 +264,7 @@ class VAE(LightningModule):
         return results
 
     def configure_optimizers(self):
-        opt_pz_y = torch.optim.Adam(self.parameters(), lr=self.config.lr_pz_y)
+        opt_pz_y = torch.optim.Adam(self.parameters(), lr=self.config.lr_pz_y, maximize=True)
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return [opt_pz_y, opt], []
 
