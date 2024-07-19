@@ -152,7 +152,7 @@ class VAE(LightningModule):
         self.new_pi = torch.zeros_like(self.new_pi)
 
     def update_pz_y(self, opt_pz_y):
-        b = self.config.batch_size_pz_y
+        b = self.config.batch_size
         self.toggle_optimizer(opt_pz_y)
 
         for i in range(self.config.epochs_pz_y):
