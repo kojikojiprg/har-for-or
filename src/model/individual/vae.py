@@ -58,8 +58,8 @@ class VAE(LightningModule):
         fake_diff = torch.diff(fake_x_spc[~mask], dim=0)
         return F.mse_loss(x_spc[~mask], fake_x_spc[~mask]) + F.mse_loss(diff, fake_diff)
 
-    def loss_kl_clustering(self, q, eps=1e-10):
-        lc = (q * (torch.log(q + eps) - torch.log(self.Py.pi + eps))).mean()
+    def loss_kl(self, q, p, eps=1e-10):
+        lc = (q * (torch.log(q + eps) - torch.log(p + eps))).mean()
         return lc
 
     @staticmethod
@@ -100,8 +100,7 @@ class VAE(LightningModule):
         logs["spc"] = lrc_x_spc.item()
 
         # clustering loss
-        y_prior = (torch.ones(y.size()) / y.size(1)).to(y.device)
-        lc = self.loss_kl_clustering(y, y_prior)
+        lc = self.loss_kl(y, self.Py.pi)
         lc *= self.config.lc
         logs["c"] = lc.item()
 
