@@ -154,16 +154,18 @@ class IndividualEmbedding(nn.Module):
         # )
         self.emb_vis = PointEmbedding(emb_hidden_ndim, "keypoints")
         self.emb_spc = PointEmbedding(emb_hidden_ndim, "bbox")
+        self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, "bbox")
         # self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, bias=False, batch_first=True)
         self.mlp = nn.Sequential(
             MLP(emb_hidden_ndim, hidden_ndim),
             nn.SiLU(),
         )
 
-    def forward(self, x_vis, x_spc, lmd=0.3):
+    def forward(self, x_vis, x_spc, x_spc_diff):
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
+        x_spc_diff = self.emb_spc_diff(x_spc_diff)
         # x = self.attn(x_vis, x_spc, x_spc)[0]
-        x = x_vis * lmd + x_spc * (1 - lmd)
+        x = x_vis + x_spc + x_spc_diff
         x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)

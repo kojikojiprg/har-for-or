@@ -162,7 +162,8 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
                 2,
             )
         elif content == "cluster":
-            label = str(data["label"])
+            # label = str(data["label"])
+            label = str(data["y_argmax"])
 
             color = (np.array(cm(int(label))[:3]) * 255).astype(int).tolist()
             color = tuple(color[::-1])  # RGB -> BGR
@@ -259,8 +260,8 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
     plt.close()
 
 
-def plot_tsne(X, labels, figpath=None, is_show=False, cmap="tab10", lut=None):
-    tsne = TSNE(n_components=2, random_state=42, perplexity=10, n_iter=1000)
+def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10", lut=None):
+    tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
     cm = plt.get_cmap(cmap, lut)

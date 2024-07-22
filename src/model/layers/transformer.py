@@ -12,7 +12,6 @@ class TransformerEncoderBlock(nn.Module):
         self.attn = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
-        self.dropout1 = nn.Dropout(dropout)
 
         self.norm2 = nn.LayerNorm(ndim)
         self.ff = SwiGLU(ndim)
@@ -39,7 +38,6 @@ class TransformerEncoderBlock(nn.Module):
 
     def attention_block(self, x, mask, need_weights):
         x, attn_w = self.attn(x, x, x, attn_mask=mask, need_weights=need_weights)
-        x = self.dropout1(x)
         return x, attn_w
 
     def feed_forward_block(self, x):
@@ -56,14 +54,12 @@ class TransformerDecoderBlock(nn.Module):
         self.attn1 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
-        self.dropout1 = nn.Dropout(dropout)
 
         self.norm2x = nn.LayerNorm(ndim)
         self.norm2z = nn.LayerNorm(ndim)
         self.attn2 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
-        self.dropout2 = nn.Dropout(dropout)
 
         self.norm3 = nn.LayerNorm(ndim)
         self.ff = SwiGLU(ndim)
@@ -94,12 +90,10 @@ class TransformerDecoderBlock(nn.Module):
 
     def attention_block1(self, x, mask):
         x = self.attn1(x, x, x, attn_mask=mask, need_weights=False)[0]
-        x = self.dropout1(x)
         return x
 
     def attention_block2(self, x, z, mask):
         x = self.attn2(x, z, z, attn_mask=mask, need_weights=False)[0]
-        x = self.dropout2(x)
         return x
 
     def feed_forward_block(self, x):
