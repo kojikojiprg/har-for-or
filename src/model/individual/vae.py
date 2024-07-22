@@ -24,8 +24,10 @@ class VAE(LightningModule):
         self.latent_ndim = config.latent_ndim
         self.n_clusters = config.n_clusters
         self.accumulate_grad_batches = config.accumulate_grad_batches
+        self.update_prior_interval = config.update_prior_interval
         self.tau = config.tau
         self.alpha = config.alpha
+        self.batch_size = config.batch_size
         self.n_batches = n_batches
 
         self.Qy_x = None
@@ -44,34 +46,33 @@ class VAE(LightningModule):
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
 
-        self.new_pi = (torch.ones(self.n_clusters) / self.n_clusters).to(self.device)
+        self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
 
     @staticmethod
-    def loss_x_vis(x_vis, fake_x_vis, mask):
-        diff = torch.diff(x_vis[~mask], dim=0)
-        fake_diff = torch.diff(fake_x_vis[~mask], dim=0)
-        return F.mse_loss(x_vis[~mask], fake_x_vis[~mask]) + F.mse_loss(diff, fake_diff)
+    def loss_x(x_spc, fake_x_spc, mask):
+        return F.mse_loss(x_spc[~mask], fake_x_spc[~mask])
 
-    @staticmethod
-    def loss_x_spc(x_spc, fake_x_spc, mask):
-        diff = torch.diff(x_spc[~mask], dim=0)
-        fake_diff = torch.diff(fake_x_spc[~mask], dim=0)
-        return F.mse_loss(x_spc[~mask], fake_x_spc[~mask]) + F.mse_loss(diff, fake_diff)
+    def loss_kl(self, q, p, eps=1e-10, weights=None):
+        kl = (q * (torch.log(q + eps) - torch.log(p + eps))).mean()
+        if weights is None:
+            kl = kl.mean()
+        else:
+            kl = torch.sum(kl * weights, dim=1) / (weights.sum() * self.latent_ndim)
+        return kl
 
-    def loss_kl(self, q, p, eps=1e-10):
-        lc = (q * (torch.log(q + eps) - torch.log(p + eps))).mean()
-        return lc
-
-    @staticmethod
-    def loss_kl_gaussian(mu1, logv1, mu2, logv2):
+    def loss_kl_gaussian(self, mu1, logv1, mu2, logv2, weights=None):
         # mu, log (b, latent_ndim)
-        lg = -0.5 * torch.mean(
+        lg = -0.5 * (
             1
             + logv1
             - logv2
             - logv1.exp() / logv2.exp()
             - (mu1 - mu2) ** 2 / logv2.exp()
         )
+        if weights is None:
+            lg = lg.mean()
+        else:
+            lg = torch.sum(lg * weights) / (weights.sum() * self.latent_ndim)
         return lg
 
     def loss_func(
@@ -80,6 +81,8 @@ class VAE(LightningModule):
         fake_x_vis,
         x_spc,
         fake_x_spc,
+        x_spc_diff,
+        fake_x_spc_diff,
         mu,
         logvar,
         mu_prior,
@@ -89,15 +92,23 @@ class VAE(LightningModule):
     ):
         logs = {}
 
-        # reconstruct loss of x
-        lrc_x_vis = self.loss_x_vis(x_vis, fake_x_vis, mask)
+        # reconstruct loss of vis
+        lrc_x_vis = self.loss_x(x_vis, fake_x_vis, mask)
         lrc_x_vis *= self.config.lrc_x_vis
         logs["vis"] = lrc_x_vis.item()
 
-        # reconstruct loss of bbox
-        lrc_x_spc = self.loss_x_spc(x_spc, fake_x_spc, mask)
+        # reconstruct loss of spc
+        lrc_x_spc = self.loss_x(x_spc, fake_x_spc, mask)
         lrc_x_spc *= self.config.lrc_x_spc
         logs["spc"] = lrc_x_spc.item()
+
+        # reconstruct loss of spc diff
+        lrc_x_spc_diff = self.loss_x(x_spc_diff, fake_x_spc_diff, mask)
+        lrc_x_spc_diff *= self.config.lrc_x_spc
+        logs["spcd"] = lrc_x_spc_diff.item()
+
+        lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
+        weights = lrc.detach()
 
         # clustering loss
         lc = self.loss_kl(y, self.Py.pi)
@@ -105,15 +116,103 @@ class VAE(LightningModule):
         logs["c"] = lc.item()
 
         # Gaussian loss
-        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, weights)
         lg *= self.config.lg
         logs["g"] = lg.item()
 
-        loss = lrc_x_vis + lrc_x_spc + lc + lg
+        loss = lrc + lc + lg
 
         # logs["l"] = loss.item()
         self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
         return loss
+
+    def training_step(self, batch, batch_idx):
+        keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
+        x_vis = x_vis[0]
+        x_spc = x_spc[0]
+        x_spc_diff = x_spc_diff[0]
+        mask = mask[0]
+
+        opt_pz_y, opt = self.optimizers()
+
+        # train VAE
+        self.toggle_optimizer(opt)
+        logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
+        y = F.gumbel_softmax(logits, self.tau, dim=1)
+        z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
+        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+        recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
+            x_vis, x_spc, x_spc_diff, z, mask
+        )
+
+        y = F.softmax(logits, dim=1)
+        loss = self.loss_func(
+            x_vis,
+            recon_x_vis,
+            x_spc,
+            recon_x_spc,
+            x_spc_diff,
+            recon_x_spc_diff,
+            mu,
+            logvar,
+            mu_prior,
+            logvar_prior,
+            y,
+            mask,
+        )
+        self.manual_backward(loss)
+        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
+            opt.step()
+            opt.zero_grad(set_to_none=True)
+        self.untoggle_optimizer(opt)
+
+        del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
+
+        # update prior distribution
+        if (self.current_epoch) % self.update_prior_interval == 0:
+            self.discreate_pz_y(opt_pz_y)
+            # E step
+            # with torch.no_grad():
+            #     logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
+            #     y = F.gumbel_softmax(logits, dim=1)
+            #     z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
+            # self.z_all_samples = torch.cat([self.z_all_samples, z.cpu()], dim=0)
+
+            # M step (update p(y) and p(z|y))
+            # if batch_idx + 1 == self.n_batches:  # last batch?
+            # next_pi, next_mu, next_logvar = self.next_prior_params(z)
+            # self.update_prior_distribution(opt_pz_y, next_pi, next_mu, next_logvar)
+
+        del keys, ids, x_vis, x_spc, x_spc_diff, mask
+
+    def discreate_pz_y(self, opt_pz_y):
+        # b = self.batch_size
+        self.toggle_optimizer(opt_pz_y)
+
+        # y = np.random.choice(
+        #     self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
+        # )
+        # y = torch.tensor(y, dtype=torch.long)
+        # y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
+        y = torch.eye(self.n_clusters, dtype=torch.float32).to(self.device)
+        z, mu, logvar = self.Pz_y(y)
+
+        mu = mu.repeat((1, self.n_clusters)).view(
+            self.n_clusters, self.n_clusters, self.latent_ndim
+        )
+        norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
+        pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)
+        pdfs = pdfs / pdfs.sum(dim=1).view(-1, 1)
+
+        tij = pdfs**2 / pdfs.sum(dim=0)
+        tij = tij / tij.sum(dim=-1).view(-1, 1)
+        loss = -torch.clamp((pdfs * (torch.log(pdfs) - torch.log(tij))).mean(), 0, 1e-3)
+        self.manual_backward(loss)
+        opt_pz_y.step()
+        opt_pz_y.zero_grad(set_to_none=True)
+
+        self.log("lpzy", loss.item(), prog_bar=True)
+        self.untoggle_optimizer(opt_pz_y)
 
     @staticmethod
     def log_normal(z, mu, logvar):
@@ -121,7 +220,7 @@ class VAE(LightningModule):
             np.log(2.0 * np.pi) + logvar + (z - mu) ** 2 / logvar.exp(), dim=-1
         )
 
-    def label_prob(self, z):
+    def calc_responsibility(self, z):
         y = F.one_hot(torch.arange(self.n_clusters), self.n_clusters).to(
             self.device, torch.float32
         )
@@ -135,122 +234,37 @@ class VAE(LightningModule):
         )
         mu_prior = mu_prior.view(1, self.n_clusters, self.latent_ndim)
         logvar_prior = logvar_prior.view(1, self.n_clusters, self.latent_ndim)
-        pdfs = self.Py.pi * self.log_normal(z, mu_prior, logvar_prior)
+        # pdfs = self.Py.pi * self.log_normal(z, mu_prior, logvar_prior)
+        pdfs = self.log_normal(z, mu_prior, logvar_prior)
         pdfs = pdfs / pdfs.sum(dim=-1).view(-1, 1)
         # pdfs (b, n_clusters)
 
         return pdfs
 
-    def update_py(self):
-        # update py
-        loss = (self.Py.pi - self.new_pi) * self.config.lr_py
-        next(self.Py.parameters()).data = self.Py.pi - loss
-        self.log("lpy", loss.mean().item(), prog_bar=True)
-
-        # init new_pi
-        self.new_pi = torch.zeros_like(self.new_pi)
-
-    def update_pz_y(self, opt_pz_y):
-        b = self.config.batch_size
-        self.toggle_optimizer(opt_pz_y)
-
-        for i in range(self.config.epochs_pz_y):
-            y = np.random.choice(
-                self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
-            )
-            y = torch.tensor(y, dtype=torch.long)
-            y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
-            z, mu, logvar = self.Pz_y(y)
-
-            mu = mu.repeat((1, self.n_clusters)).view(
-                self.n_clusters, b, self.latent_ndim
-            )
-            norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
-            pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)
-            pdfs = pdfs / pdfs.sum(dim=1).view(-1, 1)
-
-            tij = pdfs**2 / pdfs.sum(dim=0)
-            tij = tij / tij.sum(dim=-1).view(-1, 1)
-            loss = (pdfs * (torch.log(pdfs) - torch.log(tij))).mean()
-            self.manual_backward(loss)
-            opt_pz_y.step()
-            opt_pz_y.zero_grad(set_to_none=True)
-
-        self.log("lpzy", loss.item(), prog_bar=True)
-        self.untoggle_optimizer(opt_pz_y)
-
-    def training_step(self, batch, batch_idx):
-        keys, ids, x_vis, x_spc, mask = batch
-        x_vis = x_vis[0]
-        x_spc = x_spc[0]
-        mask = mask[0]
-
-        opt_pz_y, opt = self.optimizers()
-
-        # update p(y) and p(z|y)
-        if batch_idx == 0 and self.current_epoch % self.config.update_interval == 0:
-            self.update_py()
-            self.update_pz_y(opt_pz_y)
-
-        # train VAE
-        self.toggle_optimizer(opt)
-        logits = self.Qy_x(x_vis, x_spc, mask)
-        y = F.gumbel_softmax(logits, self.tau, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y, mask)
-        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
-        recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
-
-        pi = F.softmax(logits, dim=1)
-        loss = self.loss_func(
-            x_vis,
-            recon_x_vis,
-            x_spc,
-            recon_x_spc,
-            mu,
-            logvar,
-            mu_prior,
-            logvar_prior,
-            pi,
-            mask,
-        )
-        self.manual_backward(loss)
-        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
-            opt.step()
-            opt.zero_grad(set_to_none=True)
-        self.untoggle_optimizer(opt)
-
-        # calc new_pi
-        if (
-            self.current_epoch % self.config.update_interval
-            == self.config.update_interval - 1
-        ):
-            with torch.no_grad():
-                b = z.size(0)
-                label_prob = self.label_prob(z)
-                self.new_pi = self.new_pi + label_prob.sum(dim=0) / (b * self.n_batches)
-
-        del keys, ids, x_vis, x_spc, mask
-        del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
-
     def predict_step(self, batch):
-        keys, ids, x_vis, x_spc, mask = batch
+        keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
         x_vis = x_vis.to(next(self.parameters()).device)
         x_spc = x_spc.to(next(self.parameters()).device)
+        x_spc_diff = x_spc_diff.to(next(self.parameters()).device)
         mask = mask.to(next(self.parameters()).device)
         if x_vis.ndim == 5:
             ids = ids[0]
             x_vis = x_vis[0]
             x_spc = x_spc[0]
+            x_spc_diff = x_spc_diff[0]
             mask = mask[0]
 
-        logits = self.Qy_x(x_vis, x_spc, mask)
+        logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
         y = F.softmax(logits, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y, mask)
-        recon_x_vis, recon_x_spc = self.Px_z(x_vis, x_spc, z, mask)
-        mse_x_vis = self.loss_x_vis(x_vis, recon_x_vis, mask)
-        mse_x_spc = self.loss_x_spc(x_spc, recon_x_spc, mask)
+        z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
+        recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
+            x_vis, x_spc, x_spc_diff, z, mask
+        )
+        mse_x_vis = self.loss_x(x_vis, recon_x_vis, mask)
+        mse_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
+        mse_x_spc_diff = self.loss_x(x_spc_diff, recon_x_spc_diff, mask)
 
-        label_prob = self.label_prob(z)
+        label_prob = self.calc_responsibility(z)
 
         results = []
         for i in range(len(keys)):
@@ -266,6 +280,9 @@ class VAE(LightningModule):
                 "x_spc": x_spc[i].cpu().numpy(),
                 "fake_x_spc": recon_x_spc[i].cpu().numpy(),
                 "mse_x_spc": mse_x_spc.item(),
+                "fake_x_spc_diff": recon_x_spc_diff[i].cpu().numpy(),
+                "mse_x_spc_diff": mse_x_spc_diff.item(),
+                "z": z[i].cpu().numpy(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
                 "label_prob": label_prob[i].cpu().numpy(),
@@ -278,11 +295,59 @@ class VAE(LightningModule):
         return results
 
     def configure_optimizers(self):
-        opt_pz_y = torch.optim.Adam(
-            self.parameters(), lr=self.config.lr_pz_y, maximize=True
-        )
+        opt_pz_y = torch.optim.Adam(self.Pz_y.parameters(), lr=self.config.lr_pz_y)
+        # params = (
+        #     list(self.Qy_x.parameters())
+        #     + list(self.Qz_xy.parameters())
+        #     + list(self.Px_z.parameters())
+        # )
+        # opt = torch.optim.Adam(params, lr=self.config.lr)
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return [opt_pz_y, opt], []
+
+    # def next_prior_params(self, z):
+    #     # z = self.z_all_samples
+    #     # z = z.to(self.device)
+    #     with torch.no_grad():
+    #         r = self.calc_responsibility(z)
+
+    #     r_sum = r.sum(dim=0).view(-1, 1)
+    #     b = self.batch_size
+    #     r = r.view(b, self.n_clusters, 1)
+    #     z = z.view(b, 1, self.latent_ndim)
+
+    #     next_pi = r.mean(dim=0).view(self.n_clusters)
+    #     next_mu = (r * z).sum(dim=0) / r_sum
+    #     next_sig = (r * ((z - next_mu) ** 2)).sum(dim=0) / r_sum
+    #     next_logvar = torch.log(next_sig) * 2
+
+    #     # init buffer
+    #     # self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
+
+    #     return (
+    #         next_pi.to(self.device),
+    #         next_mu.to(self.device),
+    #         next_logvar.to(self.device),
+    #     )
+
+    # def update_prior_distribution(self, opt_pz_y, next_pi, next_mu, next_logvar):
+    #     # update pi
+    #     loss = (self.Py.pi - next_pi) * self.config.lr_py
+    #     next(self.Py.parameters()).data = self.Py.pi - loss
+    #     self.log("lpy", loss.mean().item(), prog_bar=True)
+
+    #     # update mu and logvar
+    #     self.toggle_optimizer(opt_pz_y)
+    #     y = torch.arange(0, self.n_clusters)
+    #     y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
+    #     z, mu, logvar = self.Pz_y(y)
+
+    #     loss = self.loss_kl_gaussian(mu, logvar, next_mu, next_logvar)
+    #     self.manual_backward(loss)
+    #     opt_pz_y.step()
+    #     opt_pz_y.zero_grad(set_to_none=True)
+    #     self.log("lpzy", loss.item(), prog_bar=True)
+    #     self.untoggle_optimizer(opt_pz_y)
 
 
 class Qy_x(nn.Module):
@@ -317,10 +382,10 @@ class Qy_x(nn.Module):
             # nn.Softmax(dim=1),
         )
 
-    def forward(self, x_vis, x_spc, mask):
+    def forward(self, x_vis, x_spc, x_spc_diff, mask):
         # embedding
         b, seq_len = x_vis.size()[:2]
-        x = self.emb(x_vis, x_spc)
+        x = self.emb(x_vis, x_spc, x_spc_diff)
 
         # concat y to x
         x = torch.cat([self.cls.repeat((b, 1, 1)), x], dim=1)
@@ -368,10 +433,10 @@ class Qz_xy(nn.Module):
         self.lin_mu = nn.Linear(config.hidden_ndim, config.latent_ndim)
         self.lin_logvar = nn.Linear(config.hidden_ndim, config.latent_ndim)
 
-    def forward(self, x_vis, x_spc, y, mask):
+    def forward(self, x_vis, x_spc, x_spc_diff, y, mask):
         # embedding
         b, seq_len = x_vis.size()[:2]
-        x = self.emb(x_vis, x_spc)
+        x = self.emb(x_vis, x_spc, x_spc_diff)
         y = self.emb_y(y).view(b, 1, self.hidden_ndim)
 
         # concat y to x
@@ -444,8 +509,8 @@ class Px_z(nn.Module):
         )
         # self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
-        self.emb_z = MLP(config.latent_ndim, config.seq_len * config.hidden_ndim)
-        self.encoders = nn.ModuleList(
+        self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
+        self.decoders = nn.ModuleList(
             [
                 TransformerDecoderBlock(
                     config.hidden_ndim, config.nheads, config.dropout
@@ -454,7 +519,7 @@ class Px_z(nn.Module):
             ]
         )
 
-        self.mlp = MLP(config.hidden_ndim, config.emb_hidden_ndim * 2)
+        self.mlp = MLP(config.hidden_ndim, config.emb_hidden_ndim * 3)
         self.rec_vis = nn.Sequential(
             MLP(config.emb_hidden_ndim),
             nn.Linear(config.emb_hidden_ndim, 17 * 2),
@@ -465,14 +530,23 @@ class Px_z(nn.Module):
             nn.Linear(config.emb_hidden_ndim, 2 * 2),
             nn.Tanh(),
         )
+        self.rec_spc_diff = nn.Sequential(
+            MLP(config.emb_hidden_ndim),
+            nn.Linear(config.emb_hidden_ndim, 2 * 2),
+            nn.Tanh(),
+        )
 
-    def forward(self, x_vis, x_spc, z, mask=None):
+    def forward(self, x_vis, x_spc, x_spc_diff, z, mask=None):
         b, seq_len = x_vis.size()[:2]
         x_vis = torch.cat([self.x_vis_start.repeat((b, 1, 1, 1)), x_vis], dim=1)
         x_vis = x_vis[:, :-1]
         x_spc = torch.cat([self.x_spc_start.repeat((b, 1, 1, 1)), x_spc], dim=1)
         x_spc = x_spc[:, :-1]
-        x = self.emb(x_vis, x_spc)
+        x_spc_diff = torch.cat(
+            [self.x_spc_start.repeat((b, 1, 1, 1)), x_spc_diff], dim=1
+        )
+        x_spc_diff = x_spc_diff[:, :-1]
+        x = self.emb(x_vis, x_spc, x_spc_diff)
         mask = torch.cat([torch.full((b, 1), False).to(mask.device), mask], dim=1)
         mask = mask[:, :-1]
         # x (b, seq_len, hidden_ndim)
@@ -480,16 +554,18 @@ class Px_z(nn.Module):
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
         z = self.emb_z(z)
+        z = z.repeat((1, seq_len)).view(b, seq_len, self.hidden_ndim)
         z = z.view(b, self.seq_len, self.hidden_ndim)
-        for layer in self.encoders:
+        for layer in self.decoders:
             x = layer(x, z, mask)
         # x (b, seq_len, hidden_ndim)
 
         # reconstruct
         x = self.mlp(x)
-        fake_x_vis, fake_x_spc = (
+        fake_x_vis, fake_x_spc, fake_x_spc_diff = (
             x[:, :, : self.emb_hidden_ndim],
-            x[:, :, self.emb_hidden_ndim :],
+            x[:, :, self.emb_hidden_ndim : self.emb_hidden_ndim * 2],
+            x[:, :, self.emb_hidden_ndim * 2 :],
         )
         # fake_x_vis, fake_x_spc (b, seq_len, emb_hidden_ndim)
 
@@ -501,4 +577,8 @@ class Px_z(nn.Module):
         fake_x_spc = self.rec_spc(fake_x_spc)
         fake_x_spc = fake_x_spc.view(b, seq_len, 2, 2)
 
-        return fake_x_vis, fake_x_spc
+        # reconstruct x_spc
+        fake_x_spc_diff = self.rec_spc_diff(fake_x_spc_diff)
+        fake_x_spc_diff = fake_x_spc_diff.view(b, seq_len, 2, 2)
+
+        return fake_x_vis, fake_x_spc, fake_x_spc_diff

@@ -5,7 +5,7 @@ stride: 30
 img_size: [256, 192]
 
 # model
-n_clusters: 10
+n_clusters: 5
 tau: 0.1
 hidden_ndim: 16
 latent_ndim: 8
