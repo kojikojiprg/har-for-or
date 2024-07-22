@@ -132,13 +132,35 @@ def individual_npz_to_tensor(
     kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
     kps = torch.from_numpy(kps).to(torch.float32)
 
+    bboxs_diff = diff_bboxs(bboxs).reshape(seq_len, 2, 2)
+    bboxs_diff = bbox_transform(bboxs_diff, frame_size[::-1])  # frame_size: (h, w)
+    bboxs_diff = torch.from_numpy(bboxs_diff).to(torch.float32)
+
     bboxs[~mask] = bbox_transform(bboxs[~mask], frame_size[::-1])  # frame_size: (h, w)
     bboxs = torch.from_numpy(bboxs).to(torch.float32)
 
     del sample, npz, frames, flows  # release memory
 
     # return key, _id, pixcels, bboxs, mask
-    return key, _id, kps, bboxs, mask
+    return key, _id, kps, bboxs, bboxs_diff, mask
+
+
+def diff_bboxs(bboxs):
+    seq_len = bboxs.shape[0]
+    mask = np.all(bboxs >= 0, axis=(1, 2))
+
+    # interpolate
+    new_bboxs = bboxs.copy().reshape(seq_len, -1)
+    x = np.arange(seq_len)[mask]
+    vals = bboxs.reshape(seq_len, -1)
+    curve = interpolate.interp1d(x, vals[mask], kind="linear", axis=0)
+    new_bboxs[~mask] = curve(np.arange(seq_len))[~mask].astype(
+        bboxs.dtype
+    )
+
+    diff = np.diff(new_bboxs, axis=0, prepend=0)
+
+    return diff
 
 
 def interpolate_individual(frames, flows, bboxs, kps):
