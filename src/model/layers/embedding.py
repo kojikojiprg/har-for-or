@@ -5,27 +5,75 @@ from rotary_embedding_torch import RotaryEmbedding
 from .feedforward import MLP, SwiGLU
 from .transformer import TransformerEncoderBlock
 
+MASK_KPS = [
+    0.0,  # nose
+    0.0,  # lefteye
+    0.0,  # right eye
+    0.0,  # left ear
+    0.0,  # right ear
+    0.0,  # left shoulder
+    0.0,  # right shoulder
+    0.0,  # left elbow
+    0.0,  # right elbow
+    0.0,  # left wrist
+    0.0,  # right wrist
+    0.0,  # left hip
+    0.0,  # right hip
+    -100.0,  # left knee
+    -100.0,  # right knee
+    -100.0,  # left ankle
+    -100.0,  # right ankle
+]
+
 
 class PointEmbedding(nn.Module):
-    def __init__(self, emb_hidden_ndim, point_type):
+    def __init__(self, emb_hidden_ndim, nheads, dropout, point_type):
         super().__init__()
+        self.emb_hidden_ndim = emb_hidden_ndim
+        self.point_type = point_type
         if point_type == "bbox":
             self.npatchs = 2
         elif point_type == "keypoints":
             self.npatchs = 17
 
-        self.lin = nn.Sequential(
-            MLP(2 * self.npatchs, emb_hidden_ndim),
-            nn.SiLU(),
-            MLP(emb_hidden_ndim, emb_hidden_ndim),
-            nn.SiLU(),
+        self.feature = nn.Parameter(
+            torch.randn((1, 1, emb_hidden_ndim), dtype=torch.float32),
+            requires_grad=True,
+        )
+        self.feature_mask = nn.Parameter(
+            torch.full((1, 1), -float("inf")), requires_grad=False
+        )
+
+        self.mlp = MLP(2, emb_hidden_ndim)
+        self.attn = nn.MultiheadAttention(
+            emb_hidden_ndim, nheads, dropout, batch_first=True
         )
 
     def forward(self, pt):
-        # pt (b, seq_len, npatchs, 2)
         b, seq_len = pt.size()[:2]
-        pt = pt.view(b, seq_len, self.npatchs * 2)
-        pt = self.lin(pt)  # (b, seq_len, ndim)
+
+        # emb
+        pt = self.mlp(pt)
+
+        # concat feature patch
+        fp = self.feature.repeat((b, seq_len, 1, 1))
+        pt = torch.concat([fp, pt], dim=2)
+
+        # concat mask
+        fp_mask = self.feature_mask.repeat((b, seq_len, 1))
+        if self.point_type == "bbox":
+            pad_mask = torch.full((b, seq_len, self.npatchs), 0.0).to(pt.device)
+            pad_mask = torch.cat([fp_mask, pad_mask], dim=2)
+        elif self.point_type == "keypoints":
+            pad_mask = torch.tensor(MASK_KPS).to(pt.device)
+            pad_mask = pad_mask.view(1, self.npatchs).repeat((b, seq_len, 1))
+            pad_mask = torch.cat([fp_mask, pad_mask], dim=2)
+
+        # self attention
+        pt = pt.view(b * seq_len, self.npatchs + 1, self.emb_hidden_ndim)
+        pad_mask = pad_mask.view(b * seq_len, self.npatchs + 1)
+        pt = self.attn(pt, pt, pt, key_padding_mask=pad_mask, need_weights=False)[0]
+        pt = pt.view(b, seq_len, self.npatchs + 1, self.emb_hidden_ndim)[:, :, 0]
 
         return pt
 
@@ -152,18 +200,19 @@ class IndividualEmbedding(nn.Module):
         # self.emb_vis = PixcelEmbedding(
         #     hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
         # )
-        self.emb_vis = PointEmbedding(emb_hidden_ndim, "keypoints")
-        self.emb_spc = PointEmbedding(emb_hidden_ndim, "bbox")
-        self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, "bbox")
+        self.emb_vis = PointEmbedding(emb_hidden_ndim, nheads, dropout, "keypoints")
+        self.emb_spc = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
+        self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
         self.mlp = nn.Sequential(
             MLP(emb_hidden_ndim, hidden_ndim),
             nn.SiLU(),
         )
 
-    def forward(self, x_vis, x_spc, x_spc_diff, lmd_vis=0.1):
+    def forward(self, x_vis, x_spc, x_spc_diff, lmd_vis=0.5):
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
         x_spc_diff = self.emb_spc_diff(x_spc_diff)
-        x = x_vis * lmd_vis + (x_spc + x_spc_diff) * (1 - lmd_vis)
+        # x = x_vis * lmd_vis + (x_spc + x_spc_diff) * (1 - lmd_vis)
+        x = x_vis + x_spc + x_spc_diff
         x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)

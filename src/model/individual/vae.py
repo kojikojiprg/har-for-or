@@ -49,8 +49,8 @@ class VAE(LightningModule):
         self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
 
     @staticmethod
-    def loss_x(x_spc, fake_x_spc, mask):
-        return F.mse_loss(x_spc[~mask], fake_x_spc[~mask])
+    def loss_x(x, fake_x, mask):
+        return F.mse_loss(x[~mask], fake_x[~mask])
 
     def loss_kl(self, q, p, eps=1e-10, weights=None):
         kl = (q * (torch.log(q + eps) - torch.log(p + eps))).mean()
@@ -108,7 +108,8 @@ class VAE(LightningModule):
         logs["spcd"] = lrc_x_spc_diff.item()
 
         lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
-        weights = lrc.detach()
+        # weights = lrc.detach()
+        weights = None
 
         # clustering loss
         lc = self.loss_kl(y, self.Py.pi)
@@ -170,7 +171,8 @@ class VAE(LightningModule):
 
         # update prior distribution
         if (self.current_epoch) % self.update_prior_interval == 0:
-            self.discreate_pz_y(opt_pz_y)
+            # self.discreate_pz_y(opt_pz_y)
+            pass
             # E step
             # with torch.no_grad():
             #     logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
@@ -356,7 +358,7 @@ class Qy_x(nn.Module):
         self.hidden_ndim = config.hidden_ndim
 
         self.cls = nn.Parameter(torch.randn((1, 1, self.hidden_ndim)))
-        self.cls_mask = nn.Parameter(torch.full((1, 1), False), requires_grad=False)
+        self.cls_mask = nn.Parameter(torch.full((1, 1), True), requires_grad=False)
 
         self.emb = IndividualEmbedding(
             config.emb_hidden_ndim,
