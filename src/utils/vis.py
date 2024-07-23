@@ -267,7 +267,11 @@ def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10
     cm = plt.get_cmap(cmap, lut)
     for label in unique_labels:
         x = embedded[labels == label]
-        c = cm(int(label))
+        if lut is not None:
+            ci = np.where(unique_labels == label)[0].item()
+        else:
+            ci = int(label)
+        c = cm(ci)
         plt.scatter(x.T[0], x.T[1], s=2, c=c, label=label)
     plt.legend(bbox_to_anchor=(1.01, 1))
     if figpath is not None:
