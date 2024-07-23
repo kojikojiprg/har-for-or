@@ -26,7 +26,6 @@ lc: 1
 lr: 0.0001
 
 # optim pz_y
-lr_py: 0.0001
 lr_pz_y: 0.0001
 alpha: 1
 update_prior_interval: 1

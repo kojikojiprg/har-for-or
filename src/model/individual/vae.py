@@ -108,8 +108,7 @@ class VAE(LightningModule):
         logs["spcd"] = lrc_x_spc_diff.item()
 
         lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
-        # weights = lrc.detach()
-        weights = None
+        weights = lrc.detach()
 
         # clustering loss
         lc = self.loss_kl(y, self.Py.pi)
@@ -188,19 +187,19 @@ class VAE(LightningModule):
         del keys, ids, x_vis, x_spc, x_spc_diff, mask
 
     def discreate_pz_y(self, opt_pz_y):
-        # b = self.batch_size
         self.toggle_optimizer(opt_pz_y)
 
-        # y = np.random.choice(
-        #     self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
-        # )
-        # y = torch.tensor(y, dtype=torch.long)
-        # y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
-        y = torch.eye(self.n_clusters, dtype=torch.float32).to(self.device)
+        b = self.batch_size
+        y = np.random.choice(
+            self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
+        )
+        y = torch.tensor(y, dtype=torch.long)
+        y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
+        # y = torch.eye(self.n_clusters, dtype=torch.float32).to(self.device)
         z, mu, logvar = self.Pz_y(y)
 
         mu = mu.repeat((1, self.n_clusters)).view(
-            self.n_clusters, self.n_clusters, self.latent_ndim
+            self.n_clusters, b, self.latent_ndim
         )
         norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
         pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)
@@ -208,7 +207,7 @@ class VAE(LightningModule):
 
         tij = pdfs**2 / pdfs.sum(dim=0)
         tij = tij / tij.sum(dim=-1).view(-1, 1)
-        loss = -torch.clamp((pdfs * (torch.log(pdfs) - torch.log(tij))).mean(), 0, 1e-3)
+        loss = -torch.clamp((pdfs * (torch.log(pdfs) - torch.log(tij))).mean(), 0, 5e-3)
         self.manual_backward(loss)
         opt_pz_y.step()
         opt_pz_y.zero_grad(set_to_none=True)
@@ -216,32 +215,32 @@ class VAE(LightningModule):
         self.log("lpzy", loss.item(), prog_bar=True)
         self.untoggle_optimizer(opt_pz_y)
 
-    @staticmethod
-    def log_normal(z, mu, logvar):
-        return -0.5 * torch.sum(
-            np.log(2.0 * np.pi) + logvar + (z - mu) ** 2 / logvar.exp(), dim=-1
-        )
+    # @staticmethod
+    # def log_normal(z, mu, logvar):
+    #     return -0.5 * torch.sum(
+    #         np.log(2.0 * np.pi) + logvar + (z - mu) ** 2 / logvar.exp(), dim=-1
+    #     )
 
-    def calc_responsibility(self, z):
-        y = F.one_hot(torch.arange(self.n_clusters), self.n_clusters).to(
-            self.device, torch.float32
-        )
-        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+    # def calc_responsibility(self, z):
+    #     y = F.one_hot(torch.arange(self.n_clusters), self.n_clusters).to(
+    #         self.device, torch.float32
+    #     )
+    #     z_prior, mu_prior, logvar_prior = self.Pz_y(y)
 
-        b = z.size(0)
-        z = (
-            z.view(b, 1, self.latent_ndim)
-            .repeat((1, self.n_clusters, 1))
-            .to(self.device)
-        )
-        mu_prior = mu_prior.view(1, self.n_clusters, self.latent_ndim)
-        logvar_prior = logvar_prior.view(1, self.n_clusters, self.latent_ndim)
-        # pdfs = self.Py.pi * self.log_normal(z, mu_prior, logvar_prior)
-        pdfs = self.log_normal(z, mu_prior, logvar_prior)
-        pdfs = pdfs / pdfs.sum(dim=-1).view(-1, 1)
-        # pdfs (b, n_clusters)
+    #     b = z.size(0)
+    #     z = (
+    #         z.view(b, 1, self.latent_ndim)
+    #         .repeat((1, self.n_clusters, 1))
+    #         .to(self.device)
+    #     )
+    #     mu_prior = mu_prior.view(1, self.n_clusters, self.latent_ndim)
+    #     logvar_prior = logvar_prior.view(1, self.n_clusters, self.latent_ndim)
+    #     # pdfs = self.Py.pi * self.log_normal(z, mu_prior, logvar_prior)
+    #     pdfs = self.log_normal(z, mu_prior, logvar_prior)
+    #     pdfs = pdfs / pdfs.sum(dim=-1).view(-1, 1)
+    #     # pdfs (b, n_clusters)
 
-        return pdfs
+    #     return pdfs
 
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
@@ -266,7 +265,7 @@ class VAE(LightningModule):
         mse_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
         mse_x_spc_diff = self.loss_x(x_spc_diff, recon_x_spc_diff, mask)
 
-        label_prob = self.calc_responsibility(z)
+        # label_prob = self.calc_responsibility(z)
 
         results = []
         for i in range(len(keys)):
@@ -287,10 +286,10 @@ class VAE(LightningModule):
                 "z": z[i].cpu().numpy(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
-                "label_prob": label_prob[i].cpu().numpy(),
-                "label": label_prob[i].cpu().numpy().argmax().item(),
-                "y": y[i].cpu().numpy(),
-                "y_argmax": y[i].cpu().numpy().argmax().item(),
+                # "label_prob": label_prob[i].cpu().numpy(),
+                # "label": label_prob[i].cpu().numpy().argmax().item(),
+                "label_prob": y[i].cpu().numpy(),
+                "label": y[i].cpu().numpy().argmax().item(),
                 "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
@@ -298,12 +297,6 @@ class VAE(LightningModule):
 
     def configure_optimizers(self):
         opt_pz_y = torch.optim.Adam(self.Pz_y.parameters(), lr=self.config.lr_pz_y)
-        # params = (
-        #     list(self.Qy_x.parameters())
-        #     + list(self.Qz_xy.parameters())
-        #     + list(self.Px_z.parameters())
-        # )
-        # opt = torch.optim.Adam(params, lr=self.config.lr)
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return [opt_pz_y, opt], []
 
