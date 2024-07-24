@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from glob import glob
 
 from lightning.pytorch import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -22,23 +23,32 @@ if __name__ == "__main__":
     data_root = args.data_root
     model_type = args.model_type
     gpu_ids = args.gpu_ids
-    checkpoint_path = args.checkpoint
+    pre_checkpoint_path = args.checkpoint
 
     # load config
     config_path = f"configs/individual-{model_type}.yaml"
     config = yaml_handler.load(config_path)
 
     # model checkpoint callback
+    checkpoint_dir = f"models/individual/{model_type}"
+    ckpt_dirs = sorted(glob(os.path.join(checkpoint_dir, "*/")))
+    if len(ckpt_dirs) > 0:
+        last_ckpt_dir = os.path.dirname(ckpt_dirs[-1])
+        last_v_num = int(last_ckpt_dir.split("/")[-1].replace("version_", ""))
+        v_num = last_v_num + 1
+    else:
+        v_num = 0
+    checkpoint_dir = os.path.join(checkpoint_dir, f"version_{v_num}")
     h, w = config.img_size
-    checkpoint_dir = "models/individual/"
     filename = f"{model_type}-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
-    os.makedirs(checkpoint_dir, exist_ok=True)
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
         filename=filename + "-best",
         monitor="loss",
         mode="min",
         save_last=True,
+        every_n_epochs=10,
+        enable_version_counter=False,
     )
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-ep{epoch}"
 
@@ -63,4 +73,4 @@ if __name__ == "__main__":
         accumulate_grad_batches=accumulate_grad_batches,
         benchmark=True,
     )
-    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=checkpoint_path)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=pre_checkpoint_path)
