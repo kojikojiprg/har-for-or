@@ -43,14 +43,13 @@ if __name__ == "__main__":
     filename = f"{model_type}-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
-        filename=filename + "-best",
+        filename=filename + "-best-{epoch}",
         monitor="loss",
         mode="min",
         save_last=True,
-        every_n_epochs=10,
         enable_version_counter=False,
     )
-    model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-ep{epoch}"
+    model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-{epoch}"
 
     # load dataset
     dataloader, n_batches = individual_train_dataloader(
