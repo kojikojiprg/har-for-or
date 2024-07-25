@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
+from sklearn.cluster import KMeans
 
 from src.model.layers import (
     MLP,
@@ -35,6 +36,8 @@ class VAE(LightningModule):
         self.Py = None
         self.Pz_y = None
         self.Px_z = None
+        self.kmeans = None
+        self.sort_kmeans = {}
 
     def configure_model(self):
         if self.Qy_x is not None:
@@ -48,16 +51,20 @@ class VAE(LightningModule):
 
         self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
 
-    @staticmethod
-    def loss_x(x, fake_x, mask):
-        return F.mse_loss(x[~mask], fake_x[~mask])
+    def loss_x(self, x, fake_x, mask):
+        b = x.size(0)
+        mses = torch.empty((0,)).to(self.device)
+        for i in range(b):
+            mse = F.mse_loss(x[i][~mask[i]], fake_x[i][~mask[i]])
+            mses = torch.cat([mses, mse.view(1, 1)])
+        return mses.ravel()  # (b,)
 
-    def loss_kl(self, q, p, eps=1e-10, weights=None):
-        kl = (q * (torch.log(q + eps) - torch.log(p + eps))).mean()
+    def loss_kl(self, q, p, weights=None, eps=1e-10):
+        kl = (q * (torch.log(q + eps) - torch.log(p + eps))).sum(dim=-1)
         if weights is None:
             kl = kl.mean()
         else:
-            kl = torch.sum(kl * weights, dim=1) / (weights.sum() * self.latent_ndim)
+            kl = torch.sum(kl * weights) / weights.sum()
         return kl
 
     def loss_kl_gaussian(self, mu1, logv1, mu2, logv2, weights=None):
@@ -68,63 +75,12 @@ class VAE(LightningModule):
             - logv2
             - logv1.exp() / logv2.exp()
             - (mu1 - mu2) ** 2 / logv2.exp()
-        )
+        ).sum(dim=-1)
         if weights is None:
             lg = lg.mean()
         else:
-            lg = torch.sum(lg * weights) / (weights.sum() * self.latent_ndim)
+            lg = torch.sum(lg * weights) / weights.sum()
         return lg
-
-    def loss_func(
-        self,
-        x_vis,
-        fake_x_vis,
-        x_spc,
-        fake_x_spc,
-        x_spc_diff,
-        fake_x_spc_diff,
-        mu,
-        logvar,
-        mu_prior,
-        logvar_prior,
-        y,
-        mask,
-    ):
-        logs = {}
-
-        # reconstruct loss of vis
-        lrc_x_vis = self.loss_x(x_vis, fake_x_vis, mask)
-        lrc_x_vis *= self.config.lrc_x_vis
-        logs["vis"] = lrc_x_vis.item()
-
-        # reconstruct loss of spc
-        lrc_x_spc = self.loss_x(x_spc, fake_x_spc, mask)
-        lrc_x_spc *= self.config.lrc_x_spc
-        logs["spc"] = lrc_x_spc.item()
-
-        # reconstruct loss of spc diff
-        lrc_x_spc_diff = self.loss_x(x_spc_diff, fake_x_spc_diff, mask)
-        lrc_x_spc_diff *= self.config.lrc_x_spc
-        logs["spcd"] = lrc_x_spc_diff.item()
-
-        lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
-        weights = lrc.detach()
-
-        # clustering loss
-        lc = self.loss_kl(y, self.Py.pi)
-        lc *= self.config.lc
-        logs["c"] = lc.item()
-
-        # Gaussian loss
-        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, weights)
-        lg *= self.config.lg
-        logs["g"] = lg.item()
-
-        loss = lrc + lc + lg
-
-        # logs["l"] = loss.item()
-        self.log_dict(logs, prog_bar=True, on_step=True, on_epoch=True)
-        return loss
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
@@ -135,7 +91,6 @@ class VAE(LightningModule):
 
         opt_pz_y, opt = self.optimizers()
 
-        # train VAE
         self.toggle_optimizer(opt)
         logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
         y = F.gumbel_softmax(logits, self.tau, dim=1)
@@ -145,69 +100,142 @@ class VAE(LightningModule):
             x_vis, x_spc, x_spc_diff, z, mask
         )
 
-        y = F.softmax(logits, dim=1)
-        loss = self.loss_func(
-            x_vis,
-            recon_x_vis,
-            x_spc,
-            recon_x_spc,
-            x_spc_diff,
-            recon_x_spc_diff,
-            mu,
-            logvar,
-            mu_prior,
-            logvar_prior,
-            y,
-            mask,
-        )
+        # logits_recon = self.Qy_x(recon_x_vis, recon_x_spc, recon_x_spc_diff, mask)
+        # z_recon, mu_recon, logvar_recon = self.Qz_xy(
+        #     recon_x_vis, recon_x_spc, recon_x_spc_diff, y, mask
+        # )
+
+        pi = F.softmax(logits, dim=1)
+
+        # loss
+        logs = {}
+
+        # ELBO
+        # reconstruct loss of vis
+        lrc_x_vis = self.loss_x(x_vis, recon_x_vis, mask)
+        lrc_x_vis *= self.config.lrc_x_vis
+        logs["vis"] = lrc_x_vis.mean().item()
+
+        # reconstruct loss of spc
+        lrc_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
+        lrc_x_spc *= self.config.lrc_x_spc
+        logs["spc"] = lrc_x_spc.mean().item()
+
+        # reconstruct loss of spc diff
+        lrc_x_spc_diff = self.loss_x(x_spc_diff, recon_x_spc_diff, mask)
+        lrc_x_spc_diff *= self.config.lrc_x_spc
+        logs["spcd"] = lrc_x_spc_diff.mean().item()
+
+        lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
+        weights = 1 / (lrc.detach() + 1)
+        lrc = lrc.mean()
+
+        # clustering loss
+        if self.kmeans is not None:
+            psuedo_labels = self.kmeans.predict(z.detach().cpu().numpy())
+            psuedo_labels = [self.sort_kmeans[pl] for pl in psuedo_labels]
+            psuedo_labels = torch.tensor(psuedo_labels, dtype=torch.long).to(
+                self.device
+            )
+            lc = F.cross_entropy(
+                pi,
+                psuedo_labels,
+                weights=torch.tensor([1, 1.2, 1.4, 1.6, 1.8]).to(self.device),
+            )
+            # logs["psuedo"] = lc.item()
+        else:
+            lc = self.loss_kl(pi, self.Py.pi, weights)
+            lc *= self.config.lc
+        logs["c"] = lc.item()
+
+        # Gaussian loss
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, weights)
+        lg *= self.config.lg
+        logs["g"] = lg.item()
+
+        loss = lrc + lc + lg
+
+        # # augmentation loss
+        # lca = F.mse_loss(logits, logits_recon, reduction="none").sum(dim=-1).mean()
+        # # Wasserstein distance
+        # lwa = F.mse_loss(mu, mu_recon) + F.mse_loss(logvar, logvar_recon)
+        # if self.current_epoch < 30:
+        #     lmd_aug = 0.0
+        # else:
+        #     lmd_aug = 1.0
+        # loss_aug = (lca + lwa) * lmd_aug
+        # logs["aug"] = loss_aug.item()
+
+        # loss psuedo label
+        # if self.kmeans is not None:
+        #     psuedo_labels = self.kmeans.predict(z.detach().cpu().numpy())
+        #     psuedo_labels = [self.sort_kmeans[pl] for pl in psuedo_labels]
+        #     psuedo_labels = torch.tensor(psuedo_labels, dtype=torch.long).to(
+        #         self.device
+        #     )
+        #     lp = F.cross_entropy(pi, psuedo_labels)
+        #     logs["psuedo"] = lp.item()
+        #     loss = loss_elbo + lp
+        # else:
+        #     loss = loss_elbo
+
         self.manual_backward(loss)
+        self.log_dict(logs, prog_bar=True)
         if (batch_idx + 1) % self.accumulate_grad_batches == 0:
             opt.step()
             opt.zero_grad(set_to_none=True)
         self.untoggle_optimizer(opt)
 
-        del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
-
         # update prior distribution
-        if (self.current_epoch) % self.update_prior_interval == 0:
+        if (
+            self.current_epoch >= 1000
+            and self.current_epoch % self.update_prior_interval == 0
+        ):
             # self.discreate_pz_y(opt_pz_y)
-            pass
+            self.z_all_samples = torch.cat([self.z_all_samples, z.cpu()], dim=0)
+            if (batch_idx + 1) == self.n_batches:
+                # train kmeans
+                self.kmeans = KMeans(self.n_clusters, random_state=42)
+                self.kmeans = self.kmeans.fit(self.z_all_samples.detach().numpy())
+                # sort labels by counts
+                _, counts = np.unique(self.kmeans.labels_, return_counts=True)
+                sorted_labels = sorted(np.argsort(counts), reverse=True)
+                self.sort_kmeans = {s: i for i, s in enumerate(sorted_labels)}
+
+                # init z_all_samples
+                self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
             # E step
             # with torch.no_grad():
             #     logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
             #     y = F.gumbel_softmax(logits, dim=1)
             #     z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
-            # self.z_all_samples = torch.cat([self.z_all_samples, z.cpu()], dim=0)
 
             # M step (update p(y) and p(z|y))
             # if batch_idx + 1 == self.n_batches:  # last batch?
             # next_pi, next_mu, next_logvar = self.next_prior_params(z)
             # self.update_prior_distribution(opt_pz_y, next_pi, next_mu, next_logvar)
 
+        del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
         del keys, ids, x_vis, x_spc, x_spc_diff, mask
 
     def discreate_pz_y(self, opt_pz_y):
         self.toggle_optimizer(opt_pz_y)
 
         b = self.batch_size
-        y = np.random.choice(
-            self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy()
-        )
+        y = np.random.choice(self.n_clusters, b, p=self.Py.pi.detach().cpu().numpy())
         y = torch.tensor(y, dtype=torch.long)
         y = F.one_hot(y, self.n_clusters).to(self.device, torch.float32)
         # y = torch.eye(self.n_clusters, dtype=torch.float32).to(self.device)
         z, mu, logvar = self.Pz_y(y)
 
-        mu = mu.repeat((1, self.n_clusters)).view(
-            self.n_clusters, b, self.latent_ndim
-        )
+        mu = mu.repeat((1, self.n_clusters)).view(self.n_clusters, b, self.latent_ndim)
         norm = torch.linalg.norm((z - mu).permute(1, 0, 2), dim=2)
         pdfs = (1 + norm / self.alpha) ** (-(self.alpha + 1) / 2)
         pdfs = pdfs / pdfs.sum(dim=1).view(-1, 1)
 
         tij = pdfs**2 / pdfs.sum(dim=0)
         tij = tij / tij.sum(dim=-1).view(-1, 1)
-        loss = -torch.clamp((pdfs * (torch.log(pdfs) - torch.log(tij))).mean(), 0, 5e-3)
+        loss = -torch.clamp((pdfs * (torch.log(pdfs) - torch.log(tij))).mean(), 0, 5e-4)
         self.manual_backward(loss)
         opt_pz_y.step()
         opt_pz_y.zero_grad(set_to_none=True)
