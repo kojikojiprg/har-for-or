@@ -1,8 +1,8 @@
-# from glob import glob
 import argparse
 import os
 import pickle
 import sys
+from glob import glob
 
 import cv2
 import numpy as np
@@ -18,19 +18,24 @@ from src.utils import video, vis, yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
+    parser.add_argument("-v", "--version", type=int, default=0)
+    parser.add_argument("-ep", "--epoch", type=int, default=None)
     parser.add_argument("-g", "--gpu_id", type=int, default=None)
     args = parser.parse_args()
     data_root = args.data_root
+    v = args.version
+    ep = args.epoch
     gpu_id = args.gpu_id
 
     # data_dirs = sorted(glob(os.path.join(data_root, "*/")))
     data_dirs = [data_root]
     data_dir = data_dirs[0]
 
-    checkpoint_path = (
-        "models/individual/individual-seq_len90-stride30-256x192-last.ckpt"
-    )
-    config = yaml_handler.load("configs/individual.yaml")
+    if ep is not None:
+        checkpoint_path = f"models/individual/vae/version_{v}/vae-seq_len90-stride30-256x192-last-epoch={ep}.ckpt"
+    else:
+        checkpoint_path = sorted(glob(f"models/individual/vae/version_{v}/*.ckpt"))[-1]
+    config = yaml_handler.load("configs/individual-vae.yaml")
     seq_len = config.seq_len
     stride = config.stride
     device = f"cuda:{gpu_id}"
@@ -60,7 +65,8 @@ if __name__ == "__main__":
     # pred
     mse_x_vis_dict = {}
     mse_x_spc_dict = {}
-    latent_features = {"label": [], "mu": [], "logvar": [], "z": []}
+    mse_x_spc_diff_dict = {}
+    latent_features = {"id": [], "label": [], "mu": []}
     save_dir = os.path.join(data_dir, "pred")
     os.makedirs(save_dir, exist_ok=True)
 
@@ -69,70 +75,101 @@ if __name__ == "__main__":
         pre_n_frame = seq_len
         results_tmp = []
         for batch in tqdm(dataloader, total=n_samples):
-            result = model.predict_step(batch)
-            n_frame = int(result["key"].split("_")[1])
-            key = result["key"]
-            _id = result["id"]
+            results = model.predict_step(batch)
+            for result in results:
+                n_frame = int(result["key"].split("_")[1])
+                key = result["key"]
+                _id = result["id"]
 
-            path = os.path.join(save_dir, f"{key}.pkl")
-            with open(path, "wb") as f:
-                pickle.dump(result, f)
+                path = os.path.join(save_dir, f"{key}.pkl")
+                with open(path, "wb") as f:
+                    pickle.dump(result, f)
 
-            # collect mse
-            if _id not in mse_x_vis_dict:
-                mse_x_vis_dict[_id] = {}
-                mse_x_spc_dict[_id] = {}
-            mse_x_vis_dict[_id][n_frame] = result["mse_x_vis"]
-            mse_x_spc_dict[_id][n_frame] = result["mse_x_spc"]
+                # collect mse
+                if _id not in mse_x_vis_dict:
+                    mse_x_vis_dict[_id] = {}
+                    mse_x_spc_dict[_id] = {}
+                    mse_x_spc_diff_dict[_id] = {}
+                mse_x_vis_dict[_id][n_frame] = result["mse_x_vis"]
+                mse_x_spc_dict[_id][n_frame] = result["mse_x_spc"]
+                mse_x_spc_diff_dict[_id][n_frame] = result["mse_x_spc_diff"]
 
-            # collect latent features
-            latent_features["label"].append(np.argmax(result["y"]).item())
-            latent_features["mu"].append(result["mu"])
-            latent_features["logvar"].append(result["logvar"])
+                # collect latent features
+                latent_features["id"].append(result["id"])
+                latent_features["mu"].append(result["mu"])
+                latent_features["label"].append(result["label"])
 
-            # plot bboxs
-            if pre_n_frame < n_frame:
-                for i in range(stride):
-                    n_frame_tmp = pre_n_frame - stride + i
-                    idx_data = seq_len - stride + i
+                # plot bboxs
+                if pre_n_frame < n_frame:
+                    for i in range(stride):
+                        n_frame_tmp = pre_n_frame - stride + i
+                        idx_data = seq_len - stride + i
 
-                    frame = cap.read(n_frame_tmp)[1]
-                    frame = cv2.putText(
-                        frame,
-                        f"frame:{n_frame_tmp}",
-                        (10, 40),
-                        cv2.FONT_HERSHEY_COMPLEX,
-                        1.0,
-                        (255, 255, 255),
-                        1,
-                    )
+                        frame = cap.read(n_frame_tmp)[1]
+                        frame = cv2.putText(
+                            frame,
+                            f"frame:{n_frame_tmp}",
+                            (10, 40),
+                            cv2.FONT_HERSHEY_COMPLEX,
+                            1.0,
+                            (255, 255, 255),
+                            1,
+                        )
 
-                    frame_vis = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, frame_size, "x_vis"
-                    )
-                    wrt_x_vis.write(frame_vis)
-                    frame_spc = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, frame_size, "x_spc"
-                    )
-                    wrt_x_spc.write(frame_spc)
-                    frame_cluster = vis.plot_on_frame(
-                        frame.copy(), results_tmp, idx_data, frame_size, "cluster"
-                    )
-                    wrt_cluster.write(frame_cluster)
+                        frame_vis = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "x_vis"
+                        )
+                        wrt_x_vis.write(frame_vis)
+                        frame_spc = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "x_spc"
+                        )
+                        wrt_x_spc.write(frame_spc)
+                        frame_cluster = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "cluster"
+                        )
+                        wrt_cluster.write(frame_cluster)
 
-                results_tmp = []
-                pre_n_frame = n_frame
+                    results_tmp = []
+                    pre_n_frame = n_frame
 
-            # add result in temporary result list
-            results_tmp.append(result)
+                # add result in temporary result list
+                results_tmp.append(result)
 
     del cap, wrt_x_vis, wrt_x_spc, wrt_cluster
 
     # plot mse
-    vis.plot_mse(mse_x_vis_dict, max_n_frame, stride, f"{data_dir}/pred_x_vis.jpg")
-    vis.plot_mse(mse_x_spc_dict, max_n_frame, stride, f"{data_dir}/pred_x_spc.jpg")
+    vis.plot_mse(
+        mse_x_vis_dict,
+        max_n_frame,
+        stride,
+        0.05,
+        "MSE_x_vis",
+        f"{data_dir}/pred_x_vis.jpg",
+    )
+    vis.plot_mse(
+        mse_x_spc_dict,
+        max_n_frame,
+        stride,
+        0.05,
+        "MSE_x_spc",
+        f"{data_dir}/pred_x_spc.jpg",
+    )
+    vis.plot_mse(
+        mse_x_spc_diff_dict,
+        max_n_frame,
+        stride,
+        0.05,
+        "MSE_x_spc_diff",
+        f"{data_dir}/pred_x_spc.jpg",
+    )
 
     # plot latent feature
-    X = np.array(latent_features["mu"]).reshape(-1, config.seq_len * config.latent_ndim)
+    X = np.array(latent_features["mu"]).reshape(-1, config.latent_ndim)
     labels = np.array(latent_features["label"])
-    vis.plot_tsne(X, labels, f"{data_dir}/pred_mu_tsne.jpg", cmap="tab10")
+    vis.plot_tsne(X, labels, 10, f"{data_dir}/pred_mu_tsne_label.jpg", cmap="tab10")
+
+    labels = np.array(latent_features["id"])
+    lut = len(np.unique(labels))
+    vis.plot_tsne(
+        X, labels, 10, f"{data_dir}/pred_mu_tsne_id.jpg", cmap="tab10", lut=lut
+    )
