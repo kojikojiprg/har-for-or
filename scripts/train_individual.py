@@ -47,7 +47,6 @@ if __name__ == "__main__":
         monitor="loss",
         mode="min",
         save_last=True,
-        enable_version_counter=False,
     )
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-{epoch}"
 
@@ -58,7 +57,7 @@ if __name__ == "__main__":
 
     # create model
     model = VAE(config, n_batches)
-    ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
+    ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 
     logger = TensorBoardLogger("logs/individual", name=model_type)

@@ -157,9 +157,21 @@ def diff_bboxs(bboxs):
     x = np.arange(seq_len)[mask]
     vals = bboxs.reshape(seq_len, -1)
     curve = interpolate.interp1d(x, vals[mask], kind="linear", axis=0)
-    new_bboxs[~mask] = curve(np.arange(seq_len))[~mask].astype(
-        bboxs.dtype
-    )
+    new_bboxs[~mask] = curve(np.arange(seq_len))[~mask].astype(bboxs.dtype)
+    # TODO pred1, pred6
+    """
+    File "/raid6/home/yokoyama/group_activity/./src/data/transform/individual.py", line 136, in individual_npz_to_tensor
+    bboxs_diff = diff_bboxs(bboxs).reshape(seq_len, 2, 2)
+    File "/raid6/home/yokoyama/group_activity/./src/data/transform/individual.py", line 160, in diff_bboxs
+        new_bboxs[~mask] = curve(np.arange(seq_len))[~mask].astype(
+    File "/raid6/home/yokoyama/group_activity/.venv/lib/python3.10/site-packages/scipy/interpolate/_polyint.py", line 81, in __call__
+        y = self._evaluate(x)
+    File "/raid6/home/yokoyama/group_activity/.venv/lib/python3.10/site-packages/scipy/interpolate/_interpolate.py", line 766, in _evaluate
+        below_bounds, above_bounds = self._check_bounds(x_new)
+    File "/raid6/home/yokoyama/group_activity/.venv/lib/python3.10/site-packages/scipy/interpolate/_interpolate.py", line 799, in _check_bounds
+        raise ValueError(f"A value ({above_bounds_value}) in x_new is above "
+    ValueError: A value (87.0) in x_new is above the interpolation range's maximum value (86).
+    """
 
     diff = np.diff(new_bboxs, axis=0, prepend=0)
 

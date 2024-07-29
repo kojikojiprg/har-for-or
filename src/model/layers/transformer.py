@@ -55,8 +55,7 @@ class TransformerDecoderBlock(nn.Module):
             ndim, nheads, dropout=dropout, batch_first=True
         )
 
-        self.norm2x = nn.LayerNorm(ndim)
-        self.norm2z = nn.LayerNorm(ndim)
+        self.norm2 = nn.LayerNorm(ndim)
         self.attn2 = nn.MultiheadAttention(
             ndim, nheads, dropout=dropout, batch_first=True
         )
@@ -79,8 +78,7 @@ class TransformerDecoderBlock(nn.Module):
             src_mask = create_src_mask(mask, b, seq_len, self.nheads)
         else:
             src_mask = None
-        z = self.norm2z(z)
-        x = self.norm2x(x)
+        x = self.norm2(x)
         x = x + self.attention_block2(x, z, src_mask)
 
         x = self.norm3(x)

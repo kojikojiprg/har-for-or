@@ -192,10 +192,11 @@ def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=
         vals = np.full((n_samples,), np.nan, np.float32)
         vals[idxs] = mses
 
-        vals_dict[_id] = vals
+        vals_dict[_id] = vals.astype(np.float32)
 
     ids = list(vals_dict.keys())
     vals = np.array(list(vals_dict.values())).T
+    vals = vals.astype(np.float32)
     mse_ratio = np.count_nonzero(vals > th, axis=1) / np.count_nonzero(
         np.nan_to_num(vals), axis=1
     )
@@ -271,8 +272,10 @@ def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10
         else:
             ci = int(label)
         c = cm(ci)
-        plt.scatter(x.T[0], x.T[1], s=2, c=c, label=label)
+        plt.scatter(x.T[0], x.T[1], s=3, c=c, label=label)
     plt.legend(bbox_to_anchor=(1.01, 1))
+    plt.xticks([])
+    plt.yticks([])
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:

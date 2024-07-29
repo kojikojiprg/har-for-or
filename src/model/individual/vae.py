@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
+# from sklearn.cluster import KMeans
 
 from src.model.layers import (
     MLP,
@@ -34,7 +36,11 @@ class VAE(LightningModule):
         self.Py = None
         self.Pz_y = None
         self.Px_z = None
-        self.sort_kmeans = {}
+
+        self.kmeans = None
+        self.mu_all = torch.empty((0, self.latent_ndim)).cpu()
+        self.logvar_all = torch.empty((0, self.latent_ndim)).cpu()
+        self.ids_all = []
 
     def configure_model(self):
         if self.Qy_x is not None:
@@ -45,8 +51,6 @@ class VAE(LightningModule):
         self.Py = Py(self.config)
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
-
-        self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
 
     def loss_x(self, x, fake_x, mask):
         b = x.size(0)
@@ -89,23 +93,34 @@ class VAE(LightningModule):
         opt_pz_y, opt = self.optimizers()
 
         self.toggle_optimizer(opt)
+        # VAE
         logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
         y = F.gumbel_softmax(logits, self.tau, dim=1)
+        pi = F.softmax(logits, dim=1)
         z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
         z_prior, mu_prior, logvar_prior = self.Pz_y(y)
         recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
             x_vis, x_spc, x_spc_diff, z, mask
         )
-        pi = F.softmax(logits, dim=1)
+
+        # get augumented label
+        logits_aug = self.Qy_x(recon_x_vis, recon_x_spc, recon_x_spc_diff, mask)
+        y_aug = F.gumbel_softmax(logits_aug, self.tau, dim=1)
+        pi_aug = F.softmax(logits_aug, dim=1)
+        z_aug, mu_aug, logvar_aug = self.Qz_xy(
+            recon_x_vis, recon_x_spc, recon_x_spc_diff, y_aug, mask
+        )
 
         # calc joint probabilities of the pairwise similarities
         q_sim = self.pairwise_sim(mu, logvar)
         p_sim = self.pairwise_sim(mu_prior, logvar_prior)
 
         # create psuedo labels
-        idx = q_sim.argsort(descending=True)
-        weights_pl = (1 / (torch.arange(q_sim.size(0)) + 1)).view(1, -1, 1).to(self.device)
-        psuedo_labels = (y[idx] * weights_pl).sum(dim=1) / weights_pl.sum()
+        # idx = q_sim.argsort(descending=True)
+        # b = q_sim.size(0)
+        # weights_pl = (q_sim / q_sim.max(dim=1).values.view(1, -1)).view(b, b, 1)
+        # psuedo_labels = (y[idx] * weights_pl).sum(dim=1) / weights_pl.sum(dim=1)
+        # psuedo_labels = psuedo_labels.argmax(dim=1).to(torch.long)
 
         # loss
         logs = {}
@@ -127,22 +142,45 @@ class VAE(LightningModule):
         logs["spcd"] = lrc_x_spc_diff.mean().item()
 
         lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
-        weights_kl = 1 / (lrc.detach() + 1)  # TODO: toggle weights
+        # weights_kl = 1 / (lrc.detach() + 1)
+        # weights_kl = lrc.detach()  # TODO: toggle weights
         lrc = lrc.mean()
 
         # clustering loss
-        lc = self.loss_kl(pi, psuedo_labels, weights_kl)
+        lc = self.loss_kl(pi, self.Py.pi)
         lc *= self.config.lc
         logs["c"] = lc.item()
 
         # Gaussian loss
-        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior, weights_kl)
-        lg_sim = self.loss_kl(q_sim, p_sim, weights_kl)
-        lg = lg + lg_sim
+        lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
+        lg = lg
         lg *= self.config.lg
         logs["g"] = lg.item()
 
-        loss = lrc + lc + lg
+        loss_elbo = lrc + lc + lg
+
+        # augumentation loss
+        # lcp = F.cross_entropy(pi, psuedo_labels)
+        # lcpa = F.cross_entropy(pi_aug, psuedo_labels)
+        # lc_aug = lcp + lcpa
+        # psuedo_labels = F.one_hot(y.argmax(dim=1), self.n_clusters).to(torch.float32)
+        # lc_aug = F.cross_entropy(pi_aug, psuedo_labels)
+        # lc_aug = F.mse_loss(y, y_aug)
+        # logs["caug"] = lc_aug.item()
+
+        # lg_sim = self.loss_kl(q_sim, p_sim)
+        # lg_aug = self.loss_kl_gaussian(mu, logvar, mu_aug, logvar_aug)
+        # lg_aug = lg_sim + lg_aug
+        # logs["gaug"] = lg_aug.item()
+
+        # if self.current_epoch < 20:
+        #     lmd = 0.01
+        # else:
+        #     lmd = 1.0
+        # lmd = 1.0
+
+        # loss = loss_elbo + lmd * (lc_aug + lg_aug)
+        loss = loss_elbo
         # logs["l"] = loss.item()
         self.manual_backward(loss)
         self.log_dict(logs, prog_bar=True)
@@ -151,16 +189,49 @@ class VAE(LightningModule):
             opt.zero_grad(set_to_none=True)
         self.untoggle_optimizer(opt)
 
-        # update prior distribution
         # if (
-        #     self.current_epoch >= 1000
+        #     self.current_epoch >= 19
         #     and self.current_epoch % self.update_prior_interval == 0
         # ):
         #     # self.discreate_pz_y(opt_pz_y)
-        #     self.z_all_samples = torch.cat([self.z_all_samples, z.cpu()], dim=0)
+        #     self.mu_all = torch.cat([self.mu_all, mu.cpu()], dim=0)
+        #     self.logvar_all = torch.cat(
+        #         [self.logvar_all, logvar.cpu()], dim=0
+        #     )
+        #     self.ids_all.extend(ids)
         #     if (batch_idx + 1) == self.n_batches:
+        #         # kmeans
+        #         # z = self.z_all_samples.detach().cpu().numpy()
+        #         # self.kmeans = KMeans(self.n_clusters, random_state=True)
+        #         # self.kmeans = self.kmeans.fit(z)
+        #         # labels = self.kmeans.labels_
+        #         # _, counts = np.unique(labels, return_counts=True)
+        #         # sorted_idx = sorted(np.argsort(counts))
+        #         # sort_map = {s: i for i, s in enumerate(sorted_idx)}
+        #         # ids = np.array(self.all_ids).ravel()
+        #         # self.psuedo_labels = [(k, sort_map[l]) for k, l in zip(keys, labels)]
+
+        #         mu = self.mu_all.detach().cpu().numpy()
+        #         logvar = self.logvar_all.detach().cpu().numpy()
+        #         ids = np.array(self.ids_all).ravel()
+        #         unique_ids = np.unique(ids)
+        #         mu_ids = torch.empty((0, self.latent_ndim)).cpu()
+        #         logvar_ids = torch.empty((0, self.latent_ndim)).cpu()
+        #         for _id in unique_ids:
+        #             mu_id = mu[ids == _id].mean(dim=0)
+        #             n = logvar[ids == _id].size(0)
+        #             logvar_id = logvar[ids == _id].sum(dim=0) - np.log(n)
+        #             mu_ids = torch.cat([mu_ids, mu_id.view(1, -1)], dim=0)
+        #             logvar_ids = torch.cat([logvar_ids, logvar_id.view(1, -1)], dim=0)
+
+        #         sim_ids = self.pairwise_sim(mu_ids, logvar_ids)
+        #         p_sim = self.pairwise_sim(mu_prior, logvar_prior)
+
         #         # init z_all_samples
-        #         self.z_all_samples = torch.empty((0, self.latent_ndim)).cpu()
+        #         self.mu_all = torch.empty((0, self.latent_ndim)).cpu()
+        #         self.logvar_all = torch.empty((0, self.latent_ndim)).cpu()
+        #         self.ids_all = []
+
         del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
         del keys, ids, x_vis, x_spc, x_spc_diff, mask
 
@@ -239,7 +310,7 @@ class VAE(LightningModule):
         for i in range(len(keys)):
             # label_prob = self.clustering_prob(z[i], mu[i], logvar[i], mask[i])
             data = {
-                "key": keys[i][0],
+                "key": keys[i],
                 "id": ids[i].cpu().numpy().item(),
                 # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
                 # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
@@ -372,7 +443,7 @@ class Qz_xy(nn.Module):
         mu = self.lin_mu(x[:, 0, :])
         logvar = self.lin_logvar(x[:, 0, :])
         ep = torch.randn_like(logvar)
-        z = mu + logvar.mul(0.5).exp_() * ep
+        z = mu + logvar.mul(0.5).exp() * ep
         # z, mu, log_sig (b, latent_ndim)
 
         return z, mu, logvar
@@ -399,7 +470,7 @@ class Pz_y(nn.Module):
         mu_prior = self.lin_mu(z)
         logvar_prior = self.lin_logvar(z)
         ep = torch.randn_like(logvar_prior)
-        z_prior = mu_prior + logvar_prior.mul(0.5).exp_() * ep
+        z_prior = mu_prior + logvar_prior.mul(0.5).exp() * ep
 
         return z_prior, mu_prior, logvar_prior
 
