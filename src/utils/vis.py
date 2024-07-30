@@ -260,7 +260,7 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
     plt.close()
 
 
-def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10", lut=None):
+def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10", lut=None, legend=True):
     tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
@@ -273,9 +273,10 @@ def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10
             ci = int(label)
         c = cm(ci)
         plt.scatter(x.T[0], x.T[1], s=3, c=c, label=label)
-    plt.legend(bbox_to_anchor=(1.01, 1))
     plt.xticks([])
     plt.yticks([])
+    if legend:
+        plt.legend(bbox_to_anchor=(1.01, 1))
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:
