@@ -18,7 +18,7 @@ from .transform import (
 
 
 def load_dataset(
-    data_dirs: str, dataset_type: str, config: SimpleNamespace, shuffle: bool
+    data_dirs: list, dataset_type: str, config: SimpleNamespace, shuffle: bool
 ) -> wds.WebLoader:
     shard_paths = []
 
