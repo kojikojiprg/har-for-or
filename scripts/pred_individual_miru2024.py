@@ -12,7 +12,7 @@ from webdataset import WebLoader
 
 sys.path.append(".")
 from src.data import load_dataset
-from src.model import VAE
+from src.model.individual.vae_miru2024 import VAE
 from src.utils import video, vis, yaml_handler
 
 if __name__ == "__main__":
