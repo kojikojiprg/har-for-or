@@ -24,7 +24,7 @@ if __name__ == "__main__":
     gpu_id = args.gpu_id
 
     checkpoint_path = "models/individual/vae/miru2024/vae-seq_len90-stride30-256x192-last-epoch=49.ckpt"
-    config = yaml_handler.load("configs/individual-vae.yaml")
+    config = yaml_handler.load("configs/individual-vae-miru2024.yaml")
     seq_len = config.seq_len
     stride = config.stride
     device = f"cuda:{gpu_id}"
