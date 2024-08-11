@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Optional
 
 import numpy as np
 import torch
@@ -6,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
-# from sklearn.cluster import KMeans
 
 from src.model.layers import (
     MLP,
@@ -15,9 +15,16 @@ from src.model.layers import (
     TransformerEncoderBlock,
 )
 
+# from sklearn.cluster import KMeans
+
 
 class VAE(LightningModule):
-    def __init__(self, config: SimpleNamespace, n_batches: int = None):
+    def __init__(
+        self,
+        config: SimpleNamespace,
+        n_batches: Optional[int] = None,
+        annotation_path: Optional[str] = None,
+    ):
         super().__init__()
         self.automatic_optimization = False
         self.config = config
@@ -41,6 +48,8 @@ class VAE(LightningModule):
         self.mu_all = torch.empty((0, self.latent_ndim)).cpu()
         self.logvar_all = torch.empty((0, self.latent_ndim)).cpu()
         self.ids_all = []
+        self.supervised_ids = []
+        self.annotation_path = annotation_path
 
     def configure_model(self):
         if self.Qy_x is not None:
@@ -51,6 +60,10 @@ class VAE(LightningModule):
         self.Py = Py(self.config)
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
+
+        if self.annotation_path is not None:
+            anns = np.loadtxt(self.annotation_path, int, delimiter=" ", skiprows=1)
+            self.annotations = torch.tensor(anns, dtype=torch.long)
 
     def loss_x(self, x, fake_x, mask):
         b = x.size(0)
@@ -85,6 +98,8 @@ class VAE(LightningModule):
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
+        keys = np.array(keys).T[0]
+        ids = ids[0]
         x_vis = x_vis[0]
         x_spc = x_spc[0]
         x_spc_diff = x_spc_diff[0]
@@ -98,7 +113,7 @@ class VAE(LightningModule):
         y = F.gumbel_softmax(logits, self.tau, dim=1)
         pi = F.softmax(logits, dim=1)
         z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
-        z_prior, mu_prior, logvar_prior = self.Pz_y(y)
+        z_prior, mu_prior, logvar_prior = self.Pz_y(pi)
         recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
             x_vis, x_spc, x_spc_diff, z, mask
         )
@@ -106,21 +121,28 @@ class VAE(LightningModule):
         # get augumented label
         logits_aug = self.Qy_x(recon_x_vis, recon_x_spc, recon_x_spc_diff, mask)
         y_aug = F.gumbel_softmax(logits_aug, self.tau, dim=1)
-        pi_aug = F.softmax(logits_aug, dim=1)
+        # pi_aug = F.softmax(logits_aug, dim=1)
         z_aug, mu_aug, logvar_aug = self.Qz_xy(
             recon_x_vis, recon_x_spc, recon_x_spc_diff, y_aug, mask
         )
 
         # calc joint probabilities of the pairwise similarities
         q_sim = self.pairwise_sim(mu, logvar)
-        p_sim = self.pairwise_sim(mu_prior, logvar_prior)
+        # p_sim = self.pairwise_sim(mu_prior, logvar_prior)
 
         # create psuedo labels
-        # idx = q_sim.argsort(descending=True)
-        # b = q_sim.size(0)
-        # weights_pl = (q_sim / q_sim.max(dim=1).values.view(1, -1)).view(b, b, 1)
-        # psuedo_labels = (y[idx] * weights_pl).sum(dim=1) / weights_pl.sum(dim=1)
-        # psuedo_labels = psuedo_labels.argmax(dim=1).to(torch.long)
+        idx = q_sim.argsort(descending=True)
+        b = q_sim.size(0)
+        weights_pl = (q_sim / q_sim.max(dim=1).values.view(1, -1)).view(b, b, 1)
+        labels = (pi[idx] * weights_pl).sum(dim=1) / weights_pl.sum(dim=1)
+        labels = labels.argmax(dim=1).to(torch.long)
+
+        # obtain true labels if id ids are annotated
+        supervised_mask = torch.isin(ids, self.annotations.T[0]).ravel()
+        for i, _id in enumerate(ids):
+            if _id in self.annotations.T[0]:
+                label = self.annotations.T[1][_id == self.annotations.T[0]]
+                labels[i] = label
 
         # loss
         logs = {}
@@ -142,8 +164,6 @@ class VAE(LightningModule):
         logs["spcd"] = lrc_x_spc_diff.mean().item()
 
         lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
-        # weights_kl = 1 / (lrc.detach() + 1)
-        # weights_kl = lrc.detach()  # TODO: toggle weights
         lrc = lrc.mean()
 
         # clustering loss
@@ -157,30 +177,47 @@ class VAE(LightningModule):
         lg *= self.config.lg
         logs["g"] = lg.item()
 
+        # loss_elbo = lrc + lc + lg
         loss_elbo = lrc + lc + lg
 
         # augumentation loss
-        # lcp = F.cross_entropy(pi, psuedo_labels)
-        # lcpa = F.cross_entropy(pi_aug, psuedo_labels)
+        lcp = F.cross_entropy(pi, labels, reduction="none")
+        # lcpa = F.cross_entropy(pi_aug, labels, reduction="none")
         # lc_aug = lcp + lcpa
-        # psuedo_labels = F.one_hot(y.argmax(dim=1), self.n_clusters).to(torch.float32)
-        # lc_aug = F.cross_entropy(pi_aug, psuedo_labels)
-        # lc_aug = F.mse_loss(y, y_aug)
-        # logs["caug"] = lc_aug.item()
+        lc_aug = lcp
+        # if self.current_epoch < 30:
+        #     lc_aug[supervised_mask] = lc_aug[supervised_mask] * 0.99
+        #     lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.01
+        # else:
+        #     lc_aug[supervised_mask] = lc_aug[supervised_mask] * 0.9
+        #     lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.1
+        lc_aug[supervised_mask] = lc_aug[supervised_mask] * 1.0
+        lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.05
+        lc_aug = lc_aug.mean()
+        logs["caug"] = lc_aug.item()
 
         # lg_sim = self.loss_kl(q_sim, p_sim)
-        # lg_aug = self.loss_kl_gaussian(mu, logvar, mu_aug, logvar_aug)
+        # weights = torch.ones(b, dtype=torch.float32).to(self.device)
+        # if self.current_epoch < 30:
+        #     weights[supervised_mask] = weights[supervised_mask] * 0.99
+        #     weights[~supervised_mask] = weights[~supervised_mask] * 0.01
+        # else:
+        #     weights[supervised_mask] = weights[supervised_mask] * 0.9
+        #     weights[~supervised_mask] = weights[~supervised_mask] * 0.1
+        # weights[supervised_mask] = weights[supervised_mask] * 0.99
+        # weights[~supervised_mask] = weights[~supervised_mask] * 0.01
+        lg_aug = self.loss_kl_gaussian(mu, logvar, mu_aug, logvar_aug)
         # lg_aug = lg_sim + lg_aug
-        # logs["gaug"] = lg_aug.item()
+        logs["gaug"] = lg_aug.item()
 
         # if self.current_epoch < 20:
         #     lmd = 0.01
         # else:
         #     lmd = 1.0
-        # lmd = 1.0
+        lmd = 1.0
 
-        # loss = loss_elbo + lmd * (lc_aug + lg_aug)
-        loss = loss_elbo
+        loss = loss_elbo + lmd * (lc_aug + lg_aug)
+        # loss = loss_elbo
         # logs["l"] = loss.item()
         self.manual_backward(loss)
         self.log_dict(logs, prog_bar=True)
@@ -232,7 +269,7 @@ class VAE(LightningModule):
         #         self.logvar_all = torch.empty((0, self.latent_ndim)).cpu()
         #         self.ids_all = []
 
-        del z, mu, logvar, z_prior, mu_prior, logvar_prior, y
+        del z, mu, logvar, z_prior, mu_prior, logvar_prior
         del keys, ids, x_vis, x_spc, x_spc_diff, mask
 
     @staticmethod
@@ -335,7 +372,7 @@ class VAE(LightningModule):
         return results
 
     def configure_optimizers(self):
-        opt_pz_y = torch.optim.Adam(self.Pz_y.parameters(), lr=self.config.lr_pz_y)
+        opt_pz_y = torch.optim.Adam(self.Pz_y.parameters(), lr=self.config.lr_pz_y)  # type: ignore
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return [opt_pz_y, opt], []
 

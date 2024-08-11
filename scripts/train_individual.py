@@ -32,6 +32,7 @@ if __name__ == "__main__":
     # model checkpoint callback
     checkpoint_dir = f"models/individual/{model_type}"
     ckpt_dirs = sorted(glob(os.path.join(checkpoint_dir, "*/")))
+    ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
     if len(ckpt_dirs) > 0:
         last_ckpt_dir = os.path.dirname(ckpt_dirs[-1])
         last_v_num = int(last_ckpt_dir.split("/")[-1].replace("version_", ""))
@@ -56,7 +57,9 @@ if __name__ == "__main__":
     )
 
     # create model
-    model = VAE(config, n_batches)
+    ann_path = "../datasets/dataset03/train/annotation/role.txt"
+    model = VAE(config, n_batches, annotation_path=ann_path)
+    # model = VAE(config, n_batches)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 

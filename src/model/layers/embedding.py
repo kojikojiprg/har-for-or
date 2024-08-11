@@ -19,10 +19,10 @@ MASK_KPS = [
     0.0,  # right wrist
     0.0,  # left hip
     0.0,  # right hip
-    -10.0,  # left knee
-    -10.0,  # right knee
-    -10.0,  # left ankle
-    -10.0,  # right ankle
+    -1e10,  # left knee
+    -1e10,  # right knee
+    -1e10,  # left ankle
+    -1e10,  # right ankle
 ]
 
 
@@ -199,12 +199,22 @@ class IndividualEmbedding(nn.Module):
         img_size,
     ):
         super().__init__()
+        self.emb_hidden_ndim = emb_hidden_ndim
         # self.emb_vis = PixcelEmbedding(
         #     hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
         # )
+        self.feature = nn.Parameter(
+            torch.randn((1, 1, emb_hidden_ndim), dtype=torch.float32),
+            requires_grad=True,
+        )
+        self.feature_mask = nn.Parameter(
+            torch.full((1, 1), -float("inf")), requires_grad=False
+        )
+        self.npatchs = 3
         self.emb_vis = PointEmbedding(emb_hidden_ndim, nheads, dropout, "keypoints")
         self.emb_spc = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
         self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
+        self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, batch_first=True)
         self.mlp = nn.Sequential(
             MLP(emb_hidden_ndim, hidden_ndim),
             nn.SiLU(),
@@ -214,8 +224,23 @@ class IndividualEmbedding(nn.Module):
         x_vis = self.emb_vis(x_vis)
         x_spc = self.emb_spc(x_spc)
         x_spc_diff = self.emb_spc_diff(x_spc_diff)
-        lmd_spc = (1 - lmd_vis) / 2
-        x = x_vis * lmd_vis + x_spc * lmd_spc + x_spc_diff * lmd_spc
+        # lmd_spc = (1 - lmd_vis) / 2
+        # x = x_vis * lmd_vis + x_spc * lmd_spc + x_spc_diff * lmd_spc
         # x = x_vis + x_spc + x_spc_diff
+
+        # attention
+        b, seq_len = x_vis.size()[:2]
+        x_vis = x_vis.view(b * seq_len, 1, self.emb_hidden_ndim)
+        x_spc = x_spc.view(b * seq_len, 1, self.emb_hidden_ndim)
+        x_spc_diff = x_spc_diff.view(b * seq_len, 1, self.emb_hidden_ndim)
+        fp = self.feature.repeat((b, seq_len, 1)).view(b * seq_len, 1, self.emb_hidden_ndim)
+        x = torch.cat([fp, x_vis, x_spc, x_spc_diff], dim=1)
+        fp_mask = self.feature_mask.repeat((b, seq_len, 1))
+        pad_mask = torch.full((b, seq_len, self.npatchs), 0.0).to(x_vis.device)
+        pad_mask = torch.cat([fp_mask, pad_mask], dim=2)
+        pad_mask = pad_mask.view(b * seq_len, self.npatchs + 1)
+        x = self.attn(x, x, x, key_padding_mask=pad_mask, need_weights=False)[0]
+        x = x.view(b, seq_len, self.npatchs + 1, self.emb_hidden_ndim)[:, :, 0]
+
         x = self.mlp(x)
         return x  # x (b, seq_len, out_ndim)
