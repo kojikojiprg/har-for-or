@@ -1,0 +1,35 @@
+# dataset
+max_shard_count: 100
+seq_len: 90
+stride: 30
+img_size: [256, 192]
+
+# model
+# n_clusters: 5
+temp_init: 1.0
+temp_decay: 0.01
+temp_min: 0.0
+book_size: 512
+hidden_ndim: 512
+latent_ndim: 128
+nheads: 8
+nlayers: 6
+dropout: 0.1
+emb_hidden_ndim: 128
+emb_nheads: 1
+emb_nlayers: 3
+emb_dropout: 0.1
+patch_size: [32, 24]
+
+# optim VAE
+lrc_x_vis: 1
+lrc_x_spc: 1
+lg: 1
+lc: 0.05
+lr: 0.0001
+
+# training
+epochs: 100
+batch_size: 32
+accumulate_grad_batches: 1
+num_workers: 16
