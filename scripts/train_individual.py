@@ -10,14 +10,14 @@ from lightning.pytorch.strategies import DDPStrategy
 
 sys.path.append(".")
 from src.data import individual_train_dataloader
-from src.model import VAE
+from src.model import VAE, SQVAE
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
-    parser.add_argument("-mt", "--model_type", required=False, type=str, default="vae")
+    parser.add_argument("-mt", "--model_type", required=False, type=str, default="sqvae")
     parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
     args = parser.parse_args()
     data_root = args.data_root
@@ -58,8 +58,11 @@ if __name__ == "__main__":
 
     # create model
     ann_path = "../datasets/dataset03/train/annotation/role.txt"
-    model = VAE(config, n_batches, annotation_path=ann_path)
-    # model = VAE(config, n_batches)
+    if model_type == "vae":
+        model = VAE(config, n_batches, annotation_path=ann_path)
+        # model = VAE(config, n_batches)
+    elif model_type == "sqvae":
+        model = SQVAE(config, n_batches)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 
