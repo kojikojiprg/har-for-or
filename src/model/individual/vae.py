@@ -44,7 +44,6 @@ class VAE(LightningModule):
         self.Pz_y = None
         self.Px_z = None
 
-        self.kmeans = None
         self.mu_all = torch.empty((0, self.latent_ndim)).cpu()
         self.logvar_all = torch.empty((0, self.latent_ndim)).cpu()
         self.ids_all = []
