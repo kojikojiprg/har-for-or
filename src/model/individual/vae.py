@@ -55,7 +55,7 @@ class VAE(LightningModule):
             return
         self.Qy_x = Qy_x(self.config)
         self.Qz_xy = Qz_xy(self.config)
-        vis_npatchs = self.Qy_x.emb.emb_vis.npatchs
+        vis_npatchs = self.Qy_x.emb.emb.npatchs
         self.Py = Py(self.config)
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)

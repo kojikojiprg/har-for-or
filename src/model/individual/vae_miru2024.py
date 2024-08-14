@@ -45,7 +45,7 @@ class VAE(LightningModule):
             return
         self.Qy_x = Qy_x(self.config)
         self.Qz_xy = Qz_xy(self.config)
-        vis_npatchs = self.Qy_x.emb.emb_vis.npatchs
+        vis_npatchs = self.Qy_x.emb.emb.npatchs
         self.Py = Py(self.config)
         self.Pz_y = Pz_y(self.config)
         self.Px_z = Px_z(self.config, vis_npatchs)
@@ -413,8 +413,8 @@ class Px_z(nn.Module):
         x = self.mlp(x)
         fake_x_vis, fake_x_spc, fake_x_spc_diff = (
             x[:, :, : self.emb_hidden_ndim],
-            x[:, :, self.emb_hidden_ndim: self.emb_hidden_ndim * 2],
-            x[:, :, self.emb_hidden_ndim * 2:],
+            x[:, :, self.emb_hidden_ndim : self.emb_hidden_ndim * 2],
+            x[:, :, self.emb_hidden_ndim * 2 :],
         )
         # fake_x_vis, fake_x_spc (b, seq_len, emb_hidden_ndim)
 
