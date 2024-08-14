@@ -8,11 +8,11 @@ img_size: [256, 192]
 # n_clusters: 5
 temp_init: 1.0
 temp_decay: 0.01
-temp_min: 0.0
-book_size: 512
+temp_min: 0.01
+book_size: 64
 hidden_ndim: 512
 latent_ndim: 128
-nheads: 8
+nheads: 16
 nlayers: 6
 dropout: 0.1
 emb_hidden_ndim: 128
@@ -22,10 +22,7 @@ emb_dropout: 0.1
 patch_size: [32, 24]
 
 # optim VAE
-lrc_x_vis: 1
-lrc_x_spc: 1
-lg: 1
-lc: 0.05
+lmd_lrc: 0.1
 lr: 0.0001
 
 # training

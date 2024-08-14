@@ -393,7 +393,7 @@ class Qy_x(nn.Module):
             config.patch_size,
             config.img_size,
         )
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -445,7 +445,7 @@ class Qz_xy(nn.Module):
             config.patch_size,
             config.img_size,
         )
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
         self.encoders = nn.ModuleList(
             [
@@ -518,10 +518,13 @@ class Px_z(nn.Module):
         self.hidden_ndim = config.hidden_ndim
         self.emb_hidden_ndim = config.emb_hidden_ndim
         self.x_vis_start = nn.Parameter(
-            torch.zeros((1, 1, 17, 2), dtype=torch.float32), requires_grad=False
+            torch.randn((1, 1, 17, 2), dtype=torch.float32), requires_grad=True
         )
         self.x_spc_start = nn.Parameter(
-            torch.zeros((1, 1, 2, 2), dtype=torch.float32), requires_grad=False
+            torch.randn((1, 1, 2, 2), dtype=torch.float32), requires_grad=True
+        )
+        self.x_spc_diff_start = nn.Parameter(
+            torch.randn((1, 1, 2, 2), dtype=torch.float32), requires_grad=True
         )
 
         self.emb = IndividualEmbedding(
@@ -534,7 +537,7 @@ class Px_z(nn.Module):
             config.img_size,
         )
         # self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
         self.decoders = nn.ModuleList(
             [
@@ -569,7 +572,7 @@ class Px_z(nn.Module):
         x_spc = torch.cat([self.x_spc_start.repeat((b, 1, 1, 1)), x_spc], dim=1)
         x_spc = x_spc[:, :-1]
         x_spc_diff = torch.cat(
-            [self.x_spc_start.repeat((b, 1, 1, 1)), x_spc_diff], dim=1
+            [self.x_spc_diff_start.repeat((b, 1, 1, 1)), x_spc_diff], dim=1
         )
         x_spc_diff = x_spc_diff[:, :-1]
         x = self.emb(x_vis, x_spc, x_spc_diff)

@@ -41,7 +41,7 @@ class PointEmbedding(nn.Module):
             requires_grad=True,
         )
         self.feature_mask = nn.Parameter(
-            torch.full((1, 1), -float("inf")), requires_grad=False
+            torch.full((1, 1), -float("inf")), requires_grad=True
         )
 
         self.mlp = MLP(2, emb_hidden_ndim)
@@ -85,7 +85,7 @@ class TransformerEmbedding(nn.Module):
         super().__init__()
         self.feature = nn.Parameter(torch.randn((1, 1, in_ndim)), requires_grad=True)
 
-        self.pe = RotaryEmbedding(in_ndim + 1, learned_freq=False)
+        self.pe = RotaryEmbedding(in_ndim + 1, learned_freq=True)
         self.layers = nn.ModuleList(
             [
                 TransformerEncoderBlock(in_ndim, nheads, dropout).clone()
@@ -214,7 +214,9 @@ class IndividualEmbedding(nn.Module):
         self.emb_vis = PointEmbedding(emb_hidden_ndim, nheads, dropout, "keypoints")
         self.emb_spc = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
         self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
-        self.attn = nn.MultiheadAttention(emb_hidden_ndim, nheads, dropout, batch_first=True)
+        self.attn = nn.MultiheadAttention(
+            emb_hidden_ndim, nheads, dropout, batch_first=True
+        )
         self.mlp = nn.Sequential(
             MLP(emb_hidden_ndim, hidden_ndim),
             nn.SiLU(),
@@ -233,7 +235,9 @@ class IndividualEmbedding(nn.Module):
         x_vis = x_vis.view(b * seq_len, 1, self.emb_hidden_ndim)
         x_spc = x_spc.view(b * seq_len, 1, self.emb_hidden_ndim)
         x_spc_diff = x_spc_diff.view(b * seq_len, 1, self.emb_hidden_ndim)
-        fp = self.feature.repeat((b, seq_len, 1)).view(b * seq_len, 1, self.emb_hidden_ndim)
+        fp = self.feature.repeat((b, seq_len, 1)).view(
+            b * seq_len, 1, self.emb_hidden_ndim
+        )
         x = torch.cat([fp, x_vis, x_spc, x_spc_diff], dim=1)
         fp_mask = self.feature_mask.repeat((b, seq_len, 1))
         pad_mask = torch.full((b, seq_len, self.npatchs), 0.0).to(x_vis.device)
