@@ -67,10 +67,7 @@ class TransformerDecoderBlock(nn.Module):
     def forward(self, x, z, mask=None):
         b, seq_len = x.size()[:2]
         # x (b * seq_len, npatch, ndim)
-        if mask is not None:
-            tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads)
-        else:
-            tgt_mask = None
+        tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads, x.device)
         x = self.norm1(x)
         x = x + self.attention_block1(x, tgt_mask)
 
@@ -109,8 +106,11 @@ def create_src_mask(mask, b, seq_len, nheads):
     return mask
 
 
-def create_tgt_mask(mask, b, seq_len, nheads):
-    mask = create_src_mask(mask, b, seq_len, nheads)
-    subsequent_mask = ~torch.tril(torch.full((seq_len, seq_len), True)).to(mask.device)
-    mask = mask + subsequent_mask
+def create_tgt_mask(mask, b, seq_len, nheads, device=None):
+    if mask is not None:
+        mask = create_src_mask(mask, b, seq_len, nheads)
+        subsequent_mask = ~torch.tril(torch.full((seq_len, seq_len), True)).to(mask.device)
+        mask = mask + subsequent_mask
+    else:
+        mask = ~torch.tril(torch.full((seq_len, seq_len), True)).to(device)
     return mask

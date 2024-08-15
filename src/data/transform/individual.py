@@ -104,7 +104,6 @@ def individual_npz_to_tensor(
     flow_transform,
     bbox_transform,
     kps_transform,
-    interpolate=False,
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
@@ -119,10 +118,6 @@ def individual_npz_to_tensor(
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
 
-    # interpolate
-    if interpolate:
-        frames, flows, bboxs, kps = interpolate_individual(frames, flows, bboxs, kps)
-
     # frames = frame_transform(frames)
     # flows = flow_transform(flows)
     # pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
@@ -131,59 +126,45 @@ def individual_npz_to_tensor(
 
     kps[mask] = -1.0
     kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
+    kps = interpolate_points(kps, mask).reshape(seq_len, 17, 2)
     kps = torch.from_numpy(kps).to(torch.float32)
-
-    bboxs_diff = diff_bboxs(bboxs).reshape(seq_len, 2, 2)
-    bboxs_diff[mask] = 0.0
-    bboxs_diff = bbox_transform(bboxs_diff, frame_size[::-1])  # frame_size: (h, w)
-    bboxs_diff = torch.from_numpy(bboxs_diff).to(torch.float32)
 
     bboxs[mask] = -1.0
     bboxs[~mask] = bbox_transform(bboxs[~mask], frame_size[::-1])  # frame_size: (h, w)
+    bboxs = interpolate_points(bboxs, mask).reshape(seq_len, 2, 2)
     bboxs = torch.from_numpy(bboxs).to(torch.float32)
 
     del sample, npz, frames, flows  # release memory
 
-    # return key, _id, pixcels, bboxs, mask
-    return key, _id, kps, bboxs, bboxs_diff, mask
+    return key, _id, kps, bboxs, mask
 
 
-def diff_bboxs(bboxs):
-    seq_len = bboxs.shape[0]
-    mask = np.all(bboxs >= 0, axis=(1, 2))
+# def calc_diff(vals, mask):
+#     seq_len = vals.shape[0]
+
+#     # interpolate
+#     new_vals = vals.copy().reshape(seq_len, -1)
+#     x = np.arange(seq_len)[~mask]
+#     vals = vals.reshape(seq_len, -1)
+#     curve = interpolate.interp1d(
+#         x, vals[~mask], kind="linear", axis=0, fill_value="extrapolate"
+#     )
+#     new_vals[mask] = curve(np.arange(seq_len))[mask].astype(vals.dtype)
+#     diff = np.diff(new_vals, axis=0, prepend=0)
+
+#     return diff
+
+
+def interpolate_points(vals, mask):
+    seq_len = vals.shape[0]
 
     # interpolate
-    new_bboxs = bboxs.copy().reshape(seq_len, -1)
-    x = np.arange(seq_len)[mask]
-    vals = bboxs.reshape(seq_len, -1)
+    new_vals = vals.copy().reshape(seq_len, -1)
+    x = np.arange(seq_len)[~mask]
+    vals = vals.reshape(seq_len, -1)
     curve = interpolate.interp1d(
-        x, vals[mask], kind="linear", axis=0, fill_value="extrapolate"
+        x, vals[~mask], kind="cubic", axis=0, fill_value="extrapolate"
     )
-    new_bboxs[~mask] = curve(np.arange(seq_len))[~mask].astype(bboxs.dtype)
-    diff = np.diff(new_bboxs, axis=0, prepend=0)
+    new_vals[mask] = curve(np.arange(seq_len))[mask].astype(vals.dtype)
 
-    return diff
-
-
-def interpolate_individual(frames, flows, bboxs, kps):
-    n, seq_len, h, w = frames.shape[:4]
-
-    mask_not_nan = np.all(bboxs > 0, axis=(2, 3))
-    frames = _interpolate(frames, mask_not_nan).reshape(n, seq_len, h, w, 3)
-    flows = _interpolate(flows, mask_not_nan).reshape(n, seq_len, h, w, 2)
-    bboxs = _interpolate(bboxs, mask_not_nan).reshape(n, seq_len, 2, 2)
-    kps = _interpolate(kps, mask_not_nan).reshape(n, seq_len, 17, 2)
-
-    return frames, flows, bboxs, kps
-
-
-def _interpolate(y, mask):
-    n, seq_len = y.shape[:2]
-    new_y = y.copy().reshape(n, seq_len, -1)
-    for i in range(len(y)):
-        x = np.arange(seq_len)[mask[i]]
-        vals = y[i].reshape(seq_len, -1)
-        curve = interpolate.interp1d(x, vals[mask[i]], kind="cubic", axis=0)
-        new_y[i, ~mask[i]] = curve(np.arange(seq_len))[~mask[i]].astype(y.dtype)
-
-    return new_y
+    return new_vals

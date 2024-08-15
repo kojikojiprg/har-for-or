@@ -6,27 +6,28 @@ img_size: [256, 192]
 
 # model
 # n_clusters: 5
-temp_init: 1.0
-temp_decay: 0.01
+temp_init: 0.5
+temp_decay: 0.0001
 temp_min: 0.01
-book_size: 64
-hidden_ndim: 512
-latent_ndim: 128
-nheads: 16
+param_q_init: 2
+book_size: 128
+hidden_ndim: 128
+latent_ndim: 8
+nheads: 8
 nlayers: 6
 dropout: 0.1
-emb_hidden_ndim: 128
-emb_nheads: 1
-emb_nlayers: 3
-emb_dropout: 0.1
-patch_size: [32, 24]
+# emb_hidden_ndim: 128
+# emb_nheads: 1
+# emb_nlayers: 3
+# emb_dropout: 0.1
+# patch_size: [32, 24]
 
 # optim VAE
-lmd_lrc: 0.1
+lmd_lrc: 1
 lr: 0.0001
 
 # training
-epochs: 100
+epochs: 200
 batch_size: 32
 accumulate_grad_batches: 1
 num_workers: 16
