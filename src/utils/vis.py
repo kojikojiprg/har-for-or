@@ -93,13 +93,12 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
     cm = plt.get_cmap("tab10")
     for data in results:
         _id = data["id"]
-        bbox = data["bbox"][idx_data]
-        mask = data["mask"][idx_data]
+        bbox = data["x_spc"][idx_data]
+        # mask = data["mask"][idx_data]
+        # if mask:
+        #     continue
 
-        if mask:
-            continue
-
-        # bbox = (bbox.copy() + 1) / 2 * frame_size
+        bbox = (bbox.copy() + 1) / 2 * frame_size
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -110,9 +109,9 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
         # bbox = bbox.copy() * frame_size
         if content == "x_vis":
             # fake_img = data["fake_x_vis"][idx_data]
-            kps = data["x"][idx_data]
-            fake_kps = data["recon_x"][idx_data]
-            mse_x_vis = data["mse_x"]
+            kps = data["x_vis"][idx_data]
+            fake_kps = data["recon_x_vis"][idx_data]
+            mse_x_vis = data["mse_x_vis"]
 
             # resize imgs and write
             # x1, y1, x2, y2 = bbox.reshape(4).astype(int)
@@ -122,10 +121,8 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
             # fake_img = ((fake_img * std) + mean) * 255
             # frame[y1:y2, x1:x2] = (fake_img).astype(np.uint8)
 
-            # kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-            # fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-            kps = (kps.copy() + 1) / 2 * frame_size
-            fake_kps = (fake_kps.copy() + 1) / 2 * frame_size
+            kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+            fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
             frame = draw_skeleton(frame, kps, color=(0, 255, 0))
             frame = draw_skeleton(frame, fake_kps, color=(0, 0, 255))
 
@@ -140,27 +137,27 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
                 (255, 255, 255),
                 2,
             )
-        # elif content == "x_spc":
-        #     mse_x_spc = data["mse_x_spc"]
-        #     fake_bbox = data["fake_x_spc"][idx_data]
+        elif content == "x_spc":
+            mse_x_spc = data["mse_x_spc"]
+            fake_bbox = data["recon_x_spc"][idx_data]
 
-        #     # bbox and fake_bbox
-        #     fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
-        #     # fake_bbox = fake_bbox.copy() * frame_size
-        #     frame = draw_bbox(frame, bbox, color=(0, 255, 0))
-        #     frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
+            # bbox and fake_bbox
+            fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
+            # fake_bbox = fake_bbox.copy() * frame_size
+            frame = draw_bbox(frame, bbox, color=(0, 255, 0))
+            frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
 
-        #     # mse
-        #     pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
-        #     frame = cv2.putText(
-        #         frame,
-        #         f"{mse_x_spc:.3f}",
-        #         pt,
-        #         cv2.FONT_HERSHEY_COMPLEX,
-        #         0.8,
-        #         (255, 255, 255),
-        #         2,
-        #     )
+            # mse
+            pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
+            frame = cv2.putText(
+                frame,
+                f"{mse_x_spc:.3f}",
+                pt,
+                cv2.FONT_HERSHEY_COMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
         elif content == "cluster":
             label = str(data["label"])
 

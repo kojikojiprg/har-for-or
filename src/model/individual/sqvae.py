@@ -26,6 +26,7 @@ class SQVAE(LightningModule):
         self.temp_decay = config.temp_decay
         self.temp_min = config.temp_min
         self.latent_ndim = config.latent_ndim
+        self.book_size = config.book_size
 
         self.encoder = None
         self.decoder = None
@@ -58,37 +59,35 @@ class SQVAE(LightningModule):
     ]
 
     def forward(self, x_vis, x_spc, mask, is_train):
-        ze_all = self.encoder(x_vis, x_spc)
+        ze = self.encoder(x_vis, x_spc)
         # ze (b, npts, latent_ndim)
 
-        ze_lst = [ze_all[:, indices, :] for indices in self.body_indices]
+        ze_lst = [ze[:, indices, :] for indices in self.body_indices]
 
-        zq_all = torch.zeros_like(ze_all)
-        zq_lst = []
-        precision_q_lst = []
-        prob_lst = []
-        log_prob_lst = []
-        mean_prob_lst = []
+        b, n_pts = ze.size()[:2]
+        zq = torch.zeros_like(ze)
+        precision_q = torch.zeros((b, n_pts, 1)).to(self.device, torch.float32)
+        prob = torch.empty((b, n_pts, self.book_size)).to(self.device, torch.float32)
+        log_prob = torch.empty((b, n_pts, self.book_size)).to(
+            self.device, torch.float32
+        )
         for i, indices in enumerate(self.body_indices):
-            zq_part, precision_q, prob, log_prob, mean_prob = self.quantizers[i](
+            zq_part, precision_q_part, prob_part, log_prob_part = self.quantizers[i](
                 ze_lst[i], is_train
             )
-            zq_all[:, indices, :] = zq_part[:, :, :]
-            zq_lst.append(zq_part)
-            precision_q_lst.append(precision_q)
-            prob_lst.append(prob)
-            log_prob_lst.append(log_prob)
-            mean_prob_lst.append(mean_prob)
+            zq[:, indices, :] = zq_part
+            precision_q[:, indices, 0] = precision_q_part
+            prob[:, indices, :] = prob_part.view(b, len(indices), -1)
+            log_prob[:, indices, :] = log_prob_part.view(b, len(indices), -1)
 
-        recon_x_vis, recon_x_spc = self.decoder(x_vis, x_spc, zq_all, mask)
+        recon_x_vis, recon_x_spc = self.decoder(x_vis, x_spc, zq, mask)
 
         return (
-            ze_lst,
-            zq_lst,
-            precision_q_lst,
-            prob_lst,
-            log_prob_lst,
-            mean_prob_lst,
+            ze,
+            zq,
+            precision_q,
+            prob,
+            log_prob,
             recon_x_vis,
             recon_x_spc,
         )
@@ -116,26 +115,11 @@ class SQVAE(LightningModule):
         mses = mses.sum() / b * (17 * 2)
         return mses
 
-    def loss_kl_continuous(self, ze_lst, zq_lst, precision_q_lst):
-        losses = torch.empty((0,)).to(self.device)
-        for ze, zq, precision_q in zip(ze_lst, zq_lst, precision_q_lst):
-            loss = torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
-            losses = torch.cat([losses, loss.view(1, 1)])
-        return losses.mean()
+    def loss_kl_continuous(self, ze, zq, precision_q):
+        return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
 
-    def loss_kl_discrete(self, prob_lst, log_prob_lst, mean_prob_lst):
-        losses = torch.empty((0,)).to(self.device)
-        perplexs = torch.empty((0,)).to(self.device)
-        for prob, log_prob, mean_prob in zip(prob_lst, log_prob_lst, mean_prob_lst):
-            loss = torch.sum(prob * log_prob, dim=(0, 1)).mean()
-            losses = torch.cat([losses, loss.view(1, 1)])
-            perplex = torch.exp(-torch.sum(mean_prob * torch.log(mean_prob + 1e-7)))
-            perplexs = torch.cat([perplexs, perplex.view(1, 1)])
-
-        loss = losses.mean()
-        perplex = perplexs.mean()
-
-        return loss, perplex
+    def loss_kl_discrete(self, prob, log_prob):
+        return torch.sum(prob * log_prob, dim=(0, 1)).mean()
 
     def training_step(self, batch, batch_idx):
         keys, ids, x_vis, x_spc, mask = batch
@@ -153,12 +137,11 @@ class SQVAE(LightningModule):
 
         # forward
         (
-            ze_lst,
-            zq_lst,
-            precision_q_lst,
-            prob_lst,
-            log_prob_lst,
-            mean_prob_lst,
+            ze,
+            zq,
+            precision_q,
+            prob,
+            log_prob,
             recon_x_vis,
             recon_x_spc,
         ) = self(x_vis, x_spc, mask, is_train=True)
@@ -166,10 +149,8 @@ class SQVAE(LightningModule):
         # loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
-        kl_continuous = self.loss_kl_continuous(ze_lst, zq_lst, precision_q_lst)
-        kl_discrete, perplex = self.loss_kl_discrete(
-            prob_lst, log_prob_lst, mean_prob_lst
-        )
+        kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
+        kl_discrete = self.loss_kl_discrete(prob, log_prob)
         loss_total = lrc_x_vis + lrc_x_spc + kl_continuous + kl_discrete * 0.01
 
         # mean of log_param_q
@@ -183,7 +164,6 @@ class SQVAE(LightningModule):
             x_spc=lrc_x_spc.item(),
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
-            perplex=perplex.item(),
             total=loss_total.item(),
             log_param_q=log_param_q.item(),
         )
@@ -206,21 +186,21 @@ class SQVAE(LightningModule):
             x_vis = x_vis[0]
             x_spc = x_spc[0]
             mask = mask[0]
+        mask = None
 
         # forward
         (
-            z_e,
-            z_q,
+            ze,
+            zq,
             precision_q,
             prob,
             log_prob,
-            mean_prob,
-            recon_x,
-            recon_x_diff,
+            recon_x_vis,
+            recon_x_spc,
         ) = self(x_vis, x_spc, mask, is_train=False)
 
-        mse_x = self.mse_x(x_vis, recon_x, mask)
-        mse_x_diff = self.mse_x(x_spc, recon_x_diff, mask)
+        mse_x_vis = self.mse_x(x_vis, recon_x_vis, mask)
+        mse_x_spc = self.mse_x(x_spc, recon_x_spc, mask)
 
         results = []
         for i in range(len(keys)):
@@ -228,16 +208,16 @@ class SQVAE(LightningModule):
                 "key": keys[i],
                 "id": ids[i].cpu().numpy().item(),
                 "x_vis": x_vis[i].cpu().numpy(),
-                "recon_x_vis": recon_x[i].cpu().numpy(),
-                "mse_x_vis": mse_x.item(),
+                "recon_x_vis": recon_x_vis[i].cpu().numpy(),
+                "mse_x_vis": mse_x_vis.item(),
                 "x_spc": x_spc[i].cpu().numpy(),
-                "recon_x_spc": recon_x_diff[i].cpu().numpy(),
-                "mse_x_spc": mse_x_diff.item(),
-                "z_e": z_e[i].cpu().numpy(),
-                "z_q": z_q[i].cpu().numpy(),
+                "recon_x_spc": recon_x_spc[i].cpu().numpy(),
+                "mse_x_spc": mse_x_spc.item(),
+                "ze": ze[i].cpu().numpy(),
+                "zq": zq[i].cpu().numpy(),
                 "label_prob": prob[i].cpu().numpy(),
                 "label": prob[i].cpu().numpy().argmax().item(),
-                "mask": mask[i].cpu().numpy(),
+                # "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
 
@@ -295,9 +275,6 @@ class Encoder(nn.Module):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
 
-        # self.cls = nn.Parameter(torch.randn((1, 1, 17)), requires_grad=True)
-        # self.cls_mask = nn.Parameter(torch.full((1, 1), True), requires_grad=False)
-
         self.emb_vis = Embedding(config)
         self.emb_spc = Embedding(config)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
@@ -314,7 +291,6 @@ class Encoder(nn.Module):
     def forward(self, x_vis, x_spc, mask=None):
         # x_vis (b, seq_len, 17, 2)
         # x_spc (b, seq_len, 2, 2)
-        b, seq_len = x_vis.size()[:2]
 
         # embedding
         x_vis = self.emb_vis(x_vis)
@@ -401,7 +377,7 @@ class GaussianVectorQuantizer(nn.Module):
 
         self.temperature = None
         log_param_q = np.log(config.param_q_init)
-        self.log_param_q = nn.Parameter(torch.tensor(log_param_q))
+        self.log_param_q = nn.Parameter(torch.tensor(log_param_q, dtype=torch.float32))
 
     def calc_distance(self, z, book):
         z = z.view(-1, self.latent_ndim)
@@ -433,7 +409,7 @@ class GaussianVectorQuantizer(nn.Module):
         if is_train:
             encodings = self.gumbel_softmax_relaxation(logits)
             zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_vals)
-            mean_prob = torch.mean(prob.detach(), dim=0)
+            # mean_prob = torch.mean(prob.detach(), dim=0)
         else:
             indices = torch.argmax(logits, dim=1).unsqueeze(1)
             encodings = torch.zeros(
@@ -441,8 +417,8 @@ class GaussianVectorQuantizer(nn.Module):
             )
             encodings.scatter_(1, indices, 1)
             zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_vals)
-            mean_prob = torch.mean(encodings, dim=0)
+            # mean_prob = torch.mean(encodings, dim=0)
 
         zq = zq.permute(0, 2, 1).contiguous()
 
-        return zq, precision_q, prob, log_prob, mean_prob
+        return zq, precision_q, prob, log_prob
