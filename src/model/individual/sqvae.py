@@ -30,57 +30,43 @@ class SQVAE(LightningModule):
 
         self.encoder = None
         self.decoder = None
-        self.quantizers = None
+        self.quantizer = None
 
     def configure_model(self):
         if self.encoder is not None:
             return
         self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config)
-        self.quantizers = nn.ModuleList(
-            [
-                GaussianVectorQuantizer(self.config)
-                for _ in range(len(self.body_indices))
-            ]
-        )
+        self.decoders = nn.ModuleList([Decoder(self.config) for _ in range((17 + 2) * 2)])
+        self.quantizer = GaussianVectorQuantizer(self.config)
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
         return opt
 
-    body_indices = [
-        list(range(5)),  # face
-        [5, 6, 11, 12],  # body
-        [7, 9],  # left-arm
-        [8, 10],  # right-arm
-        [13, 15],  # left-leg
-        [14, 16],  # right-leg
-        [17, 18],  # bbox
-    ]
+    def forward(self, x_vis, x_spc, is_train):
+        # x_vis (b, seq_len, 17, 2)
+        # x_spc (b, seq_len, 2, 2)
 
-    def forward(self, x_vis, x_spc, mask, is_train):
         ze = self.encoder(x_vis, x_spc)
         # ze (b, npts, latent_ndim)
 
-        ze_lst = [ze[:, indices, :] for indices in self.body_indices]
+        zq, precision_q, prob, log_prob = self.quantizer(ze, is_train)
+        # zq (b, npts, latent_ndim)
 
-        b, n_pts = ze.size()[:2]
-        zq = torch.zeros_like(ze)
-        precision_q = torch.zeros((b, n_pts, 1)).to(self.device, torch.float32)
-        prob = torch.empty((b, n_pts, self.book_size)).to(self.device, torch.float32)
-        log_prob = torch.empty((b, n_pts, self.book_size)).to(
-            self.device, torch.float32
-        )
-        for i, indices in enumerate(self.body_indices):
-            zq_part, precision_q_part, prob_part, log_prob_part = self.quantizers[i](
-                ze_lst[i], is_train
-            )
-            zq[:, indices, :] = zq_part
-            precision_q[:, indices, 0] = precision_q_part
-            prob[:, indices, :] = prob_part.view(b, len(indices), -1)
-            log_prob[:, indices, :] = log_prob_part.view(b, len(indices), -1)
+        b, seq_len = x_vis.size()[:2]
+        x_vis = x_vis.view(b, seq_len, 17 * 2)
+        recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.decoders[:17 * 2]):
+            recon_x = decoder(x_vis[:, :, i], zq[:, i, :])
+            recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
+        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
 
-        recon_x_vis, recon_x_spc = self.decoder(x_vis, x_spc, zq, mask)
+        x_spc = x_spc.view(b, seq_len, 2 * 2)
+        recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.decoders[17 * 2:]):
+            recon_x = decoder(x_spc[:, :, i], zq[:, i, :])
+            recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
+        recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
 
         return (
             ze,
@@ -128,12 +114,10 @@ class SQVAE(LightningModule):
         x_vis = x_vis[0]
         x_spc = x_spc[0]
         # mask = mask[0]
-        mask = None
 
         # update temperature of gumbel softmax
         temp_cur = self.calc_temperature()
-        for quantizer in self.quantizers:
-            quantizer.temperature = temp_cur
+        self.quantizer.temperature = temp_cur
 
         # forward
         (
@@ -144,20 +128,14 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
-        ) = self(x_vis, x_spc, mask, is_train=True)
+        ) = self(x_vis, x_spc, is_train=True)
 
         # loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
-        loss_total = lrc_x_vis + lrc_x_spc + kl_continuous + kl_discrete * 0.01
-
-        # mean of log_param_q
-        log_param_q_lst = []
-        for quantizer in self.quantizers:
-            log_param_q_lst.append(quantizer.log_param_q.detach())
-        log_param_q = torch.tensor(log_param_q_lst).mean()
+        loss_total = lrc_x_vis + lrc_x_spc + kl_continuous + kl_discrete
 
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
@@ -165,7 +143,7 @@ class SQVAE(LightningModule):
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
             total=loss_total.item(),
-            log_param_q=log_param_q.item(),
+            log_param_q=self.quantizer.log_param_q.item(),
         )
 
         self.log_dict(
@@ -180,13 +158,12 @@ class SQVAE(LightningModule):
         keys, ids, x_vis, x_spc, mask = batch
         x_vis = x_vis.to(next(self.parameters()).device)
         x_spc = x_spc.to(next(self.parameters()).device)
-        mask = mask.to(next(self.parameters()).device)
+        # mask = mask.to(next(self.parameters()).device)
         if x_vis.ndim == 5:
             ids = ids[0]
             x_vis = x_vis[0]
             x_spc = x_spc[0]
-            mask = mask[0]
-        mask = None
+            # mask = mask[0]
 
         # forward
         (
@@ -197,10 +174,10 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
-        ) = self(x_vis, x_spc, mask, is_train=False)
+        ) = self(x_vis, x_spc, is_train=False)
 
-        mse_x_vis = self.mse_x(x_vis, recon_x_vis, mask)
-        mse_x_spc = self.mse_x(x_spc, recon_x_spc, mask)
+        mse_x_vis = self.mse_x(x_vis, recon_x_vis)
+        mse_x_spc = self.mse_x(x_spc, recon_x_spc)
 
         results = []
         for i in range(len(keys)):
@@ -216,7 +193,7 @@ class SQVAE(LightningModule):
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
                 "label_prob": prob[i].cpu().numpy(),
-                "label": prob[i].cpu().numpy().argmax().item(),
+                "label": prob[i].cpu().numpy().argmax(axis=1),
                 # "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
@@ -225,48 +202,102 @@ class SQVAE(LightningModule):
 
 
 class Embedding(nn.Module):
-    def __init__(self, config):
+    def __init__(self, seq_len, hidden_ndim, latent_ndim):
         super().__init__()
-        self.mlp_x = MLP(config.seq_len, config.hidden_ndim // 2)
-        self.mlp_y = MLP(config.seq_len, config.hidden_ndim // 2)
+        self.hidden_ndim = hidden_ndim
+        # self.mlp_x = MLP(config.seq_len, config.hidden_ndim)
+        # self.mlp_y = MLP(config.seq_len, config.hidden_ndim)
+
+        self.conv_x = nn.Sequential(
+            nn.Conv1d(seq_len, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, latent_ndim, 1),
+            nn.SiLU(),
+        )
+        self.conv_y = nn.Sequential(
+            nn.Conv1d(seq_len, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, latent_ndim, 1),
+            nn.SiLU(),
+        )
 
     def forward(self, x):
         # x (b, seq_len, n_pts, 2)
+        # x, y = x[:, :, :, 0], x[:, :, :, 1]
+        # x = self.mlp_x(x.permute(0, 2, 1))  # (b, n_pts, hidden_ndim)
+        # y = self.mlp_y(y.permute(0, 2, 1))  # (b, n_pts, hidden_ndim)
+        # x = torch.cat([x, y], dim=1)  # (b, n_pts * 2, hidden_ndim)
+
+        b, _, n_pts = x.size()[:3]
         x, y = x[:, :, :, 0], x[:, :, :, 1]
+        x = self.conv_x(x)  # (b, latent_ndim, n_pts)
+        y = self.conv_y(y)  # (b, latent_ndim, n_pts)
+        x = torch.cat([x, y], dim=2)
+        x = x.permute(0, 2, 1)
+        # x (b, n_pts * 2, latent_ndim)
 
-        x = self.mlp_x(x.permute(0, 2, 1))  # (b, n_pts, hidden_ndim / 2)
-        y = self.mlp_y(y.permute(0, 2, 1))  # (b, n_pts, hidden_ndim / 2)
-
-        x = torch.cat([x, y], dim=2)  # (b, n_pts, hidden_ndim)
         return x
 
 
 class Reconstruction(nn.Module):
-    def __init__(self, config):
+    def __init__(self, latent_ndim, hidden_ndim, seq_len):
         super().__init__()
-        self.hidden_ndim = config.hidden_ndim // 2
-        self.mlp_x = nn.Sequential(
-            MLP(config.hidden_ndim // 2, config.hidden_ndim // 2),
-            nn.Linear(config.hidden_ndim // 2, config.seq_len),
+        self.seq_len = seq_len
+        self.hidden_ndim = hidden_ndim
+        # self.mlp_x = nn.Sequential(
+        #     MLP(config.hidden_ndim, config.hidden_ndim),
+        #     nn.Linear(config.hidden_ndim, config.seq_len),
+        #     nn.Tanh(),
+        # )
+        # self.mlp_y = nn.Sequential(
+        #     MLP(config.hidden_ndim, config.hidden_ndim),
+        #     nn.Linear(config.hidden_ndim, config.seq_len),
+        #     nn.Tanh(),
+        # )
+        self.conv_tr_x = nn.Sequential(
+            nn.ConvTranspose1d(latent_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.ConvTranspose1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.ConvTranspose1d(hidden_ndim, seq_len, 1),
             nn.Tanh(),
         )
-        self.mlp_y = nn.Sequential(
-            MLP(config.hidden_ndim // 2, config.hidden_ndim // 2),
-            nn.Linear(config.hidden_ndim // 2, config.seq_len),
+        self.conv_tr_y = nn.Sequential(
+            nn.ConvTranspose1d(latent_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.ConvTranspose1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.ConvTranspose1d(hidden_ndim, seq_len, 1),
             nn.Tanh(),
         )
 
-    def forward(self, x):
+    def forward(self, z):
         # x (b, n_pts, hidden_ndim)
-        x, y = x[:, :, : self.hidden_ndim], x[:, :, self.hidden_ndim :]
+        # x, y = x[:, 0::1, :], x[:, 1::1, :]
+        # x = self.mlp_x(x).permute(0, 2, 1)  # (b, seq_len, n_pts)
+        # y = self.mlp_y(y).permute(0, 2, 1)  # (b, seq_len, n_pts)
+        # b, seq_len, n_pts = x.size()
+        # recon_x = torch.cat(
+        #     [x.view(b, seq_len, n_pts, 1), y.view(b, seq_len, n_pts, 1)], dim=3
+        # )  # (b, seq_len, n_pts, 2)
 
-        x = self.mlp_x(x).permute(0, 2, 1)  # (b, seq_len, n_pts)
-        y = self.mlp_y(y).permute(0, 2, 1)  # (b, seq_len, n_pts)
-
-        b, seq_len, n_pts = x.size()
+        # z (b, n_pts, hidden_ndim)
+        b, n_pts, latent_ndim = z.size()
+        z = z.permute(0, 2, 1).view(b, latent_ndim, n_pts // 2, 2)
+        x = self.conv_tr_x(z[:, :, :, 0])
+        y = self.conv_tr_y(z[:, :, :, 1])
         recon_x = torch.cat(
-            [x.view(b, seq_len, n_pts, 1), y.view(b, seq_len, n_pts, 1)], dim=3
+            [
+                x.view(b, self.seq_len, n_pts // 2, 1),
+                y.view(b, self.seq_len, n_pts // 2, 1),
+            ],
+            dim=3,
         )  # (b, seq_len, n_pts, 2)
+
         return recon_x
 
 
@@ -275,38 +306,34 @@ class Encoder(nn.Module):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
 
-        self.emb_vis = Embedding(config)
-        self.emb_spc = Embedding(config)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
+        self.emb_vis = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_spc = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
+                    config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
-        self.mlp = MLP(config.hidden_ndim, config.latent_ndim)
 
     def forward(self, x_vis, x_spc, mask=None):
         # x_vis (b, seq_len, 17, 2)
         # x_spc (b, seq_len, 2, 2)
 
         # embedding
-        x_vis = self.emb_vis(x_vis)
-        x_spc = self.emb_spc(x_spc)
-        x = torch.cat([x_vis, x_spc], dim=1)
-        # x (b, 17 + 2, hidden_ndim)
+        x_vis = self.emb_vis(x_vis)  # (b, 17 * 2, latent_ndim)
+        x_spc = self.emb_spc(x_spc)  # (b, 2 * 2, latent_ndim)
+        z = torch.cat([x_vis, x_spc], dim=1)
+        # z (b, (17 + 2) * 2, latent_ndim)
 
         # positional embedding
-        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
         for layer in self.encoders:
-            x, attn_w = layer(x, mask)
-        # x (b, 17 + 2, hidden_ndim)
-
-        z = self.mlp(x)
-        # z (b, 17 + 2, latent_ndim)
+            z, attn_w = layer(z, mask)
+        # z (b, (17 + 2) * 2, latent_ndim)
 
         return z
 
@@ -314,58 +341,55 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, config: SimpleNamespace, vis_npatchs: int = None):
         super().__init__()
-        self.seq_len = config.seq_len
-        self.hidden_ndim = config.hidden_ndim
-        # self.emb_hidden_ndim = config.emb_hidden_ndim
+        self.latent_ndim = config.latent_ndim
 
-        # start tokens
         self.x_start = nn.Parameter(
-            torch.randn((1, 1, config.hidden_ndim), dtype=torch.float32),
+            torch.randn((1, 1, config.latent_ndim), dtype=torch.float32),
             requires_grad=True,
         )
 
-        self.emb_vis = Embedding(config)
-        self.emb_spc = Embedding(config)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
-        self.mlp_z = MLP(config.latent_ndim, config.hidden_ndim)
+        self.emb = MLP(1, config.latent_ndim)
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
+        self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
         self.decoders = nn.ModuleList(
             [
                 TransformerDecoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
+                    config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
+        # self.rec = Reconstruction(config.latent_ndim, config.hidden_ndim, config.seq_len)
+        self.mlp = nn.Sequential(
+            MLP(config.latent_ndim, config.hidden_ndim),
+            nn.SiLU(),
+            MLP(config.hidden_ndim, 1),
+            nn.Tanh()
+        )
 
-        self.mlp_rec_x_vis = Reconstruction(config)
-        self.mlp_rec_x_spc = Reconstruction(config)
+    def forward(self, x, zq, mask=None):
+        # x (b, seq_len)
+        # zq (b, latent_ndim)
 
-    def forward(self, x_vis, x_spc, zq, mask=None):
-        b, seq_len = x_vis.size()[:2]
-
-        # embedding
-        x_vis = self.emb_vis(x_vis)
-        x_spc = self.emb_spc(x_spc)
-        x = torch.cat([x_vis, x_spc], dim=1)
-        # x (b, 17 + 2, hidden_ndim)
+        b, seq_len = x.size()
+        x = x.view(b, seq_len, 1)
+        x = self.emb(x)  # (b, seq_len, latent_ndim)
 
         # concat start token
         x = torch.cat([self.x_start.repeat((b, 1, 1)), x], dim=1)
-        x = x[:, :-1]
-        # x (b, 17 + 2, hidden_ndim)
+        x = x[:, :-1]  # (b, seq_len, latent_ndim)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
         zq = self.mlp_z(zq)
+        zq = zq.view(b, seq_len, self.latent_ndim)
         for layer in self.decoders:
             x = layer(x, zq, mask)
-        # x (b, 17 + 2, hidden_ndim)
+        # x (b, seq_len, latent_ndim)
 
-        # reconstruct
-        recon_x_vis = self.mlp_rec_x_vis(x[:, :17, :])
-        recon_x_spc = self.mlp_rec_x_spc(x[:, 17:, :])
+        recon_x = self.mlp(x).view(b, seq_len, 1)
 
-        return recon_x_vis, recon_x_spc
+        return recon_x
 
 
 class GaussianVectorQuantizer(nn.Module):
@@ -395,8 +419,8 @@ class GaussianVectorQuantizer(nn.Module):
         return F.softmax(y / self.temperature, dim=-1)
 
     def forward(self, ze, is_train):
-        # z (b, n_vals, latent_ndim)
-        b, n_vals, latent_ndim = ze.size()
+        # z (b, n_pts, latent_ndim)
+        b, n_pts, latent_ndim = ze.size()
 
         param_q = 1 + self.log_param_q.exp()
         precision_q = 0.5 / torch.clamp(param_q, min=1e-10)
@@ -408,7 +432,7 @@ class GaussianVectorQuantizer(nn.Module):
 
         if is_train:
             encodings = self.gumbel_softmax_relaxation(logits)
-            zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_vals)
+            zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_pts)
             # mean_prob = torch.mean(prob.detach(), dim=0)
         else:
             indices = torch.argmax(logits, dim=1).unsqueeze(1)
@@ -416,9 +440,11 @@ class GaussianVectorQuantizer(nn.Module):
                 indices.shape[0], self.book_size, device=indices.device
             )
             encodings.scatter_(1, indices, 1)
-            zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_vals)
+            zq = torch.mm(encodings, self.book).view(b, latent_ndim, n_pts)
             # mean_prob = torch.mean(encodings, dim=0)
 
         zq = zq.permute(0, 2, 1).contiguous()
+        prob = prob.view(b, n_pts, self.book_size)
+        log_prob = log_prob.view(b, n_pts, self.book_size)
 
         return zq, precision_q, prob, log_prob
