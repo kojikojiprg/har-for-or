@@ -36,7 +36,9 @@ class SQVAE(LightningModule):
         if self.encoder is not None:
             return
         self.encoder = Encoder(self.config)
-        self.decoders = nn.ModuleList([Decoder(self.config) for _ in range((17 + 2) * 2)])
+        self.decoders = nn.ModuleList(
+            [Decoder(self.config) for _ in range((17 + 2) * 2)]
+        )
         self.quantizer = GaussianVectorQuantizer(self.config)
 
     def configure_optimizers(self):
@@ -56,14 +58,14 @@ class SQVAE(LightningModule):
         b, seq_len = x_vis.size()[:2]
         x_vis = x_vis.view(b, seq_len, 17 * 2)
         recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
-        for i, decoder in enumerate(self.decoders[:17 * 2]):
+        for i, decoder in enumerate(self.decoders[: 17 * 2]):
             recon_x = decoder(x_vis[:, :, i], zq[:, i, :])
             recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
         recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
 
         x_spc = x_spc.view(b, seq_len, 2 * 2)
         recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
-        for i, decoder in enumerate(self.decoders[17 * 2:]):
+        for i, decoder in enumerate(self.decoders[17 * 2 :]):
             recon_x = decoder(x_spc[:, :, i], zq[:, i, :])
             recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
         recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
@@ -243,64 +245,6 @@ class Embedding(nn.Module):
         return x
 
 
-class Reconstruction(nn.Module):
-    def __init__(self, latent_ndim, hidden_ndim, seq_len):
-        super().__init__()
-        self.seq_len = seq_len
-        self.hidden_ndim = hidden_ndim
-        # self.mlp_x = nn.Sequential(
-        #     MLP(config.hidden_ndim, config.hidden_ndim),
-        #     nn.Linear(config.hidden_ndim, config.seq_len),
-        #     nn.Tanh(),
-        # )
-        # self.mlp_y = nn.Sequential(
-        #     MLP(config.hidden_ndim, config.hidden_ndim),
-        #     nn.Linear(config.hidden_ndim, config.seq_len),
-        #     nn.Tanh(),
-        # )
-        self.conv_tr_x = nn.Sequential(
-            nn.ConvTranspose1d(latent_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.ConvTranspose1d(hidden_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.ConvTranspose1d(hidden_ndim, seq_len, 1),
-            nn.Tanh(),
-        )
-        self.conv_tr_y = nn.Sequential(
-            nn.ConvTranspose1d(latent_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.ConvTranspose1d(hidden_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.ConvTranspose1d(hidden_ndim, seq_len, 1),
-            nn.Tanh(),
-        )
-
-    def forward(self, z):
-        # x (b, n_pts, hidden_ndim)
-        # x, y = x[:, 0::1, :], x[:, 1::1, :]
-        # x = self.mlp_x(x).permute(0, 2, 1)  # (b, seq_len, n_pts)
-        # y = self.mlp_y(y).permute(0, 2, 1)  # (b, seq_len, n_pts)
-        # b, seq_len, n_pts = x.size()
-        # recon_x = torch.cat(
-        #     [x.view(b, seq_len, n_pts, 1), y.view(b, seq_len, n_pts, 1)], dim=3
-        # )  # (b, seq_len, n_pts, 2)
-
-        # z (b, n_pts, hidden_ndim)
-        b, n_pts, latent_ndim = z.size()
-        z = z.permute(0, 2, 1).view(b, latent_ndim, n_pts // 2, 2)
-        x = self.conv_tr_x(z[:, :, :, 0])
-        y = self.conv_tr_y(z[:, :, :, 1])
-        recon_x = torch.cat(
-            [
-                x.view(b, self.seq_len, n_pts // 2, 1),
-                y.view(b, self.seq_len, n_pts // 2, 1),
-            ],
-            dim=3,
-        )  # (b, seq_len, n_pts, 2)
-
-        return recon_x
-
-
 class Encoder(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
@@ -364,7 +308,7 @@ class Decoder(nn.Module):
             MLP(config.latent_ndim, config.hidden_ndim),
             nn.SiLU(),
             MLP(config.hidden_ndim, 1),
-            nn.Tanh()
+            nn.Tanh(),
         )
 
     def forward(self, x, zq, mask=None):
