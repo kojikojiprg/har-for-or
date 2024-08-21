@@ -8,12 +8,7 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
 
-from src.model.layers import (
-    MLP,
-    IndividualEmbedding,
-    TransformerDecoderBlock,
-    TransformerEncoderBlock,
-)
+from src.model.layers import MLP, TransformerDecoderBlock, TransformerEncoderBlock
 
 # from sklearn.cluster import KMeans
 
@@ -55,20 +50,21 @@ class VAE(LightningModule):
             return
         self.Qy_x = Qy_x(self.config)
         self.Qz_xy = Qz_xy(self.config)
-        vis_npatchs = self.Qy_x.emb.emb.npatchs
+        # vis_npatchs = self.Qy_x.emb.emb.npatchs
         self.Py = Py(self.config)
         self.Pz_y = Pz_y(self.config)
-        self.Px_z = Px_z(self.config, vis_npatchs)
+        self.Px_z = nn.ModuleList([Px_z(self.config) for _ in range((17 + 2) * 2)])
 
         if self.annotation_path is not None:
             anns = np.loadtxt(self.annotation_path, int, delimiter=" ", skiprows=1)
             self.annotations = torch.tensor(anns, dtype=torch.long)
 
-    def loss_x(self, x, fake_x, mask):
+    def loss_x(self, x, recon_x, mask=None):
         b = x.size(0)
         mses = torch.empty((0,)).to(self.device)
         for i in range(b):
-            mse = F.mse_loss(x[i][~mask[i]], fake_x[i][~mask[i]])
+            # mse = F.mse_loss(recon_x[i][~mask[i]], x[i][~mask[i]])
+            mse = F.mse_loss(recon_x[i], x[i])
             mses = torch.cat([mses, mse.view(1, 1)])
         return mses.ravel()  # (b,)
 
@@ -96,34 +92,46 @@ class VAE(LightningModule):
         return lg
 
     def training_step(self, batch, batch_idx):
-        keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
+        keys, ids, x_vis, x_spc, mask = batch
         keys = np.array(keys).T[0]
         ids = ids[0]
         x_vis = x_vis[0]
         x_spc = x_spc[0]
-        x_spc_diff = x_spc_diff[0]
-        mask = mask[0]
+        # mask = mask[0]
 
         opt_pz_y, opt = self.optimizers()
 
         self.toggle_optimizer(opt)
         # VAE
-        logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
+        logits = self.Qy_x(x_vis, x_spc)
         y = F.gumbel_softmax(logits, self.tau, dim=1)
         pi = F.softmax(logits, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
+        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y)
         z_prior, mu_prior, logvar_prior = self.Pz_y(pi)
-        recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
-            x_vis, x_spc, x_spc_diff, z, mask
-        )
+
+        b, seq_len = x_vis.size()[:2]
+        x_vis = x_vis.view(b, seq_len, 17 * 2)
+        recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.Px_z[: 17 * 2]):
+            recon_x = decoder(x_vis[:, :, i], z[:, i, :])
+            recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
+
+        x_spc = x_spc.view(b, seq_len, 2 * 2)
+        recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.Px_z[17 * 2 :]):
+            recon_x = decoder(x_spc[:, :, i], z[:, i, :])
+            recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
+
+        x_vis = x_vis.view(b, seq_len, 17, 2)
+        x_spc = x_spc.view(b, seq_len, 2, 2)
+        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
+        recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
 
         # get augumented label
-        logits_aug = self.Qy_x(recon_x_vis, recon_x_spc, recon_x_spc_diff, mask)
+        logits_aug = self.Qy_x(recon_x_vis, recon_x_spc)
         y_aug = F.gumbel_softmax(logits_aug, self.tau, dim=1)
-        # pi_aug = F.softmax(logits_aug, dim=1)
-        z_aug, mu_aug, logvar_aug = self.Qz_xy(
-            recon_x_vis, recon_x_spc, recon_x_spc_diff, y_aug, mask
-        )
+        pi_aug = F.softmax(logits_aug, dim=1)
+        z_aug, mu_aug, logvar_aug = self.Qz_xy(recon_x_vis, recon_x_spc, y_aug)
 
         # calc joint probabilities of the pairwise similarities
         q_sim = self.pairwise_sim(mu, logvar)
@@ -148,75 +156,42 @@ class VAE(LightningModule):
 
         # ELBO
         # reconstruct loss of vis
-        lrc_x_vis = self.loss_x(x_vis, recon_x_vis, mask)
-        lrc_x_vis *= self.config.lrc_x_vis
+        lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
         logs["vis"] = lrc_x_vis.mean().item()
 
         # reconstruct loss of spc
-        lrc_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
-        lrc_x_spc *= self.config.lrc_x_spc
+        lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         logs["spc"] = lrc_x_spc.mean().item()
 
-        # reconstruct loss of spc diff
-        lrc_x_spc_diff = self.loss_x(x_spc_diff, recon_x_spc_diff, mask)
-        lrc_x_spc_diff *= self.config.lrc_x_spc
-        logs["spcd"] = lrc_x_spc_diff.mean().item()
-
-        lrc = lrc_x_vis + lrc_x_spc + lrc_x_spc_diff
+        lrc = lrc_x_vis * self.config.lrc_x_vis + lrc_x_spc * self.config.lrc_x_spc
         lrc = lrc.mean()
 
         # clustering loss
         lc = self.loss_kl(pi, self.Py.pi)
-        lc *= self.config.lc
         logs["c"] = lc.item()
 
         # Gaussian loss
         lg = self.loss_kl_gaussian(mu, logvar, mu_prior, logvar_prior)
         lg = lg
-        lg *= self.config.lg
         logs["g"] = lg.item()
 
-        # loss_elbo = lrc + lc + lg
-        loss_elbo = lrc + lc + lg
+        loss_elbo = lrc + lc * self.config.lc + lg * self.config.lg
 
         # augumentation loss
         lcp = F.cross_entropy(pi, labels, reduction="none")
-        # lcpa = F.cross_entropy(pi_aug, labels, reduction="none")
-        # lc_aug = lcp + lcpa
-        lc_aug = lcp
-        # if self.current_epoch < 30:
-        #     lc_aug[supervised_mask] = lc_aug[supervised_mask] * 0.99
-        #     lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.01
-        # else:
-        #     lc_aug[supervised_mask] = lc_aug[supervised_mask] * 0.9
-        #     lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.1
+        lcpa = F.cross_entropy(pi_aug, labels, reduction="none")
+        lc_aug = lcp + lcpa
         lc_aug[supervised_mask] = lc_aug[supervised_mask] * 1.0
-        lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.05
+        lc_aug[~supervised_mask] = lc_aug[~supervised_mask] * 0.01
         lc_aug = lc_aug.mean()
         logs["caug"] = lc_aug.item()
 
-        # lg_sim = self.loss_kl(q_sim, p_sim)
-        # weights = torch.ones(b, dtype=torch.float32).to(self.device)
-        # if self.current_epoch < 30:
-        #     weights[supervised_mask] = weights[supervised_mask] * 0.99
-        #     weights[~supervised_mask] = weights[~supervised_mask] * 0.01
-        # else:
-        #     weights[supervised_mask] = weights[supervised_mask] * 0.9
-        #     weights[~supervised_mask] = weights[~supervised_mask] * 0.1
-        # weights[supervised_mask] = weights[supervised_mask] * 0.99
-        # weights[~supervised_mask] = weights[~supervised_mask] * 0.01
         lg_aug = self.loss_kl_gaussian(mu, logvar, mu_aug, logvar_aug)
+        # lg_sim = self.loss_kl(q_sim, p_sim)
         # lg_aug = lg_sim + lg_aug
         logs["gaug"] = lg_aug.item()
 
-        # if self.current_epoch < 20:
-        #     lmd = 0.01
-        # else:
-        #     lmd = 1.0
-        lmd = 1.0
-
-        loss = loss_elbo + lmd * (lc_aug + lg_aug)
-        # loss = loss_elbo
+        loss = loss_elbo + lc_aug + lg_aug
         # logs["l"] = loss.item()
         self.manual_backward(loss)
         self.log_dict(logs, prog_bar=True)
@@ -269,7 +244,7 @@ class VAE(LightningModule):
         #         self.ids_all = []
 
         del z, mu, logvar, z_prior, mu_prior, logvar_prior
-        del keys, ids, x_vis, x_spc, x_spc_diff, mask
+        del keys, ids, x_vis, x_spc, mask
 
     @staticmethod
     def log_normal(z, mu, logvar):
@@ -277,11 +252,11 @@ class VAE(LightningModule):
 
     def pairwise_sim(self, mu, logvar):
         b = mu.size(0)
-        pij = torch.empty((0, b, self.latent_ndim), dtype=torch.float32).to(self.device)
+        pij = torch.empty((0, b, self.latent_ndim * 19 * 2), dtype=torch.float32).to(self.device)
         for i in range(b):
             pdfs = self.log_normal(mu, mu[i], logvar[i]).exp()
             pdfs = pdfs / pdfs.sum(dim=0)
-            pij = torch.cat([pij, pdfs.view(1, b, self.latent_ndim)], dim=0)
+            pij = torch.cat([pij, pdfs.view(1, b, self.latent_ndim * 19 * 2)], dim=0)
 
         # diag to zero
         pij = pij * ((1 - torch.eye(b)) + 1e-30).view(b, b, 1).to(self.device)
@@ -318,29 +293,40 @@ class VAE(LightningModule):
     #     self.untoggle_optimizer(opt_pz_y)
 
     def predict_step(self, batch):
-        keys, ids, x_vis, x_spc, x_spc_diff, mask = batch
+        keys, ids, x_vis, x_spc, mask = batch
         x_vis = x_vis.to(next(self.parameters()).device)
         x_spc = x_spc.to(next(self.parameters()).device)
-        x_spc_diff = x_spc_diff.to(next(self.parameters()).device)
-        mask = mask.to(next(self.parameters()).device)
+        # mask = mask.to(next(self.parameters()).device)
         if x_vis.ndim == 5:
             ids = ids[0]
             x_vis = x_vis[0]
             x_spc = x_spc[0]
-            x_spc_diff = x_spc_diff[0]
-            mask = mask[0]
+            # mask = mask[0]
 
-        logits = self.Qy_x(x_vis, x_spc, x_spc_diff, mask)
+        logits = self.Qy_x(x_vis, x_spc)
         y = F.softmax(logits, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, x_spc_diff, y, mask)
-        recon_x_vis, recon_x_spc, recon_x_spc_diff = self.Px_z(
-            x_vis, x_spc, x_spc_diff, z, mask
-        )
+        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y)
+
+        b, seq_len = x_vis.size()[:2]
+        x_vis = x_vis.view(b, seq_len, 17 * 2)
+        recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.Px_z[: 17 * 2]):
+            recon_x = decoder(x_vis[:, :, i], z[:, i, :])
+            recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
+
+        x_spc = x_spc.view(b, seq_len, 2 * 2)
+        recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
+        for i, decoder in enumerate(self.Px_z[17 * 2 :]):
+            recon_x = decoder(x_spc[:, :, i], z[:, i, :])
+            recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
+
         mse_x_vis = self.loss_x(x_vis, recon_x_vis, mask)
         mse_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
-        mse_x_spc_diff = self.loss_x(x_spc_diff, recon_x_spc_diff, mask)
 
-        # label_prob = self.calc_responsibility(z)
+        x_vis = x_vis.view(b, seq_len, 17, 2)
+        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
+        x_spc = x_spc.view(b, seq_len, 2, 2)
+        recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
 
         results = []
         for i in range(len(keys)):
@@ -351,13 +337,11 @@ class VAE(LightningModule):
                 # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
                 # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
                 "x_vis": x_vis[i].cpu().numpy(),
-                "fake_x_vis": recon_x_vis[i].cpu().numpy(),
+                "recon_x_vis": recon_x_vis[i].cpu().numpy(),
                 "mse_x_vis": mse_x_vis.item(),
                 "x_spc": x_spc[i].cpu().numpy(),
-                "fake_x_spc": recon_x_spc[i].cpu().numpy(),
+                "recon_x_spc": recon_x_spc[i].cpu().numpy(),
                 "mse_x_spc": mse_x_spc.item(),
-                "fake_x_spc_diff": recon_x_spc_diff[i].cpu().numpy(),
-                "mse_x_spc_diff": mse_x_spc_diff.item(),
                 "z": z[i].cpu().numpy(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
@@ -365,7 +349,7 @@ class VAE(LightningModule):
                 # "label": label_prob[i].cpu().numpy().argmax().item(),
                 "label_prob": y[i].cpu().numpy(),
                 "label": y[i].cpu().numpy().argmax().item(),
-                "mask": mask[i].cpu().numpy(),
+                # "mask": mask[i].cpu().numpy(),
             }
             results.append(data)
         return results
@@ -376,56 +360,78 @@ class VAE(LightningModule):
         return [opt_pz_y, opt], []
 
 
+class Embedding(nn.Module):
+    def __init__(self, seq_len, hidden_ndim, latent_ndim):
+        super().__init__()
+        self.hidden_ndim = hidden_ndim
+
+        self.conv_x = nn.Sequential(
+            nn.Conv1d(seq_len, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, latent_ndim, 1),
+            nn.SiLU(),
+        )
+        self.conv_y = nn.Sequential(
+            nn.Conv1d(seq_len, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
+            nn.SiLU(),
+            nn.Conv1d(hidden_ndim, latent_ndim, 1),
+            nn.SiLU(),
+        )
+
+    def forward(self, x):
+        x, y = x[:, :, :, 0], x[:, :, :, 1]
+        x = self.conv_x(x)  # (b, latent_ndim, n_pts)
+        y = self.conv_y(y)  # (b, latent_ndim, n_pts)
+        x = torch.cat([x, y], dim=2)
+        x = x.permute(0, 2, 1)
+        # x (b, n_pts * 2, latent_ndim)
+
+        return x
+
+
 class Qy_x(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
 
-        self.cls = nn.Parameter(torch.randn((1, 1, self.hidden_ndim)))
-        self.cls_mask = nn.Parameter(torch.full((1, 1), True), requires_grad=False)
+        self.cls = nn.Parameter(torch.randn((1, 1, config.latent_ndim)))
 
-        self.emb = IndividualEmbedding(
-            config.emb_hidden_ndim,
-            config.hidden_ndim,
-            config.emb_nheads,
-            config.emb_nlayers,
-            config.emb_dropout,
-            config.patch_size,
-            config.img_size,
-        )
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
+        self.emb_vis = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_spc = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
+                    config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
-
         self.mlp = nn.Sequential(
-            MLP(config.hidden_ndim, config.n_clusters),
-            # nn.Softmax(dim=1),
+            MLP(config.latent_ndim, config.n_clusters), nn.Softmax(dim=-1)
         )
 
-    def forward(self, x_vis, x_spc, x_spc_diff, mask):
+    def forward(self, x_vis, x_spc, mask=None):
         # embedding
         b, seq_len = x_vis.size()[:2]
-        x = self.emb(x_vis, x_spc, x_spc_diff)
 
-        # concat y to x
-        x = torch.cat([self.cls.repeat((b, 1, 1)), x], dim=1)
-        mask = torch.cat([self.cls_mask.repeat((b, 1)), mask], dim=1)
+        # embedding
+        x_vis = self.emb_vis(x_vis)  # (b, 17 * 2, latent_ndim)
+        x_spc = self.emb_spc(x_spc)  # (b, 2 * 2, latent_ndim)
+        z = torch.cat([self.cls.repeat(b, 1, 1), x_vis, x_spc], dim=1)
+        # z (b, (17 + 2) * 2 + 1, latent_ndim)
 
         # positional embedding
-        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
-        # x (b, seq_len+1, hidden_ndim)
         for layer in self.encoders:
-            x, attn_w = layer(x, mask)
-        # x (b, seq_len+1, hidden_ndim)
+            z, attn_w = layer(z, mask)
 
-        logits = self.mlp(x[:, 0, :])
+        logits = self.mlp(z[:, 0, :])
         # (b, n_clusters)
         return logits
 
@@ -434,50 +440,43 @@ class Qz_xy(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
-        self.cls_mask = nn.Parameter(torch.full((1, 1), False), requires_grad=False)
+        self.latent_ndim = config.latent_ndim
 
-        self.emb = IndividualEmbedding(
-            config.emb_hidden_ndim,
-            config.hidden_ndim,
-            config.emb_nheads,
-            config.emb_nlayers,
-            config.emb_dropout,
-            config.patch_size,
-            config.img_size,
-        )
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
-        self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
+        self.emb_vis = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_spc = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_y = MLP(config.n_clusters, config.latent_ndim)
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
+                    config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
 
-        self.lin_mu = nn.Linear(config.hidden_ndim, config.latent_ndim)
-        self.lin_logvar = nn.Linear(config.hidden_ndim, config.latent_ndim)
+        self.lin_mu = nn.Linear(config.latent_ndim, config.latent_ndim)
+        self.lin_logvar = nn.Linear(config.latent_ndim, config.latent_ndim)
 
-    def forward(self, x_vis, x_spc, x_spc_diff, y, mask):
+    def forward(self, x_vis, x_spc, y, mask=None):
         # embedding
         b, seq_len = x_vis.size()[:2]
-        x = self.emb(x_vis, x_spc, x_spc_diff)
-        y = self.emb_y(y).view(b, 1, self.hidden_ndim)
 
-        # concat y to x
-        x = torch.cat([y, x], dim=1)
-        mask = torch.cat([self.cls_mask.repeat((b, 1)), mask], dim=1)
+        y = self.emb_y(y).view(b, 1, self.latent_ndim)
+        x_vis = self.emb_vis(x_vis) + y  # (b, 17 * 2, latent_ndim)
+        x_spc = self.emb_spc(x_spc) + y  # (b, 2 * 2, latent_ndim)
+        z = torch.cat([x_vis, x_spc], dim=1)
+        # z (b, (17 + 2) * 2, latent_ndim)
 
         # positional embedding
-        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
         for layer in self.encoders:
-            x, attn_w = layer(x, mask)
-        # x (b, seq_len+1, hidden_ndim)
+            z, attn_w = layer(z, mask)
+        # z (b, (17 + 2) * 2, latent_ndim)
 
-        mu = self.lin_mu(x[:, 0, :])
-        logvar = self.lin_logvar(x[:, 0, :])
+        mu = self.lin_mu(z)
+        logvar = self.lin_logvar(z)
         ep = torch.randn_like(logvar)
         z = mu + logvar.mul(0.5).exp() * ep
         # z, mu, log_sig (b, latent_ndim)
@@ -496,13 +495,14 @@ class Pz_y(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.seq_len = config.seq_len
-        self.hidden_ndim = config.hidden_ndim
-        self.mlp = MLP(config.n_clusters, config.hidden_ndim)
-        self.lin_mu = nn.Linear(config.hidden_ndim, config.latent_ndim)
-        self.lin_logvar = nn.Linear(config.hidden_ndim, config.latent_ndim)
+        self.latent_ndim = config.latent_ndim
+        self.mlp = MLP(config.n_clusters, config.latent_ndim * (17 + 2) * 2)
+        self.lin_mu = nn.Linear(config.latent_ndim, config.latent_ndim)
+        self.lin_logvar = nn.Linear(config.latent_ndim, config.latent_ndim)
 
     def forward(self, y):
-        z = self.mlp(y)
+        b = y.size(0)
+        z = self.mlp(y).view(b, (17 + 2) * 2, self.latent_ndim)
         mu_prior = self.lin_mu(z)
         logvar_prior = self.lin_logvar(z)
         ep = torch.randn_like(logvar_prior)
@@ -512,102 +512,53 @@ class Pz_y(nn.Module):
 
 
 class Px_z(nn.Module):
-    def __init__(self, config: SimpleNamespace, vis_npatchs: int):
+    def __init__(self, config: SimpleNamespace, vis_npatchs: int = None):
         super().__init__()
-        self.seq_len = config.seq_len
-        self.hidden_ndim = config.hidden_ndim
-        self.emb_hidden_ndim = config.emb_hidden_ndim
-        self.x_vis_start = nn.Parameter(
-            torch.randn((1, 1, 17, 2), dtype=torch.float32), requires_grad=True
-        )
-        self.x_spc_start = nn.Parameter(
-            torch.randn((1, 1, 2, 2), dtype=torch.float32), requires_grad=True
-        )
-        self.x_spc_diff_start = nn.Parameter(
-            torch.randn((1, 1, 2, 2), dtype=torch.float32), requires_grad=True
+        self.latent_ndim = config.latent_ndim
+
+        self.x_start = nn.Parameter(
+            torch.randn((1, 1, config.latent_ndim), dtype=torch.float32),
+            requires_grad=True,
         )
 
-        self.emb = IndividualEmbedding(
-            config.emb_hidden_ndim,
-            config.hidden_ndim,
-            config.emb_nheads,
-            config.emb_nlayers,
-            config.emb_dropout,
-            config.patch_size,
-            config.img_size,
-        )
-        # self.emb_y = MLP(config.n_clusters, config.hidden_ndim)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
-        self.emb_z = MLP(config.latent_ndim, config.hidden_ndim)
+        self.emb = MLP(1, config.latent_ndim)
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
+        self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
         self.decoders = nn.ModuleList(
             [
                 TransformerDecoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
+                    config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
-
-        self.mlp = MLP(config.hidden_ndim, config.emb_hidden_ndim * 3)
-        self.rec_vis = nn.Sequential(
-            MLP(config.emb_hidden_ndim),
-            nn.Linear(config.emb_hidden_ndim, 17 * 2),
-            nn.Tanh(),
-        )
-        self.rec_spc = nn.Sequential(
-            MLP(config.emb_hidden_ndim),
-            nn.Linear(config.emb_hidden_ndim, 2 * 2),
-            nn.Tanh(),
-        )
-        self.rec_spc_diff = nn.Sequential(
-            MLP(config.emb_hidden_ndim),
-            nn.Linear(config.emb_hidden_ndim, 2 * 2),
+        self.mlp = nn.Sequential(
+            MLP(config.latent_ndim, config.hidden_ndim),
+            nn.SiLU(),
+            MLP(config.hidden_ndim, 1),
             nn.Tanh(),
         )
 
-    def forward(self, x_vis, x_spc, x_spc_diff, z, mask=None):
-        b, seq_len = x_vis.size()[:2]
-        x_vis = torch.cat([self.x_vis_start.repeat((b, 1, 1, 1)), x_vis], dim=1)
-        x_vis = x_vis[:, :-1]
-        x_spc = torch.cat([self.x_spc_start.repeat((b, 1, 1, 1)), x_spc], dim=1)
-        x_spc = x_spc[:, :-1]
-        x_spc_diff = torch.cat(
-            [self.x_spc_diff_start.repeat((b, 1, 1, 1)), x_spc_diff], dim=1
-        )
-        x_spc_diff = x_spc_diff[:, :-1]
-        x = self.emb(x_vis, x_spc, x_spc_diff)
-        mask = torch.cat([torch.full((b, 1), False).to(mask.device), mask], dim=1)
-        mask = mask[:, :-1]
-        # x (b, seq_len, hidden_ndim)
+    def forward(self, x, z, mask=None):
+        # x (b, seq_len)
+        # zq (b, latent_ndim)
+
+        b, seq_len = x.size()
+        x = x.view(b, seq_len, 1)
+        x = self.emb(x)  # (b, seq_len, latent_ndim)
+
+        # concat start token
+        x = torch.cat([self.x_start.repeat((b, 1, 1)), x], dim=1)
+        x = x[:, :-1]  # (b, seq_len, latent_ndim)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
-        z = self.emb_z(z)
-        z = z.repeat((1, seq_len)).view(b, seq_len, self.hidden_ndim)
-        z = z.view(b, self.seq_len, self.hidden_ndim)
+        z = self.mlp_z(z)
+        z = z.view(b, seq_len, self.latent_ndim)
         for layer in self.decoders:
             x = layer(x, z, mask)
-        # x (b, seq_len, hidden_ndim)
+        # x (b, seq_len, latent_ndim)
 
-        # reconstruct
-        x = self.mlp(x)
-        fake_x_vis, fake_x_spc, fake_x_spc_diff = (
-            x[:, :, : self.emb_hidden_ndim],
-            x[:, :, self.emb_hidden_ndim : self.emb_hidden_ndim * 2],
-            x[:, :, self.emb_hidden_ndim * 2 :],
-        )
-        # fake_x_vis, fake_x_spc (b, seq_len, emb_hidden_ndim)
+        recon_x = self.mlp(x).view(b, seq_len, 1)
 
-        # reconstruct x_vis
-        fake_x_vis = self.rec_vis(fake_x_vis)
-        fake_x_vis = fake_x_vis.view(b, seq_len, 17, 2)
-
-        # reconstruct x_spc
-        fake_x_spc = self.rec_spc(fake_x_spc)
-        fake_x_spc = fake_x_spc.view(b, seq_len, 2, 2)
-
-        # reconstruct x_spc
-        fake_x_spc_diff = self.rec_spc_diff(fake_x_spc_diff)
-        fake_x_spc_diff = fake_x_spc_diff.view(b, seq_len, 2, 2)
-
-        return fake_x_vis, fake_x_spc, fake_x_spc_diff
+        return recon_x
