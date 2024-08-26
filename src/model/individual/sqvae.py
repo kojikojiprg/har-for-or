@@ -137,7 +137,11 @@ class SQVAE(LightningModule):
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
-        loss_total = lrc_x_vis + lrc_x_spc + kl_continuous + kl_discrete
+        loss_total = (
+            (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
+            + kl_continuous * self.config.lmd_klc
+            + kl_discrete * self.config.lmd_kld
+        )
 
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),

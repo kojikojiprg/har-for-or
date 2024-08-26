@@ -163,7 +163,7 @@ def interpolate_points(vals, mask):
     x = np.arange(seq_len)[~mask]
     vals = vals.reshape(seq_len, -1)
     curve = interpolate.interp1d(
-        x, vals[~mask], kind="cubic", axis=0, fill_value="extrapolate"
+        x, vals[~mask], kind="linear", axis=0, fill_value="extrapolate"
     )
     new_vals[mask] = curve(np.arange(seq_len))[mask].astype(vals.dtype)
 
