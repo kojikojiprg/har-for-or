@@ -26,19 +26,21 @@ if __name__ == "__main__":
     v = args.version
     ep = args.epoch
     gpu_id = args.gpu_id
+    device = f"cuda:{gpu_id}"
 
     # data_dirs = sorted(glob(os.path.join(data_root, "*/")))
     data_dirs = [data_root]
     data_dir = data_dirs[0]
 
+    checkpoint_dir = f"models/individual/vae/version_{v}"
     if ep is not None:
-        checkpoint_path = f"models/individual/vae/version_{v}/vae-seq_len90-stride30-256x192-last-epoch={ep}.ckpt"
+        checkpoint_path = f"{checkpoint_dir}/vae-seq_len90-stride30-256x192-last-epoch={ep}.ckpt"
     else:
-        checkpoint_path = sorted(glob(f"models/individual/vae/version_{v}/*.ckpt"))[-1]
-    config = yaml_handler.load("configs/individual-vae.yaml")
+        checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
+
+    config = yaml_handler.load(f"{checkpoint_dir}/individual-vae.yaml")
     seq_len = config.seq_len
     stride = config.stride
-    device = f"cuda:{gpu_id}"
 
     # load dataset
     dataset, n_samples = load_dataset(data_dirs, "individual", config, False)
@@ -65,7 +67,6 @@ if __name__ == "__main__":
     # pred
     mse_x_vis_dict = {}
     mse_x_spc_dict = {}
-    mse_x_spc_diff_dict = {}
     latent_features = {"id": [], "label": [], "mu": []}
     save_dir = os.path.join(data_dir, "pred")
     os.makedirs(save_dir, exist_ok=True)
@@ -89,10 +90,8 @@ if __name__ == "__main__":
                 if _id not in mse_x_vis_dict:
                     mse_x_vis_dict[_id] = {}
                     mse_x_spc_dict[_id] = {}
-                    mse_x_spc_diff_dict[_id] = {}
                 mse_x_vis_dict[_id][n_frame] = result["mse_x_vis"]
                 mse_x_spc_dict[_id][n_frame] = result["mse_x_spc"]
-                mse_x_spc_diff_dict[_id][n_frame] = result["mse_x_spc_diff"]
 
                 # collect latent features
                 latent_features["id"].append(result["id"])
@@ -154,22 +153,14 @@ if __name__ == "__main__":
         "MSE_x_spc",
         f"{data_dir}/pred_x_spc.jpg",
     )
-    vis.plot_mse(
-        mse_x_spc_diff_dict,
-        max_n_frame,
-        stride,
-        0.05,
-        "MSE_x_spc_diff",
-        f"{data_dir}/pred_x_spc.jpg",
-    )
 
     # plot latent feature
-    X = np.array(latent_features["mu"]).reshape(-1, config.latent_ndim)
+    X = np.array(latent_features["mu"]).reshape(-1, config.latent_ndim * 19 * 2)
     labels = np.array(latent_features["label"])
     vis.plot_tsne(X, labels, 10, f"{data_dir}/pred_mu_tsne_label.jpg", cmap="tab10")
 
-    labels = np.array(latent_features["id"])
-    lut = len(np.unique(labels))
-    vis.plot_tsne(
-        X, labels, 10, f"{data_dir}/pred_mu_tsne_id.jpg", cmap="tab10", lut=lut
-    )
+    # labels = np.array(latent_features["id"])
+    # lut = len(np.unique(labels))
+    # vis.plot_tsne(
+    #     X, labels, 10, f"{data_dir}/pred_mu_tsne_id.jpg", cmap="gist_ncar", lut=lut
+    # )
