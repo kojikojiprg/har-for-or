@@ -43,7 +43,8 @@ class SQVAE(LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
-        return opt
+        sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, self.config.t_max, self.config.lr_min)
+        return [opt], [sch]
 
     def forward(self, x_vis, x_spc, is_train):
         # x_vis (b, seq_len, 17, 2)
@@ -98,9 +99,8 @@ class SQVAE(LightningModule):
         return mses.ravel()  # (b,)
 
     def loss_x(self, x, recon_x, mask=None):
-        b = x.size(0)
         mses = self.mse_x(x, recon_x, mask)
-        mses = mses.sum() / b * (17 * 2)
+        mses = mses.mean()
         return mses
 
     def loss_kl_continuous(self, ze, zq, precision_q):
