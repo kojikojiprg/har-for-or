@@ -13,18 +13,17 @@ param_q_init: 2
 book_size: 128
 hidden_ndim: 1024
 latent_ndim: 16
-nheads: 16
-nlayers: 1
+nheads: 1
+nlayers: 3
 dropout: 0.1
-# emb_hidden_ndim: 128
-# emb_nheads: 1
-# emb_nlayers: 3
-# emb_dropout: 0.1
-# patch_size: [32, 24]
 
 # optim
 lmd_lrc: 1
-lr: 0.0001
+lmd_klc: 1
+lmd_kld: 0.01
+lr: 0.001
+lr_min: 0.00001
+t_max: 20
 
 # training
 epochs: 100
