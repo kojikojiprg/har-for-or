@@ -11,6 +11,24 @@ from rotary_embedding_torch import RotaryEmbedding
 from src.model.layers import MLP  # IndividualEmbedding,
 from src.model.layers import TransformerDecoderBlock, TransformerEncoderBlock
 
+EDGE_INDEX = [
+    (0, 1),
+    (0, 2),
+    (1, 3),
+    (2, 4),  # Head
+    (5, 6),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 11),
+    (6, 12),  # Body
+    (11, 13),
+    (12, 14),
+    (13, 15),
+    (14, 16),
+]
+
 
 class SQVAE(LightningModule):
     def __init__(
@@ -43,7 +61,9 @@ class SQVAE(LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
-        sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, self.config.t_max, self.config.lr_min)
+        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, self.config.t_max, self.config.lr_min
+        )
         return [opt], [sch]
 
     def forward(self, x_vis, x_spc, is_train):
@@ -99,9 +119,27 @@ class SQVAE(LightningModule):
         return mses.ravel()  # (b,)
 
     def loss_x(self, x, recon_x, mask=None):
-        mses = self.mse_x(x, recon_x, mask)
-        mses = mses.mean()
-        return mses
+        mses = self.mse_x(x, recon_x, mask).mean()
+
+        # mse loss of edge
+        npt = x.size()[2]
+        if npt == 2:
+            edge = x[:, :, 1] - x[:, :, 0]
+            recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
+            mses = mses + self.mse_x(edge, recon_edge).mean()
+        else:
+            for i, j in EDGE_INDEX:
+                edge = x[:, :, j] - x[:, :, i]
+                recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
+                mses = mses + self.mse_x(edge, recon_edge).mean()
+
+        # mse loss of seq
+        for t in range(x.size()[1] - 1):
+            diff = x[:, t + 1] - x[:, t]
+            recon_diff = recon_x[:, t + 1] - recon_x[:, t]
+            mses = mses + self.mse_x(diff, recon_diff).mean()
+
+        return mses.mean()
 
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()

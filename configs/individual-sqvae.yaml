@@ -20,9 +20,9 @@ dropout: 0.1
 # optim
 lmd_lrc: 1
 lmd_klc: 1
-lmd_kld: 0.01
+lmd_kld: 0.1
 lr: 0.001
-lr_min: 0.00001
+lr_min: 0.000001
 t_max: 20
 
 # training
