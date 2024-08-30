@@ -119,25 +119,25 @@ class SQVAE(LightningModule):
         return mses.ravel()  # (b,)
 
     def loss_x(self, x, recon_x, mask=None):
-        mses = self.mse_x(x, recon_x, mask).mean()
+        mses = self.mse_x(x, recon_x, mask)
 
         # mse loss of edge
         npt = x.size()[2]
         if npt == 2:
             edge = x[:, :, 1] - x[:, :, 0]
             recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
-            mses = mses + self.mse_x(edge, recon_edge).mean()
+            mses = mses + self.mse_x(edge, recon_edge)
         else:
             for i, j in EDGE_INDEX:
                 edge = x[:, :, j] - x[:, :, i]
                 recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
-                mses = mses + self.mse_x(edge, recon_edge).mean()
+                mses = mses + self.mse_x(edge, recon_edge)
 
         # mse loss of seq
         for t in range(x.size()[1] - 1):
             diff = x[:, t + 1] - x[:, t]
             recon_diff = recon_x[:, t + 1] - recon_x[:, t]
-            mses = mses + self.mse_x(diff, recon_diff).mean()
+            mses = mses + self.mse_x(diff, recon_diff)
 
         return mses.mean()
 
