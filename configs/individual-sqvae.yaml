@@ -21,12 +21,12 @@ dropout: 0.1
 lmd_lrc: 1
 lmd_klc: 1
 lmd_kld: 0.5
-lr: 0.001
-lr_min: 0.00001
-t_max: 40
+lr: 0.01
+lr_min: 0.0001
+t_max: 20
 
 # training
-epochs: 120
+epochs: 100
 batch_size: 32
 accumulate_grad_batches: 1
 num_workers: 16

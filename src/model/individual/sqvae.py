@@ -110,34 +110,30 @@ class SQVAE(LightningModule):
         )
 
     def mse_x(self, x, recon_x, mask=None):
-        b = x.size(0)
-        mses = torch.empty((0,)).to(self.device)
-        for i in range(b):
-            # mse = F.mse_loss(recon_x[i][~mask[i]], x[i][~mask[i]])
-            mse = F.mse_loss(recon_x[i], x[i])
-            mses = torch.cat([mses, mse.view(1, 1)])
-        return mses.ravel()  # (b,)
+        if x.ndim == 4:
+            return F.mse_loss(recon_x, x, reduction="none").mean(dim=(1, 2, 3))  # (b,)
+        elif x.ndim == 3:
+            return F.mse_loss(recon_x, x, reduction="none").mean(dim=(1, 2))  # (b,)
 
     def loss_x(self, x, recon_x, mask=None):
         mses = self.mse_x(x, recon_x, mask)
 
         # mse loss of edge
         npt = x.size()[2]
-        if npt == 2:
+        if npt == 2:  # bbox
             edge = x[:, :, 1] - x[:, :, 0]
             recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
             mses = mses + self.mse_x(edge, recon_edge)
-        else:
+        else:  # kps
             for i, j in EDGE_INDEX:
                 edge = x[:, :, j] - x[:, :, i]
                 recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
                 mses = mses + self.mse_x(edge, recon_edge)
 
         # mse loss of seq
-        for t in range(x.size()[1] - 1):
-            diff = x[:, t + 1] - x[:, t]
-            recon_diff = recon_x[:, t + 1] - recon_x[:, t]
-            mses = mses + self.mse_x(diff, recon_diff)
+        diff = x[:, 1:] - x[:, :-1]
+        recon_diff = recon_x[:, 1:] - recon_x[:, :-1]
+        mses = mses + self.mse_x(diff, recon_diff)
 
         return mses.mean()
 
