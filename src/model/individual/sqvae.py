@@ -45,24 +45,36 @@ class SQVAE(LightningModule):
         self.temp_min = config.temp_min
         self.latent_ndim = config.latent_ndim
         self.book_size = config.book_size
+        self.n_clusters = config.n_clusters
+
+        if not config.mask_leg:
+            self.n_pts = (17 + 2) * 2
+        else:  # mask ankles and knees
+            self.n_pts = (17 - 4 + 2) * 2
 
         self.encoder = None
         self.decoder = None
         self.quantizer = None
+        self.clustering = None
+
+        self.annotation_path = annotation_path
 
     def configure_model(self):
         if self.encoder is not None:
             return
         self.encoder = Encoder(self.config)
-        self.decoders = nn.ModuleList(
-            [Decoder(self.config) for _ in range((17 + 2) * 2)]
-        )
+        self.decoders = nn.ModuleList([Decoder(self.config) for _ in range(self.n_pts)])
         self.quantizer = GaussianVectorQuantizer(self.config)
+        self.clustering = ClusteringModule(self.config, self.n_pts)
+
+        if self.annotation_path is not None:
+            anns = np.loadtxt(self.annotation_path, str, delimiter=" ", skiprows=1)
+            self.annotations = anns
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
-        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, self.config.t_max, self.config.lr_min
+        sch = torch.optim.lr_scheduler.LambdaLR(
+            opt, lambda epoch: self.config.lr_lmd**epoch
         )
         return [opt], [sch]
 
@@ -70,12 +82,15 @@ class SQVAE(LightningModule):
         # x_vis (b, seq_len, 17, 2)
         # x_spc (b, seq_len, 2, 2)
 
+        # encoding
         ze = self.encoder(x_vis, x_spc)
         # ze (b, npts, latent_ndim)
 
-        zq, precision_q, prob, log_prob = self.quantizer(ze, is_train)
+        # quantization
+        zq, precision_q, logits, prob, log_prob = self.quantizer(ze, is_train)
         # zq (b, npts, latent_ndim)
 
+        # reconstruction
         b, seq_len = x_vis.size()[:2]
         x_vis = x_vis.view(b, seq_len, 17 * 2)
         recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
@@ -91,6 +106,12 @@ class SQVAE(LightningModule):
             recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
         recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
 
+        # clustering
+        b, n_pts = ze.size()[:2]
+        logits = logits.view(b, n_pts, self.book_size)
+        c_logits = self.clustering.sample_c_logits(logits)
+        psuedo_label_logits = self.clustering.sample_psuedo_logits(logits)
+
         return (
             ze,
             zq,
@@ -99,6 +120,8 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
+            c_logits,
+            psuedo_label_logits,
         )
 
     def calc_temperature(self):
@@ -164,26 +187,46 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
+            c,
+            labels,
         ) = self(x_vis, x_spc, is_train=True)
+
+        # obtain true labels if keys are annotated
+        keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
+        for i, key in enumerate(keys):
+            if key in self.annotations.T[0]:
+                label = self.annotations.T[1][key == self.annotations.T[0]]
+                labels[i] = F.one_hot(torch.tensor(int(label)), self.n_clusters).to(
+                    self.device, torch.float32
+                )
 
         # loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
+
+        # clustering loss
+        supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
+        supervised_mask = torch.tensor(supervised_mask).to(self.device)
+        lc = F.mse_loss(c, labels, reduction="none").mean(dim=1)  # (b, 5)
+        lc = lc * supervised_mask * 1.0 + lc * ~supervised_mask * 0.01
+        lc = lc.mean()
+
         loss_total = (
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
+            + lc
         )
-
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
             x_spc=lrc_x_spc.item(),
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
-            total=loss_total.item(),
             log_param_q=self.quantizer.log_param_q.item(),
+            c=lc.item(),
+            total=loss_total.item(),
         )
 
         self.log_dict(
@@ -232,9 +275,8 @@ class SQVAE(LightningModule):
                 "mse_x_spc": mse_x_spc.item(),
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
-                "label_prob": prob[i].cpu().numpy(),
-                "label": prob[i].cpu().numpy().argmax(axis=1),
-                # "mask": mask[i].cpu().numpy(),
+                "book_prob": prob[i].cpu().numpy(),
+                "book_idx": prob[i].cpu().numpy().argmax(axis=1),
             }
             results.append(data)
 
@@ -429,4 +471,65 @@ class GaussianVectorQuantizer(nn.Module):
         prob = prob.view(b, n_pts, self.book_size)
         log_prob = log_prob.view(b, n_pts, self.book_size)
 
-        return zq, precision_q, prob, log_prob
+        return zq, precision_q, logits, prob, log_prob
+
+
+class ClusteringModule(nn.Module):
+    def __init__(self, config, n_pts):
+        super().__init__()
+        self.n_clusters = config.n_clusters
+        self.latent_ndim = config.latent_ndim
+        self.book_size = config.book_size
+        self.n_pts = n_pts
+
+        self.c2zq_logits = MLP(1, config.book_size * n_pts)
+        self.ze_logits2c = MLP(config.book_size * n_pts, 5)
+
+    def sample_c_logits(self, ze_logits):
+        # ze_logits (b, npts, book_size)
+        b = ze_logits.size(0)
+        ze_logits = ze_logits.view(b, self.n_pts * self.book_size)
+        logits = self.ze_logits2c(ze_logits)  # (b, 1)
+        return logits
+
+    def sample_psuedo_logits(self, ze_logits):
+        # ze_logits (b, npts, book_size)
+
+        # sample logits of zq prior
+        labels = torch.arange(self.n_clusters).to(ze_logits.device, torch.float32)
+        zq_prior_logits = self.sample_zq_logits(labels)
+
+        # calc cos sim between ze_logits and zq_prior_logits
+        b, n_pts, book_size = ze_logits.size()
+        ze_logits = ze_logits.view(b, n_pts, book_size)
+        ze_logits = ze_logits.view(b, 1, n_pts * book_size)
+        ze_logits = ze_logits.repeat(1, self.n_clusters, 1)
+
+        zq_prior_logits = zq_prior_logits.view(1, self.n_clusters, n_pts * book_size)
+        zq_prior_logits = zq_prior_logits.repeat(b, 1, 1)
+
+        cos_sim = F.cosine_similarity(ze_logits, zq_prior_logits, dim=2)
+
+        return cos_sim  # (b, 5)
+
+    def sample_zq_logits(self, c):
+        # c (b,)
+        b = c.size(0)
+        logits = self.c2zq_logits(c.view(b, 1))
+        logits = logits.view(b, self.n_pts, self.book_size)  # (b, n_pts, book_size)
+        return logits
+
+    def sample_zq(self, c, book):
+        # c (b,)
+        # book (book_size, latent_ndim)
+        logits = self.sample_zq_logits(c)
+
+        # select zq
+        b = c.size(0)
+        book = book.detach()
+        indices = torch.argmax(logits, dim=1).unsqueeze(1)
+        encodings = torch.zeros(indices.shape[0], self.book_size, device=indices.device)
+        encodings.scatter_(1, indices, 1)
+        zq = torch.mm(encodings, book).view(b, self.latent_ndim, self.n_pts)
+
+        return zq

@@ -77,7 +77,7 @@ if __name__ == "__main__":
         model = VAE(config, n_batches, annotation_path=ann_path)
         # model = VAE(config, n_batches)
     elif model_type == "sqvae":
-        model = SQVAE(config, n_batches)
+        model = SQVAE(config, n_batches, annotation_path=ann_path)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 

@@ -3,9 +3,10 @@ max_shard_count: 100
 seq_len: 90
 stride: 30
 img_size: [256, 192]
+mask_leg: False
 
 # model
-# n_clusters: 5
+n_clusters: 5
 temp_init: 1.0
 temp_decay: 0.001
 temp_min: 0.01
@@ -21,9 +22,8 @@ dropout: 0.1
 lmd_lrc: 1
 lmd_klc: 1
 lmd_kld: 0.5
-lr: 0.01
-lr_min: 0.0001
-t_max: 20
+lr: 0.001
+lr_lmd: 0.99
 
 # training
 epochs: 100
