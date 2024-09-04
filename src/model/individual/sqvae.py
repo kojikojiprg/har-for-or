@@ -87,7 +87,7 @@ class SQVAE(LightningModule):
         # ze (b, npts, latent_ndim)
 
         # quantization
-        zq, precision_q, logits, prob, log_prob = self.quantizer(ze, is_train)
+        zq, precision_q, prob, log_prob = self.quantizer(ze, is_train)
         # zq (b, npts, latent_ndim)
 
         # reconstruction
@@ -108,9 +108,12 @@ class SQVAE(LightningModule):
 
         # clustering
         b, n_pts = ze.size()[:2]
-        logits = logits.view(b, n_pts, self.book_size)
-        c_logits = self.clustering.sample_c_logits(logits)
-        psuedo_label_logits = self.clustering.sample_psuedo_logits(logits)
+        prob = prob.detach().view(b, n_pts, self.book_size)
+        c_prob = self.clustering.sample_c_prob(prob)
+        zq_prior_prob = self.clustering.sample_zq_prob(c_prob)
+        # psuedo_labels_logits = self.clustering.sample_psuedo_logits(logits)
+        # psuedo_labels_prob = F.softmax(psuedo_labels_logits, dim=-1)
+        psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
 
         return (
             ze,
@@ -120,8 +123,9 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
-            c_logits,
-            psuedo_label_logits,
+            zq_prior_prob,
+            c_prob,
+            psuedo_labels_prob,
         )
 
     def calc_temperature(self):
@@ -187,38 +191,46 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
-            c,
-            labels,
+            zq_prior_prob,
+            c_prob,
+            psuedo_label_prob,
         ) = self(x_vis, x_spc, is_train=True)
-
-        # obtain true labels if keys are annotated
-        keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
-        for i, key in enumerate(keys):
-            if key in self.annotations.T[0]:
-                label = self.annotations.T[1][key == self.annotations.T[0]]
-                labels[i] = F.one_hot(torch.tensor(int(label)), self.n_clusters).to(
-                    self.device, torch.float32
-                )
 
         # loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
-
-        # clustering loss
-        supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
-        supervised_mask = torch.tensor(supervised_mask).to(self.device)
-        lc = F.mse_loss(c, labels, reduction="none").mean(dim=1)  # (b, 5)
-        lc = lc * supervised_mask * 1.0 + lc * ~supervised_mask * 0.01
-        lc = lc.mean()
-
-        loss_total = (
+        loss_elbo = (
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
-            + lc
         )
+
+        # clustering loss
+        keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
+        for i, key in enumerate(keys):
+            if key in self.annotations.T[0]:
+                label = self.annotations.T[1][key == self.annotations.T[0]]
+                psuedo_label_prob[i] = F.one_hot(
+                    torch.tensor(int(label)), self.n_clusters
+                )
+
+        supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
+        supervised_mask = torch.tensor(supervised_mask).to(self.device)
+        lc = F.cross_entropy(c_prob, psuedo_label_prob, reduction="none")
+        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.01)
+        lc = lc.mean()
+
+        b = prob.size(0)
+        zq_prior_prob = zq_prior_prob.view(b, -1)
+        indices = prob.detach().view(b, -1).argmax(dim=-1)
+        lzq_prior = F.cross_entropy(zq_prior_prob, indices)
+
+        if self.current_epoch < 50:
+            loss_total = loss_elbo
+        else:
+            loss_total = lc + lzq_prior
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
             x_spc=lrc_x_spc.item(),
@@ -226,6 +238,7 @@ class SQVAE(LightningModule):
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
             c=lc.item(),
+            lzq=lzq_prior.item(),
             total=loss_total.item(),
         )
 
@@ -257,6 +270,9 @@ class SQVAE(LightningModule):
             log_prob,
             recon_x_vis,
             recon_x_spc,
+            zq_prior_prob,
+            c_prob,
+            psuedo_label_prob,
         ) = self(x_vis, x_spc, is_train=False)
 
         mse_x_vis = self.mse_x(x_vis, recon_x_vis)
@@ -277,6 +293,8 @@ class SQVAE(LightningModule):
                 "zq": zq[i].cpu().numpy(),
                 "book_prob": prob[i].cpu().numpy(),
                 "book_idx": prob[i].cpu().numpy().argmax(axis=1),
+                "label_prob": c_prob[i].cpu().numpy(),
+                "label": c_prob[i].cpu().numpy().argmax(),
             }
             results.append(data)
 
@@ -471,7 +489,7 @@ class GaussianVectorQuantizer(nn.Module):
         prob = prob.view(b, n_pts, self.book_size)
         log_prob = log_prob.view(b, n_pts, self.book_size)
 
-        return zq, precision_q, logits, prob, log_prob
+        return zq, precision_q, prob, log_prob
 
 
 class ClusteringModule(nn.Module):
@@ -482,54 +500,70 @@ class ClusteringModule(nn.Module):
         self.book_size = config.book_size
         self.n_pts = n_pts
 
-        self.c2zq_logits = MLP(1, config.book_size * n_pts)
-        self.ze_logits2c = MLP(config.book_size * n_pts, 5)
+        self.ze_prob_to_c_prob = nn.Sequential(
+            MLP(config.book_size * n_pts, config.book_size * n_pts),
+            nn.SiLU(),
+            MLP(config.book_size * n_pts, config.n_clusters),
+            nn.Softmax(dim=-1),
+        )
+        self.c_prob_to_zq_prob = nn.Sequential(
+            MLP(config.n_clusters, config.book_size * n_pts),
+            nn.SiLU(),
+            MLP(config.book_size * n_pts, config.book_size * n_pts),
+            nn.Softmax(dim=-1),
+        )
 
-    def sample_c_logits(self, ze_logits):
+    def sample_c_prob(self, ze_prob):
         # ze_logits (b, npts, book_size)
-        b = ze_logits.size(0)
-        ze_logits = ze_logits.view(b, self.n_pts * self.book_size)
-        logits = self.ze_logits2c(ze_logits)  # (b, 1)
+        b = ze_prob.size(0)
+        ze_indices = ze_prob.argmax(dim=-1)
+        ze_one_hot = F.one_hot(ze_indices, self.book_size).to(torch.float32)
+        ze_one_hot = ze_one_hot.view(b, self.n_pts * self.book_size)
+        logits = self.ze_prob_to_c_prob(ze_one_hot)  # (b, n_clusters)
         return logits
 
-    def sample_psuedo_logits(self, ze_logits):
-        # ze_logits (b, npts, book_size)
+    def sample_zq_prob(self, c_prob):
+        # c_prob (b, n_clusters)
+        c_prob = c_prob.to(torch.float32)
+        prob = self.c_prob_to_zq_prob(c_prob)
+        b = c_prob.size(0)
+        prob = prob.view(b, self.n_pts, self.book_size)  # (b, n_pts, book_size)
+        return prob
 
-        # sample logits of zq prior
-        labels = torch.arange(self.n_clusters).to(ze_logits.device, torch.float32)
-        zq_prior_logits = self.sample_zq_logits(labels)
-
-        # calc cos sim between ze_logits and zq_prior_logits
-        b, n_pts, book_size = ze_logits.size()
-        ze_logits = ze_logits.view(b, n_pts, book_size)
-        ze_logits = ze_logits.view(b, 1, n_pts * book_size)
-        ze_logits = ze_logits.repeat(1, self.n_clusters, 1)
-
-        zq_prior_logits = zq_prior_logits.view(1, self.n_clusters, n_pts * book_size)
-        zq_prior_logits = zq_prior_logits.repeat(b, 1, 1)
-
-        cos_sim = F.cosine_similarity(ze_logits, zq_prior_logits, dim=2)
-
-        return cos_sim  # (b, 5)
-
-    def sample_zq_logits(self, c):
-        # c (b,)
-        b = c.size(0)
-        logits = self.c2zq_logits(c.view(b, 1))
-        logits = logits.view(b, self.n_pts, self.book_size)  # (b, n_pts, book_size)
-        return logits
-
-    def sample_zq(self, c, book):
-        # c (b,)
+    def sample_zq(self, c_prob, book):
+        # c_prob (b, n_clusters)
         # book (book_size, latent_ndim)
-        logits = self.sample_zq_logits(c)
+        prob = self.sample_zq_prob(c_prob)
 
         # select zq
-        b = c.size(0)
+        b = c_prob.size(0)
         book = book.detach()
-        indices = torch.argmax(logits, dim=1).unsqueeze(1)
+        indices = torch.argmax(prob, dim=1).unsqueeze(1)
         encodings = torch.zeros(indices.shape[0], self.book_size, device=indices.device)
         encodings.scatter_(1, indices, 1)
         zq = torch.mm(encodings, book).view(b, self.latent_ndim, self.n_pts)
 
         return zq
+
+    # @torch.no_grad()
+    # def sample_psuedo_logits(self, ze_logits):
+    #     # ze_logits (b, npts, book_size)
+    #     b, n_pts, book_size = ze_logits.size()
+
+    #     # sample logits of zq prior
+    #     labels = torch.arange(self.n_clusters)
+    #     labels = F.one_hot(labels, self.n_clusters).to(ze_logits.device, torch.float32)
+    #     zq_prior_logits = self.sample_zq_logits(labels)
+    #     zq_prior_prob = F.softmax(zq_prior_logits, dim=-1)
+    #     zq_prior_prob = zq_prior_prob.view(1, self.n_clusters, n_pts * book_size)
+    #     zq_prior_prob = zq_prior_prob.repeat(b, 1, 1)
+
+    #     # calc cos sim between ze_logits and zq_prior_logits
+    #     ze_logits = ze_logits.view(b, n_pts, book_size)
+    #     ze_prob = F.softmax(ze_logits, dim=-1)
+    #     ze_prob = ze_prob.view(b, 1, n_pts * book_size)
+    #     ze_prob = ze_prob.repeat(1, self.n_clusters, 1)
+
+    #     cos_sim = F.cosine_similarity(ze_prob, zq_prior_prob, dim=2)
+
+    #     return cos_sim  # (b, 5)
