@@ -23,7 +23,7 @@ lmd_lrc: 1
 lmd_klc: 1
 lmd_kld: 0.1
 lr: 0.001
-lr_lmd: 0.99
+lr_lmd: 0.95
 
 # training
 epochs: 100

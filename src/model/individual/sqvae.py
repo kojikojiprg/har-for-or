@@ -78,7 +78,7 @@ class SQVAE(LightningModule):
         )
         return [opt], [sch]
 
-    def forward(self, x_vis, x_spc, is_train):
+    def forward(self, x_vis, x_spc, quantizer_is_train):
         # x_vis (b, seq_len, 17, 2)
         # x_spc (b, seq_len, 2, 2)
 
@@ -87,7 +87,7 @@ class SQVAE(LightningModule):
         # ze (b, npts, latent_ndim)
 
         # quantization
-        zq, precision_q, prob, log_prob = self.quantizer(ze, is_train)
+        zq, precision_q, prob, log_prob = self.quantizer(ze, quantizer_is_train)
         # zq (b, npts, latent_ndim)
 
         # reconstruction
@@ -194,7 +194,7 @@ class SQVAE(LightningModule):
             zq_prior_prob,
             c_prob,
             psuedo_label_prob,
-        ) = self(x_vis, x_spc, is_train=True)
+        ) = self(x_vis, x_spc, self.current_epoch < 50)
 
         # loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
@@ -273,7 +273,7 @@ class SQVAE(LightningModule):
             zq_prior_prob,
             c_prob,
             psuedo_label_prob,
-        ) = self(x_vis, x_spc, is_train=False)
+        ) = self(x_vis, x_spc, False)
 
         mse_x_vis = self.mse_x(x_vis, recon_x_vis)
         mse_x_spc = self.mse_x(x_spc, recon_x_spc)
@@ -401,7 +401,6 @@ class Decoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        # self.rec = Reconstruction(config.latent_ndim, config.hidden_ndim, config.seq_len)
         self.mlp = nn.Sequential(
             MLP(config.latent_ndim, config.hidden_ndim),
             nn.SiLU(),
