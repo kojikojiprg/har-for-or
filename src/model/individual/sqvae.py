@@ -218,7 +218,7 @@ class SQVAE(LightningModule):
         supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
         supervised_mask = torch.tensor(supervised_mask).to(self.device)
         lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
-        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.001)
+        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.01)
         lc = lc.mean()
 
         b = prob.size(0)
@@ -569,7 +569,7 @@ class ClusteringNN(nn.Module):
                 TransformerEncoderBlock(
                     config.hidden_ndim, config.nheads, config.dropout
                 )
-                for _ in range(config.nlayers)
+                for _ in range(1)
             ]
         )
         self.out = nn.Sequential(
