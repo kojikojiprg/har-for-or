@@ -111,8 +111,7 @@ class SQVAE(LightningModule):
         prob = prob.detach().view(b, n_pts, self.book_size)
         c_prob = self.clustering.sample_c_prob(prob)
         zq_prior_prob = self.clustering.sample_zq_prob(c_prob)
-        # psuedo_labels_logits = self.clustering.sample_psuedo_logits(logits)
-        # psuedo_labels_prob = F.softmax(psuedo_labels_logits, dim=-1)
+        # psuedo_labels_prob = self.clustering.sample_psuedo_labels(prob)
         psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
 
         return (
@@ -193,7 +192,7 @@ class SQVAE(LightningModule):
             recon_x_spc,
             zq_prior_prob,
             c_prob,
-            psuedo_label_prob,
+            psuedo_labels_prob,
         ) = self(x_vis, x_spc, self.current_epoch < 50)
 
         # loss
@@ -212,14 +211,14 @@ class SQVAE(LightningModule):
         for i, key in enumerate(keys):
             if key in self.annotations.T[0]:
                 label = self.annotations.T[1][key == self.annotations.T[0]]
-                psuedo_label_prob[i] = F.one_hot(
+                psuedo_labels_prob[i] = F.one_hot(
                     torch.tensor(int(label)), self.n_clusters
-                )
+                ).to(self.device, torch.float32)
 
         supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
         supervised_mask = torch.tensor(supervised_mask).to(self.device)
-        lc = F.cross_entropy(c_prob, psuedo_label_prob, reduction="none")
-        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.01)
+        lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
+        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.001)
         lc = lc.mean()
 
         b = prob.size(0)
@@ -499,12 +498,7 @@ class ClusteringModule(nn.Module):
         self.book_size = config.book_size
         self.n_pts = n_pts
 
-        self.ze_prob_to_c_prob = nn.Sequential(
-            MLP(config.book_size * n_pts, config.book_size * n_pts),
-            nn.SiLU(),
-            MLP(config.book_size * n_pts, config.n_clusters),
-            nn.Softmax(dim=-1),
-        )
+        self.ze_prob_to_c_prob = ClusteringNN(config)
         self.c_prob_to_zq_prob = nn.Sequential(
             MLP(config.n_clusters, config.book_size * n_pts),
             nn.SiLU(),
@@ -513,13 +507,11 @@ class ClusteringModule(nn.Module):
         )
 
     def sample_c_prob(self, ze_prob):
-        # ze_logits (b, npts, book_size)
-        b = ze_prob.size(0)
+        # ze_prob (b, npts, book_size)
         ze_indices = ze_prob.argmax(dim=-1)
         ze_one_hot = F.one_hot(ze_indices, self.book_size).to(torch.float32)
-        ze_one_hot = ze_one_hot.view(b, self.n_pts * self.book_size)
-        logits = self.ze_prob_to_c_prob(ze_one_hot)  # (b, n_clusters)
-        return logits
+        prob = self.ze_prob_to_c_prob(ze_one_hot)  # (b, n_clusters)
+        return prob
 
     def sample_zq_prob(self, c_prob):
         # c_prob (b, n_clusters)
@@ -544,25 +536,61 @@ class ClusteringModule(nn.Module):
 
         return zq
 
-    # @torch.no_grad()
-    # def sample_psuedo_logits(self, ze_logits):
-    #     # ze_logits (b, npts, book_size)
-    #     b, n_pts, book_size = ze_logits.size()
+    def sample_psuedo_labels(self, ze_prob):
+        # ze_prob (b, npts, book_size)
+        b, n_pts, book_size = ze_prob.size()
 
-    #     # sample logits of zq prior
-    #     labels = torch.arange(self.n_clusters)
-    #     labels = F.one_hot(labels, self.n_clusters).to(ze_logits.device, torch.float32)
-    #     zq_prior_logits = self.sample_zq_logits(labels)
-    #     zq_prior_prob = F.softmax(zq_prior_logits, dim=-1)
-    #     zq_prior_prob = zq_prior_prob.view(1, self.n_clusters, n_pts * book_size)
-    #     zq_prior_prob = zq_prior_prob.repeat(b, 1, 1)
+        # sample logits of zq prior
+        labels = torch.arange(self.n_clusters)
+        labels = F.one_hot(labels, self.n_clusters).to(ze_prob.device, torch.float32)
+        zq_prior_logits = self.sample_zq_prob(labels)
+        zq_prior_prob = F.softmax(zq_prior_logits, dim=-1)
+        zq_prior_prob = zq_prior_prob.view(1, self.n_clusters, n_pts * book_size)
+        zq_prior_prob = zq_prior_prob.repeat(b, 1, 1)
 
-    #     # calc cos sim between ze_logits and zq_prior_logits
-    #     ze_logits = ze_logits.view(b, n_pts, book_size)
-    #     ze_prob = F.softmax(ze_logits, dim=-1)
-    #     ze_prob = ze_prob.view(b, 1, n_pts * book_size)
-    #     ze_prob = ze_prob.repeat(1, self.n_clusters, 1)
+        # calc cos sim between ze_prob and zq_prior_prob
+        ze_prob = ze_prob.view(b, n_pts, book_size)
+        ze_prob = ze_prob.view(b, 1, n_pts * book_size)
+        ze_prob = ze_prob.repeat(1, self.n_clusters, 1)
 
-    #     cos_sim = F.cosine_similarity(ze_prob, zq_prior_prob, dim=2)
+        cos_sim = F.cosine_similarity(ze_prob, zq_prior_prob, dim=2)
 
-    #     return cos_sim  # (b, 5)
+        return cos_sim  # (b,)
+
+
+class ClusteringNN(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.cls_token = nn.Parameter(torch.randn(1, 1, config.hidden_ndim))
+        self.emb = MLP(config.book_size, config.hidden_ndim)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
+        self.encoders = nn.ModuleList(
+            [
+                TransformerEncoderBlock(
+                    config.hidden_ndim, config.nheads, config.dropout
+                )
+                for _ in range(config.nlayers)
+            ]
+        )
+        self.out = nn.Sequential(
+            MLP(config.hidden_ndim, config.n_clusters),
+            nn.Softmax(dim=-1),
+        )
+
+    def forward(self, ze_prob):
+        # ze_prob (b, npts, book_size)
+        z = self.emb(ze_prob)
+        b = z.size(0)
+
+        # concat cls token
+        z = torch.cat([self.cls_token.repeat(b, 1, 1), z], dim=1)
+
+        # position encoding
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
+
+        for layer in self.encoders:
+            z, attn_w = layer(z)
+
+        z = z[:, 0]  # get cls token
+        prob = self.out(z)
+        return prob
