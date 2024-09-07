@@ -498,7 +498,12 @@ class ClusteringModule(nn.Module):
         self.book_size = config.book_size
         self.n_pts = n_pts
 
-        self.ze_prob_to_c_prob = ClusteringNN(config)
+        self.ze_prob_to_c_prob = nn.Sequential(
+            MLP(config.book_size * n_pts, config.book_size * n_pts),
+            nn.SiLU(),
+            MLP(config.book_size * n_pts, config.n_clusters),
+            nn.Softmax(dim=-1),
+        )
         self.c_prob_to_zq_prob = nn.Sequential(
             MLP(config.n_clusters, config.book_size * n_pts),
             nn.SiLU(),
@@ -508,9 +513,8 @@ class ClusteringModule(nn.Module):
 
     def sample_c_prob(self, ze_prob):
         # ze_prob (b, npts, book_size)
-        ze_indices = ze_prob.argmax(dim=-1)
-        ze_one_hot = F.one_hot(ze_indices, self.book_size).to(torch.float32)
-        prob = self.ze_prob_to_c_prob(ze_one_hot)  # (b, n_clusters)
+        ze_prob = ze_prob.view(ze_prob.size(0), -1)
+        prob = self.ze_prob_to_c_prob(ze_prob)  # (b, n_clusters)
         return prob
 
     def sample_zq_prob(self, c_prob):
@@ -556,41 +560,3 @@ class ClusteringModule(nn.Module):
         cos_sim = F.cosine_similarity(ze_prob, zq_prior_prob, dim=2)
 
         return cos_sim  # (b,)
-
-
-class ClusteringNN(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.cls_token = nn.Parameter(torch.randn(1, 1, config.hidden_ndim))
-        self.emb = MLP(config.book_size, config.hidden_ndim)
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
-        self.encoders = nn.ModuleList(
-            [
-                TransformerEncoderBlock(
-                    config.hidden_ndim, config.nheads, config.dropout
-                )
-                for _ in range(1)
-            ]
-        )
-        self.out = nn.Sequential(
-            MLP(config.hidden_ndim, config.n_clusters),
-            nn.Softmax(dim=-1),
-        )
-
-    def forward(self, ze_prob):
-        # ze_prob (b, npts, book_size)
-        z = self.emb(ze_prob)
-        b = z.size(0)
-
-        # concat cls token
-        z = torch.cat([self.cls_token.repeat(b, 1, 1), z], dim=1)
-
-        # position encoding
-        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
-
-        for layer in self.encoders:
-            z, attn_w = layer(z)
-
-        z = z[:, 0]  # get cls token
-        prob = self.out(z)
-        return prob
