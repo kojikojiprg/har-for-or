@@ -107,8 +107,6 @@ class SQVAE(LightningModule):
         recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
 
         # clustering
-        b, n_pts = ze.size()[:2]
-        prob = prob.detach().view(b, n_pts, self.book_size)
         c_prob = self.clustering.sample_c_prob(prob)
         zq_prior_prob = self.clustering.sample_zq_prob(c_prob)
         # psuedo_labels_prob = self.clustering.sample_psuedo_labels(prob)
@@ -215,21 +213,18 @@ class SQVAE(LightningModule):
                     torch.tensor(int(label)), self.n_clusters
                 ).to(self.device, torch.float32)
 
-        supervised_mask = np.isin(keys, self.annotations.T[0]).ravel()
-        supervised_mask = torch.tensor(supervised_mask).to(self.device)
+        mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+        mask_supervised = torch.tensor(mask_supervised).to(self.device)
         lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
-        lc = lc * (supervised_mask * 1.0) + lc * (~supervised_mask * 0.01)
+        lc = lc * (mask_supervised * 1.0) + lc * (~mask_supervised * 0.01)
         lc = lc.mean()
 
-        b = prob.size(0)
-        zq_prior_prob = zq_prior_prob.view(b, -1)
-        indices = prob.detach().view(b, -1).argmax(dim=-1)
-        lzq_prior = F.cross_entropy(zq_prior_prob, indices)
+        lzq_prior = F.cross_entropy(zq_prior_prob, prob)
 
         if self.current_epoch < 50:
-            loss_total = loss_elbo
+            loss_total = loss_elbo + (lc + lzq_prior) * 0.0
         else:
-            loss_total = lc + lzq_prior
+            loss_total = loss_elbo * 0.0 + (lc + lzq_prior)
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
             x_spc=lrc_x_spc.item(),
@@ -241,11 +236,7 @@ class SQVAE(LightningModule):
             total=loss_total.item(),
         )
 
-        self.log_dict(
-            loss_dict,
-            prog_bar=True,
-            logger=True,
-        )
+        self.log_dict(loss_dict, prog_bar=True, logger=True)
 
         return loss_total
 
@@ -484,6 +475,7 @@ class GaussianVectorQuantizer(nn.Module):
             # mean_prob = torch.mean(encodings, dim=0)
 
         zq = zq.permute(0, 2, 1).contiguous()
+        logits = logits.view(b, n_pts, self.book_size)
         prob = prob.view(b, n_pts, self.book_size)
         log_prob = log_prob.view(b, n_pts, self.book_size)
 
@@ -498,31 +490,30 @@ class ClusteringModule(nn.Module):
         self.book_size = config.book_size
         self.n_pts = n_pts
 
-        self.ze_prob_to_c_prob = nn.Sequential(
+        self.ze_to_c = nn.Sequential(
             MLP(config.book_size * n_pts, config.book_size * n_pts),
             nn.SiLU(),
             MLP(config.book_size * n_pts, config.n_clusters),
-            nn.Softmax(dim=-1),
         )
-        self.c_prob_to_zq_prob = nn.Sequential(
+        self.c_to_zq = nn.Sequential(
             MLP(config.n_clusters, config.book_size * n_pts),
             nn.SiLU(),
             MLP(config.book_size * n_pts, config.book_size * n_pts),
-            nn.Softmax(dim=-1),
         )
 
     def sample_c_prob(self, ze_prob):
         # ze_prob (b, npts, book_size)
-        ze_prob = ze_prob.view(ze_prob.size(0), -1)
-        prob = self.ze_prob_to_c_prob(ze_prob)  # (b, n_clusters)
+        indices = ze_prob.argmax(dim=-1)
+        one_hot = F.one_hot(indices, self.book_size)
+        one_hot = one_hot.view(-1, self.n_pts * self.book_size).to(torch.float32)
+        logits = self.ze_to_c(one_hot)  # (b, n_clusters)
+        prob = F.softmax(logits, dim=-1)
         return prob
 
     def sample_zq_prob(self, c_prob):
-        # c_prob (b, n_clusters)
-        c_prob = c_prob.to(torch.float32)
-        prob = self.c_prob_to_zq_prob(c_prob)
-        b = c_prob.size(0)
-        prob = prob.view(b, self.n_pts, self.book_size)  # (b, n_pts, book_size)
+        logits = self.c_to_zq(c_prob)
+        logits = logits.view(-1, self.n_pts, self.book_size)  # (b, n_pts, book_size)
+        prob = F.softmax(logits, dim=-1)
         return prob
 
     def sample_zq(self, c_prob, book):
@@ -534,7 +525,7 @@ class ClusteringModule(nn.Module):
         b = c_prob.size(0)
         book = book.detach()
         indices = torch.argmax(prob, dim=1).unsqueeze(1)
-        encodings = torch.zeros(indices.shape[0], self.book_size, device=indices.device)
+        encodings = torch.zeros(b, self.book_size, device=indices.device)
         encodings.scatter_(1, indices, 1)
         zq = torch.mm(encodings, book).view(b, self.latent_ndim, self.n_pts)
 
@@ -547,8 +538,7 @@ class ClusteringModule(nn.Module):
         # sample logits of zq prior
         labels = torch.arange(self.n_clusters)
         labels = F.one_hot(labels, self.n_clusters).to(ze_prob.device, torch.float32)
-        zq_prior_logits = self.sample_zq_prob(labels)
-        zq_prior_prob = F.softmax(zq_prior_logits, dim=-1)
+        zq_prior_prob = self.sample_zq_prob(labels)
         zq_prior_prob = zq_prior_prob.view(1, self.n_clusters, n_pts * book_size)
         zq_prior_prob = zq_prior_prob.repeat(b, 1, 1)
 
