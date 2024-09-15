@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     model_ht = HumanTracking(config_ht, device)
     for video_path in tqdm(video_paths, ncols=100, position=0):
-        write_shards(video_path, dataset_type, config, model_ht, n_processes)
+        write_shards(video_path, dataset_type, config, model_ht, n_processes, skip_optical_flow=True)
         model_ht.reset_tracker()
 
     del model_ht

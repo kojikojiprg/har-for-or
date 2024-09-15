@@ -27,6 +27,7 @@ def write_shards(
     config: SimpleNamespace,
     model_ht: HumanTracking = None,
     n_processes: int = None,
+    skip_optical_flow: bool = False,
 ):
     if n_processes is None:
         n_processes = os.cpu_count()
@@ -56,13 +57,18 @@ def write_shards(
         lock = swm.Lock()
         cap_of = swm.Capture(video_path)
         cap_ht = swm.Capture(video_path)
-        frame_count, img_size = cap_of.get_frame_count(), cap_of.get_size()
+        frame_count, frame_size = cap_of.get_frame_count(), cap_of.get_size()
         head = swm.Value("i", 0)
 
         # create progress bars
-        pbar_of = swm.Tqdm(
-            total=frame_count, desc="opticalflow", position=1, leave=False, ncols=100
-        )
+        if not skip_optical_flow:
+            pbar_of = swm.Tqdm(
+                total=frame_count,
+                desc="opticalflow",
+                position=1,
+                leave=False,
+                ncols=100,
+            )
         pbar_ht = swm.Tqdm(
             total=frame_count, desc="tracking", position=2, leave=False, ncols=100
         )
@@ -72,18 +78,23 @@ def write_shards(
         )
 
         # create shared ndarray and start optical flow
-        shape = (seq_len, img_size[1], img_size[0], 3)
-        frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
-        shape = (seq_len, img_size[1], img_size[0], 2)
-        flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
-        tail_of = swm.Value("i", 0)
-        ec = functools.partial(_error_callback, *("_optical_flow_async",))
-        result = pool.apply_async(
-            _optical_flow_async,
-            (cap_of, frame_sna, flow_sna, tail_of, head, lock, pbar_of),
-            error_callback=ec,
-        )
-        async_results.append(result)
+        if not skip_optical_flow:
+            shape = (seq_len, frame_size[1], frame_size[0], 3)
+            frame_sna = SharedNDArray(f"frame_{dataset_type}", shape, np.uint8)
+            shape = (seq_len, frame_size[1], frame_size[0], 2)
+            flow_sna = SharedNDArray(f"flow_{dataset_type}", shape, np.float32)
+            tail_of = swm.Value("i", 0)
+            ec = functools.partial(_error_callback, *("_optical_flow_async",))
+            result = pool.apply_async(
+                _optical_flow_async,
+                (cap_of, frame_sna, flow_sna, tail_of, head, lock, pbar_of),
+                error_callback=ec,
+            )
+            async_results.append(result)
+        else:
+            frame_sna = None
+            flow_sna = None
+            tail_of = None
 
         # create shared list of indiciduals and start human tracking
         ht_que = swm.list([[] for _ in range(seq_len)])
@@ -114,6 +125,7 @@ def write_shards(
         arr_write_que_async_f = functools.partial(
             _add_write_que_async,
             n_frames_que=n_frames_que,
+            frame_size=frame_size,
             frame_sna=frame_sna,
             flow_sna=flow_sna,
             ht_que=ht_que,
@@ -172,10 +184,12 @@ def write_shards(
         sink.close()
 
         # close and unlink shared memories
-        frame_sna.unlink()
-        flow_sna.unlink()
+        if not skip_optical_flow:
+            frame_sna.unlink()
+            flow_sna.unlink()
 
-        pbar_of.close()
+        if not skip_optical_flow:
+            pbar_of.close()
         pbar_ht.close()
         pbar_w.close()
     gc.collect()
@@ -199,9 +213,12 @@ def _error_callback(*args):
 
 
 def _check_full(tail_of, tail_ht, head, que_len):
-    is_frame_que_full = (tail_of.value + 1) % que_len == head.value
+    if tail_of is not None:
+        is_frame_que_full = (tail_of.value + 1) % que_len == head.value
+    else:
+        is_frame_que_full = True
     is_idv_que_full = (tail_ht.value + 1) % que_len == head.value
-    is_eq = tail_of.value == tail_ht.value
+    is_eq = tail_of.value == tail_ht.value if tail_of is not None else True
     return is_frame_que_full and is_idv_que_full and is_eq
 
 
@@ -279,6 +296,7 @@ def _human_tracking_async(
 def _add_write_que_async(
     n_frame,
     n_frames_que,
+    frame_size,
     frame_sna,
     flow_sna,
     ht_que,
@@ -294,13 +312,18 @@ def _add_write_que_async(
 ):
     with lock:
         # copy queue
-        frame_que, frame_shm = frame_sna.ndarray()
-        flow_que, flow_shm = flow_sna.ndarray()
-        copy_frame_que = copy.deepcopy(frame_que)
-        copy_flow_que = copy.deepcopy(flow_que)
-        frame_shm.close()
-        flow_shm.close()
-        del frame_que, flow_que
+        if frame_sna is not None and flow_sna is not None:
+            frame_que, frame_shm = frame_sna.ndarray()
+            copy_frame_que = copy.deepcopy(frame_que)
+            frame_shm.close()
+            del frame_que
+            flow_que, flow_shm = flow_sna.ndarray()
+            copy_flow_que = copy.deepcopy(flow_que)
+            flow_shm.close()
+            del flow_que
+        else:
+            copy_frame_que = None
+            copy_flow_que = None
         copy_n_frames_que = copy.deepcopy(list(n_frames_que))
         copy_ht_que = copy.deepcopy(list(ht_que))
 
@@ -310,9 +333,10 @@ def _add_write_que_async(
 
     # sort to start from head
     sorted_idxs = list(range(head_val_copy, seq_len)) + list(range(0, head_val_copy))
+    if copy_frame_que is not None and copy_flow_que is not None:
+        copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
+        copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_n_frames_que = [copy_n_frames_que[idx] for idx in sorted_idxs]
-    copy_frame_que = copy_frame_que[sorted_idxs].astype(np.uint8)
-    copy_flow_que = copy_flow_que[sorted_idxs].astype(np.float32)
     copy_ht_que = [copy_ht_que[idx] for idx in sorted_idxs]
 
     # check data
@@ -327,10 +351,15 @@ def _add_write_que_async(
     ), f"n_frame:{n_frame}, copy_n_frames_que[-1] + 1:{copy_n_frames_que[-1] + 1}"
 
     # clip frames and flows by bboxs
-    idv_frames, idv_flows = clip_images_by_bbox(
-        copy_frame_que, copy_flow_que, copy_ht_que, resize
-    )
-    if len(idv_frames) == 0:
+    if copy_frame_que is not None and copy_flow_que is not None:
+        idv_frames, idv_flows = clip_images_by_bbox(
+            copy_frame_que, copy_flow_que, copy_ht_que, resize
+        )
+    else:
+        idv_frames = None
+        idv_flows = None
+
+    if len(copy_ht_que) == 0:
         # There are no individuals within frames for seq_len (not error)
         pbar.update()
         del copy_frame_que, copy_flow_que, copy_ht_que
@@ -345,7 +374,7 @@ def _add_write_que_async(
     )
     unique_ids = sorted(list(unique_ids))
     meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que, unique_ids)
-    frame_size = np.array(copy_frame_que.shape[1:3])  # (h, w)
+    frame_size = (frame_size[1], frame_size[0])  # (h, w)
 
     if dataset_type == "individual":
         idv_npzs, unique_ids = individual_to_npz(
@@ -356,18 +385,17 @@ def _add_write_que_async(
             sink.add_write_que(data)
             del data
     elif dataset_type == "group":
-        data = {
-            "__key__": f"{video_name}_{n_frame}",
-            "npz": {
-                "meta": meta,
-                "id": ids,
-                "frame": idv_frames,
-                "flow": idv_flows,
-                "bbox": bboxs,
-                "keypoints": kps,
-                "frame_size": frame_size,
-            },
+        npz = {
+            "meta": meta,
+            "id": ids,
+            "bbox": bboxs,
+            "keypoints": kps,
+            "frame_size": frame_size,
         }
+        if idv_frames is not None and idv_flows is not None:
+            npz["frames"] = idv_frames
+            npz["flows"] = idv_flows
+        data = {"__key__": f"{video_name}_{n_frame}", "npz": npz}
         sink.add_write_que(data)
         del data
     else:

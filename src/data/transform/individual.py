@@ -29,19 +29,21 @@ def collect_human_tracking(human_tracking_data, unique_ids):
 def individual_to_npz(
     meta, unique_ids, frames, flows, bboxs, kps, frame_size, th_nan_ratio=0.3
 ):
-    h, w = frames.shape[1:3]
     seq_len, n = np.max(meta, axis=0) + 1
-    frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
-    flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
+    if frames is not None and flows is not None:
+        h, w = frames.shape[1:3]
+        frames_idvs = np.full((n, seq_len, h, w, 3), 0, dtype=np.uint8)
+        flows_idvs = np.full((n, seq_len, h, w, 2), -1e10, dtype=np.float32)
+        for (t, i), frames_i, flows_i in zip(meta, frames, flows):
+            frames_idvs[i, t] = frames_i
+            flows_idvs[i, t] = flows_i
+    else:
+        frames_idvs = None
+        flows_idvs = None
+
     bboxs_idvs = np.full((n, seq_len, 2, 2), -1e10, dtype=np.float32)
     kps_idvs = np.full((n, seq_len, 17, 2), -1e10, dtype=np.float32)
-
-    # collect data
-    for (t, i), frames_i, flows_i, bboxs_i, kps_i in zip(
-        meta, frames, flows, bboxs, kps
-    ):
-        frames_idvs[i, t] = frames_i
-        flows_idvs[i, t] = flows_i
+    for (t, i), bboxs_i, kps_i in zip(meta, bboxs, kps):
         bboxs_idvs[i, t] = bboxs_i
         kps_idvs[i, t] = kps_i
 
@@ -54,12 +56,13 @@ def individual_to_npz(
     for i, _id in enumerate(unique_ids):
         data = {
             "id": _id,
-            "frame": frames_idvs[i],
-            "flow": flows_idvs[i],
             "bbox": bboxs_idvs[i],
             "keypoints": kps_idvs[i],
             "frame_size": frame_size,  # (h, w)
         }
+        if frames_idvs is not None and flows_idvs is not None:
+            data["frame"] = frames_idvs[i]
+            data["flow"] = flows_idvs[i]
         idvs.append(data)
     return idvs, unique_ids
 
@@ -75,8 +78,8 @@ def cleansing_individual(
     )
     if np.count_nonzero(mask_not_nan) < n:
         unique_ids = unique_ids[mask_not_nan]
-        frames_idvs = frames_idvs[mask_not_nan]
-        flows_idvs = flows_idvs[mask_not_nan]
+        frames_idvs = frames_idvs[mask_not_nan] if frames_idvs is not None else None
+        flows_idvs = flows_idvs[mask_not_nan] if flows_idvs is not None else None
         bboxs_idvs = bboxs_idvs[mask_not_nan]
         kps_idvs = kps_idvs[mask_not_nan]
 
@@ -89,8 +92,8 @@ def cleansing_individual(
     nan_ratio = np.count_nonzero(nan.reshape(n, -1), axis=1) / (seq_len * 2 * 2)
     mask_lower_nan_ratio = nan_ratio < th_nan_ratio
     unique_ids = unique_ids[mask_lower_nan_ratio]
-    frames_idvs = frames_idvs[mask_lower_nan_ratio]
-    flows_idvs = flows_idvs[mask_lower_nan_ratio]
+    frames_idvs = frames_idvs[mask_lower_nan_ratio] if frames_idvs is not None else None
+    flows_idvs = flows_idvs[mask_lower_nan_ratio] if flows_idvs is not None else None
     bboxs_idvs = bboxs_idvs[mask_lower_nan_ratio]
     kps_idvs = kps_idvs[mask_lower_nan_ratio]
 
@@ -107,20 +110,31 @@ def individual_npz_to_tensor(
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
-    _id, frames, flows, bboxs, kps, frame_size = npz
+    if len(npz) == 4:
+        _id, bboxs, kps, frame_size = npz
+        frames = None
+        flows = None
+    elif len(npz) == 6:
+        _id, frames, flows, bboxs, kps, frame_size = npz
+    else:
+        raise ValueError
 
     if len(bboxs) < seq_len:
         # padding
-        pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
-        # frames = np.pad(frames, pad_shape, constant_values=-1)
-        # flows = np.pad(flows, pad_shape, constant_values=-1e10)
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
+        if frames is not None and flows is not None:
+            pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
+            frames = np.pad(frames, pad_shape, constant_values=-1)
+            flows = np.pad(flows, pad_shape, constant_values=-1e10)
 
-    # frames = frame_transform(frames)
-    # flows = flow_transform(flows)
-    # pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
+    if frames is not None and flows is not None:
+        frames = frame_transform(frames)
+        flows = flow_transform(flows)
+        pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
+    else:
+        pixcels = None
 
     mask = torch.from_numpy(np.any(bboxs < 0, axis=(1, 2))).to(torch.bool)
 
@@ -136,7 +150,10 @@ def individual_npz_to_tensor(
 
     del sample, npz, frames, flows  # release memory
 
-    return key, _id, kps, bboxs, mask
+    if pixcels is None:
+        return key, _id, kps, bboxs, mask
+    else:
+        return key, _id, kps, bboxs, mask, pixcels
 
 
 # def calc_diff(vals, mask):
