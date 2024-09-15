@@ -376,30 +376,31 @@ def _add_write_que_async(
     meta, ids, bboxs, kps = collect_human_tracking(copy_ht_que, unique_ids)
     frame_size = (frame_size[1], frame_size[0])  # (h, w)
 
-    if dataset_type == "individual":
-        idv_npzs, unique_ids = individual_to_npz(
-            meta, unique_ids, idv_frames, idv_flows, bboxs, kps, frame_size
-        )
-        for i, _id in enumerate(unique_ids):
-            data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
+    if len(meta) > 0:
+        if dataset_type == "individual":
+            idv_npzs, unique_ids = individual_to_npz(
+                meta, unique_ids, idv_frames, idv_flows, bboxs, kps, frame_size
+            )
+            for i, _id in enumerate(unique_ids):
+                data = {"__key__": f"{video_name}_{n_frame}_{_id}", "npz": idv_npzs[i]}
+                sink.add_write_que(data)
+                del data
+        elif dataset_type == "group":
+            npz = {
+                "meta": meta,
+                "id": ids,
+                "bbox": bboxs,
+                "keypoints": kps,
+                "frame_size": frame_size,
+            }
+            if idv_frames is not None and idv_flows is not None:
+                npz["frames"] = idv_frames
+                npz["flows"] = idv_flows
+            data = {"__key__": f"{video_name}_{n_frame}", "npz": npz}
             sink.add_write_que(data)
             del data
-    elif dataset_type == "group":
-        npz = {
-            "meta": meta,
-            "id": ids,
-            "bbox": bboxs,
-            "keypoints": kps,
-            "frame_size": frame_size,
-        }
-        if idv_frames is not None and idv_flows is not None:
-            npz["frames"] = idv_frames
-            npz["flows"] = idv_flows
-        data = {"__key__": f"{video_name}_{n_frame}", "npz": npz}
-        sink.add_write_que(data)
-        del data
-    else:
-        raise ValueError
+        else:
+            raise ValueError
 
     pbar.update()
     del copy_frame_que, copy_flow_que, copy_ht_que
