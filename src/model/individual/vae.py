@@ -8,7 +8,12 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from rotary_embedding_torch import RotaryEmbedding
 
-from src.model.layers import MLP, TransformerDecoderBlock, TransformerEncoderBlock
+from src.model.layers import (
+    MLP,
+    Embedding,
+    TransformerDecoderBlock,
+    TransformerEncoderBlock,
+)
 
 # from sklearn.cluster import KMeans
 
@@ -252,7 +257,9 @@ class VAE(LightningModule):
 
     def pairwise_sim(self, mu, logvar):
         b = mu.size(0)
-        pij = torch.empty((0, b, self.latent_ndim * 19 * 2), dtype=torch.float32).to(self.device)
+        pij = torch.empty((0, b, self.latent_ndim * 19 * 2), dtype=torch.float32).to(
+            self.device
+        )
         for i in range(b):
             pdfs = self.log_normal(mu, mu[i], logvar[i]).exp()
             pdfs = pdfs / pdfs.sum(dim=0)
@@ -360,39 +367,6 @@ class VAE(LightningModule):
         return [opt_pz_y, opt], []
 
 
-class Embedding(nn.Module):
-    def __init__(self, seq_len, hidden_ndim, latent_ndim):
-        super().__init__()
-        self.hidden_ndim = hidden_ndim
-
-        self.conv_x = nn.Sequential(
-            nn.Conv1d(seq_len, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.Conv1d(hidden_ndim, latent_ndim, 1),
-            nn.SiLU(),
-        )
-        self.conv_y = nn.Sequential(
-            nn.Conv1d(seq_len, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.Conv1d(hidden_ndim, hidden_ndim, 1),
-            nn.SiLU(),
-            nn.Conv1d(hidden_ndim, latent_ndim, 1),
-            nn.SiLU(),
-        )
-
-    def forward(self, x):
-        x, y = x[:, :, :, 0], x[:, :, :, 1]
-        x = self.conv_x(x)  # (b, latent_ndim, n_pts)
-        y = self.conv_y(y)  # (b, latent_ndim, n_pts)
-        x = torch.cat([x, y], dim=2)
-        x = x.permute(0, 2, 1)
-        # x (b, n_pts * 2, latent_ndim)
-
-        return x
-
-
 class Qy_x(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
@@ -479,7 +453,7 @@ class Qz_xy(nn.Module):
         logvar = self.lin_logvar(z)
         ep = torch.randn_like(logvar)
         z = mu + logvar.mul(0.5).exp() * ep
-        # z, mu, log_sig (b, latent_ndim)
+        # z, mu, log_sig (b, (17 + 2) * 2, latent_ndim)
 
         return z, mu, logvar
 
@@ -541,7 +515,7 @@ class Px_z(nn.Module):
 
     def forward(self, x, z, mask=None):
         # x (b, seq_len)
-        # zq (b, latent_ndim)
+        # z (b, latent_ndim)
 
         b, seq_len = x.size()
         x = x.view(b, seq_len, 1)

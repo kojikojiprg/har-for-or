@@ -124,17 +124,18 @@ def individual_npz_to_tensor(
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
-        if frames is not None and flows is not None:
-            pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
-            frames = np.pad(frames, pad_shape, constant_values=-1)
-            flows = np.pad(flows, pad_shape, constant_values=-1e10)
+        # if frames is not None and flows is not None:
+        #     pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
+        #     frames = np.pad(frames, pad_shape, constant_values=-1)
+        #     flows = np.pad(flows, pad_shape, constant_values=-1e10)
 
-    if frames is not None and flows is not None:
-        frames = frame_transform(frames)
-        flows = flow_transform(flows)
-        pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
-    else:
-        pixcels = None
+    # if frames is not None and flows is not None:
+    #     frames = frame_transform(frames)
+    #     flows = flow_transform(flows)
+    #     pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
+    # else:
+    #     pixcels = None
+    pixcels = None
 
     mask = torch.from_numpy(np.any(bboxs < 0, axis=(1, 2))).to(torch.bool)
 
@@ -154,22 +155,6 @@ def individual_npz_to_tensor(
         return key, _id, kps, bboxs, mask
     else:
         return key, _id, kps, bboxs, mask, pixcels
-
-
-# def calc_diff(vals, mask):
-#     seq_len = vals.shape[0]
-
-#     # interpolate
-#     new_vals = vals.copy().reshape(seq_len, -1)
-#     x = np.arange(seq_len)[~mask]
-#     vals = vals.reshape(seq_len, -1)
-#     curve = interpolate.interp1d(
-#         x, vals[~mask], kind="linear", axis=0, fill_value="extrapolate"
-#     )
-#     new_vals[mask] = curve(np.arange(seq_len))[mask].astype(vals.dtype)
-#     diff = np.diff(new_vals, axis=0, prepend=0)
-
-#     return diff
 
 
 def interpolate_points(vals, mask):
