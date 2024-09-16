@@ -10,9 +10,9 @@ n_clusters: 5
 temp_init: 1.0
 temp_decay: 0.001
 temp_min: 0.01
-param_q_init: 10
-# book_size: 64
-hidden_ndim: 512
+param_q_init: 2
+book_size: 128
+hidden_ndim: 1024
 latent_ndim: 16
 nheads: 1
 nlayers: 3
@@ -21,20 +21,20 @@ dropout: 0.1
 # optim
 lmd_lrc_pre: 1
 lmd_klc_pre: 1
-lmd_kld_pre: 1
-lmd_c_pre: 0
+lmd_kld_pre: 0.1
+lmd_c_pre: 1
 
 lmd_lrc: 1
 lmd_klc: 1
-lmd_kld: 1
-lmd_c: 10
+lmd_kld: 0.1
+lmd_c: 1
 
 lr: 0.001
-lr_lmd: 0.95
+lr_lmd: 0.99
 
 # training
 pre_epochs: 50
 epochs: 100
 batch_size: 32
 accumulate_grad_batches: 1
-num_workers: 16
+num_workers: 8
