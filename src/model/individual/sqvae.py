@@ -58,7 +58,6 @@ class SQVAE(LightningModule):
         self.encoder = None
         self.decoder = None
         self.quantizer = None
-        # self.clustering = None
 
         self.annotation_path = annotation_path
 
@@ -68,7 +67,6 @@ class SQVAE(LightningModule):
         self.encoder = Encoder(self.config)
         self.decoders = nn.ModuleList([Decoder(self.config) for _ in range(self.n_pts)])
         self.quantizer = GaussianVectorQuantizer(self.config)
-        # self.clustering = ClusteringModule(self.config, self.n_pts)
 
         if self.annotation_path is not None:
             anns = np.loadtxt(self.annotation_path, str, delimiter=" ", skiprows=1)
@@ -142,22 +140,22 @@ class SQVAE(LightningModule):
     def loss_x(self, x, recon_x, mask=None):
         mses = self.mse_x(x, recon_x, mask)
 
-        # mse loss of edge
-        npt = x.size()[2]
-        if npt == 2:  # bbox
-            edge = x[:, :, 1] - x[:, :, 0]
-            recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
-            mses = mses + self.mse_x(edge, recon_edge)
-        else:  # kps
-            for i, j in EDGE_INDEX:
-                edge = x[:, :, j] - x[:, :, i]
-                recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
-                mses = mses + self.mse_x(edge, recon_edge)
+        # # mse loss of edge
+        # npt = x.size()[2]
+        # if npt == 2:  # bbox
+        #     edge = x[:, :, 1] - x[:, :, 0]
+        #     recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
+        #     mses = mses + self.mse_x(edge, recon_edge)
+        # else:  # kps
+        #     for i, j in EDGE_INDEX:
+        #         edge = x[:, :, j] - x[:, :, i]
+        #         recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
+        #         mses = mses + self.mse_x(edge, recon_edge)
 
-        # mse loss of seq
-        diff = x[:, 1:] - x[:, :-1]
-        recon_diff = recon_x[:, 1:] - recon_x[:, :-1]
-        mses = mses + self.mse_x(diff, recon_diff)
+        # # mse loss of seq
+        # diff = x[:, 1:] - x[:, :-1]
+        # recon_diff = recon_x[:, 1:] - recon_x[:, :-1]
+        # mses = mses + self.mse_x(diff, recon_diff)
 
         return mses.mean()
 
@@ -210,16 +208,14 @@ class SQVAE(LightningModule):
         mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
         mask_supervised = torch.tensor(mask_supervised).to(self.device)
         lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
-        lc_psuedo = lc * ~mask_supervised
-        lc_psuedo = lc_psuedo.mean()
-        lc = lc * mask_supervised
-        lc = lc.mean()
+        lc_psuedo = (lc * ~mask_supervised).mean()
+        lc = (lc * mask_supervised).mean()
 
         loss_total = (
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
-            + (lc * 10.0 + lc_psuedo * 0.01) * self.config.lmd_c
+            + (lc * 1.0 + lc_psuedo * 0.01) * self.config.lmd_c
         )
 
         loss_dict = dict(
