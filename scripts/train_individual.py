@@ -76,9 +76,10 @@ if __name__ == "__main__":
     if model_type == "vae":
         model = VAE(config, n_batches, annotation_path=ann_path)
         # model = VAE(config, n_batches)
+        ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
     elif model_type == "sqvae":
         model = SQVAE(config, annotation_path=ann_path)
-    ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
+        ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 
     logger = TensorBoardLogger("logs/individual", name=model_type)

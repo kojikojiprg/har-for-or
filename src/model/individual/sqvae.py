@@ -215,7 +215,7 @@ class SQVAE(LightningModule):
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
-            + (lc * 1.0 + lc_psuedo * 0.01) * self.config.lmd_c
+            + (lc * 10.0 + lc_psuedo * 0.01) * self.config.lmd_c
         )
 
         loss_dict = dict(
@@ -224,6 +224,7 @@ class SQVAE(LightningModule):
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
+            log_param_q_cls=self.quantizer.log_param_q_cls.item(),
             c=lc.item(),
             c_psuedo=lc_psuedo.item(),
             total=loss_total.item(),
@@ -363,6 +364,10 @@ class GaussianVectorQuantizer(nn.Module):
         self.temperature = None
         log_param_q = np.log(config.param_q_init)
         self.log_param_q = nn.Parameter(torch.tensor(log_param_q, dtype=torch.float32))
+        log_param_q_cls = np.log(config.param_q_init)
+        self.log_param_q_cls = nn.Parameter(
+            torch.tensor(log_param_q_cls, dtype=torch.float32)
+        )
 
     def calc_distance(self, z, book):
         distances = (
@@ -387,28 +392,59 @@ class GaussianVectorQuantizer(nn.Module):
 
         logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
         books = torch.empty((0, self.book_size, latent_ndim)).to(ze.device)
-        for i, idx in enumerate(c_logits.argmax(dim=-1)):
-            book = self.books[idx]
-            logit = -self.calc_distance(ze[i], book) * precision_q
-            logits = torch.cat([logits, logit.view(1, n_pts, self.book_size)], dim=0)
-            books = torch.cat([books, book.view(1, self.book_size, latent_ndim)], dim=0)
-
-        prob = torch.softmax(logits, dim=-1)
-        log_prob = torch.log_softmax(logits, dim=-1)
-
         if is_train:
-            encodings = self.gumbel_softmax_relaxation(logits)
-            zq = torch.matmul(encodings, books)
-            # mean_prob = torch.mean(prob.detach(), dim=0)
+            param_q = 1 + self.log_param_q_cls.exp()
+            precision_q_cls = 0.5 / torch.clamp(param_q, min=1e-10)
+            zq = torch.empty((0, n_pts, latent_ndim)).to(ze.device)
+            for i, c_logit in enumerate(c_logits):
+                c_prob = self.gumbel_softmax_relaxation(c_logit * precision_q_cls)
+
+                # compute logits and zq of all books
+                zei = ze[i]
+                zqi = torch.zeros_like(zei)
+                logit = torch.zeros((n_pts, self.book_size)).to(ze.device)
+                books = torch.cat(list(self.books.parameters()), dim=0)
+                books = books.view(-1, self.book_size, latent_ndim)
+                for j, book in enumerate(books):
+                    logitj = -self.calc_distance(zei, book) * precision_q
+                    logit = logit + logitj * c_prob[j]
+                    encoding = self.gumbel_softmax_relaxation(logitj)
+                    zqi = zqi + torch.matmul(encoding, book) * c_prob[j]
+
+                logits = torch.cat(
+                    [logits, logit.view(1, n_pts, self.book_size)], dim=0
+                )
+                books = torch.cat(
+                    [books, book.view(1, self.book_size, latent_ndim)], dim=0
+                )
+                zq = torch.cat([zq, zqi.view(1, n_pts, latent_ndim)], dim=0)
+                # mean_prob = torch.mean(prob.detach(), dim=0)
         else:
+            for i, idx in enumerate(c_logits.argmax(dim=-1)):
+                book = self.books[idx]
+                logit = -self.calc_distance(ze[i], book) * precision_q
+
+                logits = torch.cat(
+                    [logits, logit.view(1, n_pts, self.book_size)], dim=0
+                )
+                books = torch.cat(
+                    [books, book.view(1, self.book_size, latent_ndim)], dim=0
+                )
+
             indices = torch.argmax(logits, dim=2).unsqueeze(2)
             encodings = torch.zeros(
-                indices.shape[0], indices.shape[1], self.book_size, device=indices.device
+                indices.shape[0],
+                indices.shape[1],
+                self.book_size,
+                device=indices.device,
             )
             encodings.scatter_(2, indices, 1)
             zq = torch.matmul(encodings, books)
             # mean_prob = torch.mean(encodings, dim=0)
         # zq (b, npts, latent_ndim)
+
+        prob = torch.softmax(logits, dim=-1)
+        log_prob = torch.log_softmax(logits, dim=-1)
 
         logits = logits.view(b, n_pts, self.book_size)
         prob = prob.view(b, n_pts, self.book_size)
