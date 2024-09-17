@@ -19,11 +19,6 @@ nlayers: 3
 dropout: 0.1
 
 # optim
-lmd_lrc_pre: 1
-lmd_klc_pre: 1
-lmd_kld_pre: 0.1
-lmd_c_pre: 1
-
 lmd_lrc: 1
 lmd_klc: 1
 lmd_kld: 0.1
@@ -33,7 +28,6 @@ lr: 0.001
 lr_lmd: 0.99
 
 # training
-pre_epochs: 50
 epochs: 100
 batch_size: 32
 accumulate_grad_batches: 1

@@ -38,7 +38,6 @@ class SQVAE(LightningModule):
     def __init__(
         self,
         config: SimpleNamespace,
-        n_batches: Optional[int] = None,
         annotation_path: Optional[str] = None,
     ):
         super().__init__()
@@ -90,7 +89,7 @@ class SQVAE(LightningModule):
         ze, c_logits = self.encoder(x_vis, x_spc)
         c_prob = F.softmax(c_logits, dim=-1)
         # ze (b, npts, latent_ndim)
-        # c_logits (b, n_clusters)
+        # c_prob (b, n_clusters)
 
         # quantization
         zq, precision_q, prob, log_prob = self.quantizer(
@@ -190,7 +189,7 @@ class SQVAE(LightningModule):
             recon_x_vis,
             recon_x_spc,
             c_prob,
-        ) = self(x_vis, x_spc, self.current_epoch < self.config.pre_epochs)
+        ) = self(x_vis, x_spc, True)
 
         # ELBO loss
         lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
@@ -216,20 +215,12 @@ class SQVAE(LightningModule):
         lc = lc * mask_supervised
         lc = lc.mean()
 
-        if self.current_epoch < self.config.pre_epochs:
-            loss_total = (
-                (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc_pre
-                + kl_continuous * self.config.lmd_klc_pre
-                + kl_discrete * self.config.lmd_kld_pre
-                + (lc * 1.0 + lc_psuedo * 0.0) * self.config.lmd_c_pre
-            )
-        else:
-            loss_total = (
-                (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
-                + kl_continuous * self.config.lmd_klc
-                + kl_discrete * self.config.lmd_kld
-                + (lc * 1.0 + lc_psuedo * 0.0) * self.config.lmd_c
-            )
+        loss_total = (
+            (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
+            + kl_continuous * self.config.lmd_klc
+            + kl_discrete * self.config.lmd_kld
+            + (lc * 10.0 + lc_psuedo * 0.01) * self.config.lmd_c
+        )
 
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
@@ -411,15 +402,15 @@ class GaussianVectorQuantizer(nn.Module):
 
         if is_train:
             encodings = self.gumbel_softmax_relaxation(logits)
-            zq = torch.matmul(encodings, book)
+            zq = torch.matmul(encodings, books)
             # mean_prob = torch.mean(prob.detach(), dim=0)
         else:
-            indices = torch.argmax(logits, dim=1).unsqueeze(1)
+            indices = torch.argmax(logits, dim=2).unsqueeze(2)
             encodings = torch.zeros(
-                indices.shape[0], self.book_size, device=indices.device
+                indices.shape[0], indices.shape[1], self.book_size, device=indices.device
             )
-            encodings.scatter_(1, indices, 1)
-            zq = torch.matmul(encodings, book)
+            encodings.scatter_(2, indices, 1)
+            zq = torch.matmul(encodings, books)
             # mean_prob = torch.mean(encodings, dim=0)
         # zq (b, npts, latent_ndim)
 
@@ -481,108 +472,3 @@ class Decoder(nn.Module):
         recon_x = self.mlp(x).view(b, seq_len, 1)
 
         return recon_x
-
-
-# class ClusteringModule(nn.Module):
-#     def __init__(self, config, n_pts):
-#         super().__init__()
-#         self.n_clusters = config.n_clusters
-#         self.latent_ndim = config.latent_ndim
-#         self.book_size = config.book_size
-#         self.n_pts = n_pts
-
-#         # self.emb_ze = nn.Embedding(config.book_size, config.hidden_ndim)
-#         # self.ze_to_c = nn.Sequential(
-#         #     MLP(config.hidden_ndim, config.hidden_ndim),
-#         #     nn.SiLU(),
-#         #     MLP(config.hidden_ndim, config.n_clusters),
-#         # )
-#         self.ze_to_c = ClusteringTransformer(config)
-#         self.c_to_zq = nn.Sequential(
-#             MLP(config.n_clusters, config.book_size * n_pts),
-#             nn.SiLU(),
-#             MLP(config.book_size * n_pts, config.book_size * n_pts),
-#         )
-
-#     def sample_c_prob(self, ze_prob):
-#         # ze_prob (b, npts, book_size)
-#         # indices = ze_prob.argmax(dim=-1)  # (b, npts)
-#         # emb = self.emb_ze(indices)  # (b, npts, hidden_ndim)
-#         # logits = self.ze_to_c(emb)  # (b, n_clusters)
-#         # prob = F.softmax(logits, dim=-1)
-#         prob = self.ze_to_c(ze_prob)
-#         return prob
-
-#     def sample_zq_prob(self, c_prob):
-#         logits = self.c_to_zq(c_prob)
-#         logits = logits.view(-1, self.n_pts, self.book_size)  # (b, n_pts, book_size)
-#         prob = F.softmax(logits, dim=-1)
-#         return prob
-
-#     def sample_zq(self, c_prob, book):
-#         # c_prob (b, n_clusters)
-#         # book (book_size, latent_ndim)
-#         prob = self.sample_zq_prob(c_prob)
-
-#         # select zq
-#         b = c_prob.size(0)
-#         book = book.detach()
-#         indices = torch.argmax(prob, dim=1).unsqueeze(1)
-#         encodings = torch.zeros(b, self.book_size, device=indices.device)
-#         encodings.scatter_(1, indices, 1)
-#         zq = torch.mm(encodings, book).view(b, self.latent_ndim, self.n_pts)
-
-#         return zq
-
-#     def sample_psuedo_labels(self, ze_prob):
-#         # ze_prob (b, npts, book_size)
-#         b, n_pts, book_size = ze_prob.size()
-
-#         # sample logits of zq prior
-#         labels = torch.arange(self.n_clusters)
-#         labels = F.one_hot(labels, self.n_clusters).to(ze_prob.device, torch.float32)
-#         zq_prior_prob = self.sample_zq_prob(labels)
-#         zq_prior_prob = zq_prior_prob.view(1, self.n_clusters, n_pts * book_size)
-#         zq_prior_prob = zq_prior_prob.repeat(b, 1, 1)
-
-#         # calc cos sim between ze_prob and zq_prior_prob
-#         ze_prob = ze_prob.view(b, n_pts, book_size)
-#         ze_prob = ze_prob.view(b, 1, n_pts * book_size)
-#         ze_prob = ze_prob.repeat(1, self.n_clusters, 1)
-
-#         cos_sim = F.cosine_similarity(ze_prob, zq_prior_prob, dim=-1)
-
-#         return cos_sim  # (b,)
-
-
-# class ClusteringTransformer(nn.Module):
-#     def __init__(self, config):
-#         super().__init__()
-
-#         self.cls_token = nn.Parameter(torch.randn((1, 1, config.latent_ndim)))
-
-#         self.emb_ze = nn.Embedding(config.book_size, config.latent_ndim)
-#         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
-#         self.encoder = TransformerEncoderBlock(
-#             config.latent_ndim, config.nheads, config.dropout
-#         )
-#         self.out = nn.Sequential(
-#             MLP(config.latent_ndim, config.latent_ndim),
-#             nn.SiLU(),
-#             MLP(config.latent_ndim, config.n_clusters),
-#             nn.Softmax(dim=-1),
-#         )
-
-#     def forward(self, ze_prob):
-#         # ze_prob (b, npts, book_size)
-#         indices = ze_prob.argmax(dim=-1)  # (b, npts)
-#         emb = self.emb_ze(indices)  # (b, npts, latent_ndim)
-
-#         cls_token = self.cls_token.repeat(emb.size(0), 1, 1)
-#         emb = torch.concat([cls_token, emb], dim=1)
-
-#         emb = self.pe.rotate_queries_or_keys(emb, seq_dim=1)
-#         z, attn_w = self.encoder(emb)
-
-#         c_prob = self.out(z[:, 0, :])
-#         return c_prob
