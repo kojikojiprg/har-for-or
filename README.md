@@ -1,4 +1,4 @@
-# group_activity
+# HAR for Operating Room Surveillance Video
 
 # Environments
 - Ubuntu: 20.04
