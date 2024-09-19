@@ -4,15 +4,6 @@ lightning
 torch_geometric
 webdataset
 rotary_embedding_torch
-
 ultralytics
-
-mmcv==2.1.0
-mmdet
-mmpose
-mmpretrain
-
 tensorboard
 tensorboardX
-torchsummary
-lap
