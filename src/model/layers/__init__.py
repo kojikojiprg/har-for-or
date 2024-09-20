@@ -1,5 +1,3 @@
-from .clustering_module import ClusteringModule
-
 # from .embedding import IndividualEmbedding
 from .embedding import Embedding
 from .feedforward import MLP, SwiGLU
