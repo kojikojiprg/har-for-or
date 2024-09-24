@@ -15,24 +15,6 @@ from src.model.layers import (
     TransformerEncoderBlock,
 )
 
-EDGE_INDEX = [
-    (0, 1),
-    (0, 2),
-    (1, 3),
-    (2, 4),  # Head
-    (5, 6),
-    (5, 7),
-    (7, 9),
-    (6, 8),
-    (8, 10),
-    (5, 11),
-    (6, 12),  # Body
-    (11, 13),
-    (12, 14),
-    (13, 15),
-    (14, 16),
-]
-
 
 class SQVAE(LightningModule):
     def __init__(
@@ -60,6 +42,7 @@ class SQVAE(LightningModule):
         self.quantizer = None
 
         self.annotation_path = annotation_path
+        self.annotations = None
 
     def configure_model(self):
         if self.encoder is not None:
@@ -194,30 +177,6 @@ class SQVAE(LightningModule):
         lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
-
-        # clustering loss
-        psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
-        keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
-        for i, key in enumerate(keys):
-            if key in self.annotations.T[0]:
-                label = self.annotations.T[1][key == self.annotations.T[0]]
-                psuedo_labels_prob[i] = F.one_hot(
-                    torch.tensor(int(label)), self.n_clusters
-                ).to(self.device, torch.float32)
-
-        mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
-        mask_supervised = torch.tensor(mask_supervised).to(self.device)
-        lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
-        lc_psuedo = (lc * ~mask_supervised).mean()
-        lc = (lc * mask_supervised).mean()
-
-        loss_total = (
-            (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
-            + kl_continuous * self.config.lmd_klc
-            + kl_discrete * self.config.lmd_kld
-            + (lc * 10.0 + lc_psuedo * 0.01) * self.config.lmd_c
-        )
-
         loss_dict = dict(
             x_vis=lrc_x_vis.item(),
             x_spc=lrc_x_spc.item(),
@@ -225,10 +184,39 @@ class SQVAE(LightningModule):
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
             log_param_q_cls=self.quantizer.log_param_q_cls.item(),
-            c=lc.item(),
-            c_psuedo=lc_psuedo.item(),
-            total=loss_total.item(),
         )
+
+        # clustering loss
+        if self.annotations is None:
+            psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
+            lc = (c_prob * (c_prob.log() - psuedo_labels_prob.log())).sum(dim=-1).mean()
+            loss_dict["c"] = lc.item()
+        else:
+            psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
+            keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
+            for i, key in enumerate(keys):
+                if key in self.annotations.T[0]:
+                    label = self.annotations.T[1][key == self.annotations.T[0]]
+                    psuedo_labels_prob[i] = F.one_hot(
+                        torch.tensor(int(label)), self.n_clusters
+                    ).to(self.device, torch.float32)
+
+            mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+            mask_supervised = torch.tensor(mask_supervised).to(self.device)
+            lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
+            lc_real = (lc * mask_supervised).mean()
+            lc_psuedo = (lc * ~mask_supervised).mean()
+            lc = lc_real * 10 + lc_psuedo * 0.01
+            loss_dict["c"] = lc_real.item()
+            loss_dict["c_psuedo"] = lc_psuedo.item()
+
+        loss_total = (
+            (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
+            + kl_continuous * self.config.lmd_klc
+            + kl_discrete * self.config.lmd_kld
+            + lc * self.config.lmd_c
+        )
+        loss_dict["total"] = loss_total.item()
 
         self.log_dict(loss_dict, prog_bar=True, logger=True)
 
