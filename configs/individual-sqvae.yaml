@@ -29,6 +29,6 @@ lr_lmd: 0.99
 
 # training
 epochs: 100
-batch_size: 16
+batch_size: 32
 accumulate_grad_batches: 1
 num_workers: 8
