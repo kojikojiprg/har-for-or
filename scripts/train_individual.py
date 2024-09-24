@@ -21,10 +21,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "-mt", "--model_type", required=False, type=str, default="sqvae"
     )
+    parser.add_argument(
+        "-ut", "--unsupervised_training", required=False, action="store_true", default=False
+    )
     parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
     args = parser.parse_args()
     data_root = args.data_root
     model_type = args.model_type
+    unsupervised_learning = args.unsupervised_learning
     gpu_ids = args.gpu_ids
     pre_checkpoint_path = args.checkpoint
 
@@ -78,6 +82,8 @@ if __name__ == "__main__":
         # model = VAE(config, n_batches)
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
     elif model_type == "sqvae":
+        if unsupervised_learning:
+            ann_path = None
         model = SQVAE(config, annotation_path=ann_path)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
