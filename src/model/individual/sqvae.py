@@ -187,37 +187,30 @@ class SQVAE(LightningModule):
         )
 
         # clustering loss
-        if self.annotations is None:
-            psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
-            lc = (c_prob * (c_prob.log() - psuedo_labels_prob.log())).sum(dim=-1).mean()
-            loss_dict["c"] = lc.item()
-        else:
-            psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
-            keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
-            for i, key in enumerate(keys):
-                if key in self.annotations.T[0]:
-                    label = self.annotations.T[1][key == self.annotations.T[0]]
-                    psuedo_labels_prob[i] = F.one_hot(
-                        torch.tensor(int(label)), self.n_clusters
-                    ).to(self.device, torch.float32)
+        psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
+        lc_psuedo = (c_prob * (c_prob.log() - psuedo_labels_prob.log())).mean()
+        loss_dict["c_psuedo"] = lc_psuedo.item()
 
+        if self.annotations is not None:
+            keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
             mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
             mask_supervised = torch.tensor(mask_supervised).to(self.device)
             if torch.any(mask_supervised):
-                lc_real = F.cross_entropy(
-                    c_prob[mask_supervised], psuedo_labels_prob[mask_supervised]
-                )
-                loss_dict["c"] = lc_real.item()
+                labels = []
+                for key in keys:
+                    if key in self.annotations.T[0]:
+                        label = self.annotations.T[1][key == self.annotations.T[0]]
+                        labels.append(int(label))
+                labels = torch.tensor(labels).to(self.device, torch.long)
+                lc_real = F.cross_entropy(c_prob[mask_supervised], labels)
+                loss_dict["c_real"] = lc_real.item()
             else:
                 lc_real = 0.0
-                loss_dict["c"] = 0.0
-            lc_psuedo = c_prob[~mask_supervised] * (
-                c_prob[~mask_supervised].log()
-                - psuedo_labels_prob[~mask_supervised].log()
-            )
-            lc_psuedo = lc_psuedo.mean()
-            lc = lc_real * 10 + lc_psuedo * 0.01
-            loss_dict["c_psuedo"] = lc_psuedo.item()
+                loss_dict["c_real"] = 0.0
+        else:
+            lc_real = 0.0
+
+        lc = lc_real * 10 + lc_psuedo * 0.01
 
         loss_total = (
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc
