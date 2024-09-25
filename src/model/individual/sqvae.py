@@ -202,7 +202,10 @@ class SQVAE(LightningModule):
                         label = self.annotations.T[1][key == self.annotations.T[0]]
                         labels.append(int(label))
                 labels = torch.tensor(labels).to(self.device, torch.long)
-                lc_real = F.cross_entropy(c_prob[mask_supervised], labels)
+                lc_real = F.cross_entropy(
+                    c_prob[mask_supervised], labels, reduction="sum"
+                )
+                lc_real = lc_real / len(keys)
                 loss_dict["c_real"] = lc_real.item()
             else:
                 lc_real = 0.0
