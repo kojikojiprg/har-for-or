@@ -81,7 +81,6 @@ if __name__ == "__main__":
 
     # create model
     ann_path = f"{data_root}/annotation/role.txt"
-    print(ann_path)
     if model_type == "vae":
         model = VAE(config, n_batches, annotation_path=ann_path)
         # model = VAE(config, n_batches)
