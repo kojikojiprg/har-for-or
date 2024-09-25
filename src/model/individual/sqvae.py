@@ -203,9 +203,10 @@ class SQVAE(LightningModule):
 
             mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
             mask_supervised = torch.tensor(mask_supervised).to(self.device)
-            lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
-            lc_real = (lc * mask_supervised).mean()
-            lc_psuedo = (lc * ~mask_supervised).mean()
+            # lc = F.cross_entropy(c_prob, psuedo_labels_prob, reduction="none")
+            lc = (c_prob * (c_prob.log() - psuedo_labels_prob.log())).sum(dim=-1)
+            lc_real = (lc.detach() * mask_supervised).mean()
+            lc_psuedo = (lc.detach() * ~mask_supervised).mean()
             lc = lc_real * 10 + lc_psuedo * 0.01
             loss_dict["c"] = lc_real.item()
             loss_dict["c_psuedo"] = lc_psuedo.item()

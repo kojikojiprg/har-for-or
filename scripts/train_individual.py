@@ -22,13 +22,17 @@ if __name__ == "__main__":
         "-mt", "--model_type", required=False, type=str, default="sqvae"
     )
     parser.add_argument(
-        "-ut", "--unsupervised_training", required=False, action="store_true", default=False
+        "-ut",
+        "--unsupervised_training",
+        required=False,
+        action="store_true",
+        default=False,
     )
     parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
     args = parser.parse_args()
     data_root = args.data_root
     model_type = args.model_type
-    unsupervised_learning = args.unsupervised_learning
+    unsupervised_training = args.unsupervised_training
     gpu_ids = args.gpu_ids
     pre_checkpoint_path = args.checkpoint
 
@@ -72,17 +76,18 @@ if __name__ == "__main__":
 
     # load dataset
     dataloader, n_batches = individual_train_dataloader(
-        data_root, "individual", config, gpu_ids
+        os.path.join(data_root, "train"), "individual", config, gpu_ids
     )
 
     # create model
-    ann_path = "../datasets/dataset03/annotation/role.txt"
+    ann_path = f"{data_root}/annotation/role.txt"
+    print(ann_path)
     if model_type == "vae":
         model = VAE(config, n_batches, annotation_path=ann_path)
         # model = VAE(config, n_batches)
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
     elif model_type == "sqvae":
-        if unsupervised_learning:
+        if unsupervised_training:
             ann_path = None
         model = SQVAE(config, annotation_path=ann_path)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
