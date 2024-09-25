@@ -55,7 +55,7 @@ if __name__ == "__main__":
 
     pre_n_frame = seq_len
     data_tmp = []
-    for batch in tqdm(dataloader, total=n_samples):
+    for batch in tqdm(dataloader, total=n_samples, ncols=100):
         keys, ids, kps, bbox, mask = batch
         if kps.ndim == 5:
             ids = ids[0]
@@ -63,7 +63,6 @@ if __name__ == "__main__":
             bbox = bbox[0]
 
         n_frame = int(keys[0].split("_")[1])
-        key = keys[0]
         _id = ids.cpu().numpy()[0]
         kps = kps.cpu().numpy()[0]
         bbox = bbox.cpu().numpy()[0]
@@ -84,9 +83,9 @@ if __name__ == "__main__":
                     (255, 255, 255),
                     1,
                 )
-                for _id, kps, bbox in data_tmp:
+                for _id_tmp, kps_tmp, bbox_tmp in data_tmp:
                     frame = plot_on_frame(
-                        frame, _id, bbox[idx_data], kps[idx_data], frame_size
+                        frame, _id_tmp, bbox_tmp[idx_data], kps_tmp[idx_data], frame_size
                     )
 
                 wrt.write(frame)
