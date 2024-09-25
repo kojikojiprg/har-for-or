@@ -44,6 +44,7 @@ def load_dataset(
             flow_transform=FlowToTensor(),
             bbox_transform=NormalizeBbox(),
             kps_transform=NormalizeKeypoints(),
+            mask_leg=config.mask_leg,
         )
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":

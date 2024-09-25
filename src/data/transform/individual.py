@@ -107,6 +107,7 @@ def individual_npz_to_tensor(
     flow_transform,
     bbox_transform,
     kps_transform,
+    mask_leg,
 ):
     key = sample["__key__"]
     npz = list(np.load(io.BytesIO(sample["npz"])).values())
@@ -142,6 +143,8 @@ def individual_npz_to_tensor(
     kps[mask] = -1.0
     kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
     kps = interpolate_points(kps, mask).reshape(seq_len, 17, 2)
+    if mask_leg:
+        kps = kps[:, :-4, :]
     kps = torch.from_numpy(kps).to(torch.float32)
 
     bboxs[mask] = -1.0

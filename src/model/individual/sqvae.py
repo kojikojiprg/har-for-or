@@ -29,13 +29,14 @@ class SQVAE(LightningModule):
         self.temp_decay = config.temp_decay
         self.temp_min = config.temp_min
         self.latent_ndim = config.latent_ndim
-        # self.book_size = config.book_size
         self.n_clusters = config.n_clusters
 
         if not config.mask_leg:
-            self.n_pts = (17 + 2) * 2
+            self.n_pts = 17 + 2
+            self.n_pts_vis = 17
         else:  # mask ankles and knees
-            self.n_pts = (17 - 4 + 2) * 2
+            self.n_pts = 17 - 4 + 2
+            self.n_pts_vis = 17 - 4
 
         self.encoder = None
         self.decoder = None
@@ -48,7 +49,9 @@ class SQVAE(LightningModule):
         if self.encoder is not None:
             return
         self.encoder = Encoder(self.config)
-        self.decoders = nn.ModuleList([Decoder(self.config) for _ in range(self.n_pts)])
+        self.decoders = nn.ModuleList(
+            [Decoder(self.config) for _ in range(self.n_pts * 2)]
+        )
         self.quantizer = GaussianVectorQuantizer(self.config)
 
         if self.annotation_path is not None:
@@ -63,8 +66,8 @@ class SQVAE(LightningModule):
         return [opt], [sch]
 
     def forward(self, x_vis, x_spc, quantizer_is_train):
-        # x_vis (b, seq_len, 17, 2)
-        # x_spc (b, seq_len, 2, 2)
+        # x_vis (b, seq_len, n_pts, 2)
+        # x_spc (b, seq_len, n_pts, 2)
 
         # encoding
         ze, c_logits = self.encoder(x_vis, x_spc)
@@ -81,16 +84,16 @@ class SQVAE(LightningModule):
 
         # reconstruction
         b, seq_len = x_vis.size()[:2]
-        x_vis = x_vis.view(b, seq_len, 17 * 2)
+        x_vis = x_vis.view(b, seq_len, self.n_pts_vis * 2)
         recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
-        for i, decoder in enumerate(self.decoders[: 17 * 2]):
+        for i, decoder in enumerate(self.decoders[: self.n_pts_vis * 2]):
             recon_x = decoder(x_vis[:, :, i], zq[:, i, :])
             recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
-        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
+        recon_x_vis = recon_x_vis.view(b, seq_len, self.n_pts_vis, 2)
 
         x_spc = x_spc.view(b, seq_len, 2 * 2)
         recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
-        for i, decoder in enumerate(self.decoders[17 * 2 :]):
+        for i, decoder in enumerate(self.decoders[self.n_pts_vis * 2 :]):
             recon_x = decoder(x_spc[:, :, i], zq[:, i, :])
             recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
         recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
@@ -285,21 +288,23 @@ class ClassificationHead(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv1d(ndim, ndim * 2, 1, bias=False),
             nn.SiLU(),
-            nn.AvgPool1d(2),  # 38 -> 19
+            nn.AvgPool1d(2),  # 38 -> 19 (mask_leg: 30 -> 15)
             nn.Conv1d(ndim * 2, ndim * 4, 1, bias=False),
             nn.SiLU(),
-            nn.AvgPool1d(3, 2),  # 19 -> 9
+            nn.AvgPool1d(3, 2),  # 19 -> 9 (mask_leg: 15 -> 7)
             nn.Conv1d(ndim * 4, ndim * 8, 1, bias=False),
             nn.SiLU(),
-            nn.AvgPool1d(3, 2),  # 9 -> 4
+            nn.AvgPool1d(3, 2),  # 9 -> 4 (mask_leg: 7 -> 3)
         )
-
-        self.mlp = MLP(4 * ndim * 8, config.n_clusters)
+        if not config.mask_leg:
+            self.mlp = MLP(4 * ndim * 8, config.n_clusters)
+        else:
+            self.mlp = MLP(3 * ndim * 8, config.n_clusters)
 
     def forward(self, x):
         # x (b, n_pts, latent_ndim)
         x = x.permute(0, 2, 1)
-        x = self.conv(x)  # (b, ndim, 4)
+        x = self.conv(x)  # (b, ndim, 4 or 3)
         x = x.view(x.size(0), -1)
         x = self.mlp(x)  # (b, n_clusters)
         return x
@@ -324,21 +329,21 @@ class Encoder(nn.Module):
         self.cls_head = ClassificationHead(config)
 
     def forward(self, x_vis, x_spc, mask=None):
-        # x_vis (b, seq_len, 17, 2)
-        # x_spc (b, seq_len, 2, 2)
+        # x_vis (b, seq_len, n_pts, 2)
+        # x_spc (b, seq_len, n_pts, 2)
 
         # embedding
-        x_vis = self.emb_vis(x_vis)  # (b, 17 * 2, latent_ndim)
-        x_spc = self.emb_spc(x_spc)  # (b, 2 * 2, latent_ndim)
+        x_vis = self.emb_vis(x_vis)  # (b, n_pts * 2, latent_ndim)
+        x_spc = self.emb_spc(x_spc)  # (b, n_pts * 2, latent_ndim)
         z = torch.cat([x_vis, x_spc], dim=1)
-        # z (b, (17 + 2) * 2, latent_ndim)
+        # z (b, n_pts * 2, latent_ndim)
 
         # positional embedding
         z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
         for layer in self.encoders:
             z, attn_w = layer(z, mask)
-        # z (b, (17 + 2) * 2, latent_ndim)
+        # z (b, n_pts * 2, latent_ndim)
 
         c_logits = self.cls_head(z)  # (b, n_clusters)
 

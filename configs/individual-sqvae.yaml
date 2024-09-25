@@ -3,7 +3,7 @@ max_shard_count: 100
 seq_len: 90
 stride: 30
 img_size: [256, 192]
-mask_leg: False
+mask_leg: True
 
 # model
 n_clusters: 5

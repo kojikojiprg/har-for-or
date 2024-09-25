@@ -4,20 +4,21 @@ import numpy as np
 from sklearn.manifold import TSNE
 
 EDGE_INDEX = [
-    (0, 1),
+    (0, 1),  # Head
     (0, 2),
     (1, 3),
-    (2, 4),  # Head
-    (5, 6),
-    (5, 7),
+    (2, 4),
+    (5, 6),  # Trunk
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (5, 7),  # Arm
     (7, 9),
     (6, 8),
     (8, 10),
-    (5, 11),
-    (6, 12),  # Body
-    (11, 13),
-    (12, 14),
+    (11, 13),  # Leg
     (13, 15),
+    (12, 14),
     (14, 16),
 ]
 KP_COLOR = [
@@ -257,7 +258,16 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
     plt.close()
 
 
-def plot_tsne(X, labels, perplexity=10, figpath=None, is_show=False, cmap="tab10", lut=None, legend=True):
+def plot_tsne(
+    X,
+    labels,
+    perplexity=10,
+    figpath=None,
+    is_show=False,
+    cmap="tab10",
+    lut=None,
+    legend=True,
+):
     tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
