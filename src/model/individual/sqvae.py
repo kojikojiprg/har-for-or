@@ -187,13 +187,15 @@ class SQVAE(LightningModule):
         )
 
         # clustering loss
-        psuedo_labels_prob = torch.full_like(c_prob, 1 / self.n_clusters)
-        lc_psuedo = (c_prob * (c_prob.log() - psuedo_labels_prob.log())).mean()
+        c_prior = torch.full_like(c_prob, 1 / self.n_clusters)
+        c_prob = torch.clamp(c_prob, min=1e-10)
+        lc_psuedo = (c_prob * (c_prob.log() - c_prior.log())).mean()
         loss_dict["c_psuedo"] = lc_psuedo.item()
 
         if self.annotations is not None:
-            keys = ["{}_{}".format(*key.split("_")[0::2]) for key in keys]
+            keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
             mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+            keys = keys[mask_supervised]
             mask_supervised = torch.tensor(mask_supervised).to(self.device)
             if torch.any(mask_supervised):
                 labels = []
@@ -205,7 +207,7 @@ class SQVAE(LightningModule):
                 lc_real = F.cross_entropy(
                     c_prob[mask_supervised], labels, reduction="sum"
                 )
-                lc_real = lc_real / len(keys)
+                lc_real = lc_real / ids.size(0)
                 loss_dict["c_real"] = lc_real.item()
             else:
                 lc_real = 0.0
