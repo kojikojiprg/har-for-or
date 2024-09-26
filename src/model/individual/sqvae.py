@@ -125,24 +125,6 @@ class SQVAE(LightningModule):
 
     def loss_x(self, x, recon_x, mask=None):
         mses = self.mse_x(x, recon_x, mask)
-
-        # # mse loss of edge
-        # npt = x.size()[2]
-        # if npt == 2:  # bbox
-        #     edge = x[:, :, 1] - x[:, :, 0]
-        #     recon_edge = recon_x[:, :, 1] - recon_x[:, :, 0]
-        #     mses = mses + self.mse_x(edge, recon_edge)
-        # else:  # kps
-        #     for i, j in EDGE_INDEX:
-        #         edge = x[:, :, j] - x[:, :, i]
-        #         recon_edge = recon_x[:, :, j] - recon_x[:, :, i]
-        #         mses = mses + self.mse_x(edge, recon_edge)
-
-        # # mse loss of seq
-        # diff = x[:, 1:] - x[:, :-1]
-        # recon_diff = recon_x[:, 1:] - recon_x[:, :-1]
-        # mses = mses + self.mse_x(diff, recon_diff)
-
         return mses.mean()
 
     def loss_kl_continuous(self, ze, zq, precision_q):
@@ -192,7 +174,7 @@ class SQVAE(LightningModule):
         # clustering loss
         c_prior = torch.full_like(c_prob, 1 / self.n_clusters)
         c_prob = torch.clamp(c_prob, min=1e-10)
-        lc_psuedo = (c_prob * (c_prob.log() - c_prior.log())).mean()
+        lc_psuedo = (c_prior * (c_prior.log() - c_prob.log())).mean()
         loss_dict["c_psuedo"] = lc_psuedo.item()
 
         if self.annotations is not None:
@@ -218,7 +200,7 @@ class SQVAE(LightningModule):
         else:
             lc_real = 0.0
 
-        lc = lc_real * 10 + lc_psuedo * 0.01
+        lc = lc_real * 10 + lc_psuedo * 0.1
 
         loss_total = (
             (lrc_x_vis + lrc_x_spc) * self.config.lmd_lrc

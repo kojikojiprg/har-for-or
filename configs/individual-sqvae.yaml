@@ -21,7 +21,7 @@ dropout: 0.1
 # optim
 lmd_lrc: 1
 lmd_klc: 1
-lmd_kld: 0.1
+lmd_kld: 1
 lmd_c: 1
 
 lr: 0.001
