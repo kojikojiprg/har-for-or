@@ -21,65 +21,23 @@ EDGE_INDEX = [
     (12, 14),
     (14, 16),
 ]
-KP_COLOR = [
-    # Nose, LEye, REye, LEar, REar
-    (0, 255, 255),
-    (0, 191, 255),
-    (0, 255, 102),
-    (0, 77, 255),
-    (0, 255, 0),
-    # LShoulder, RShoulder, LElbow, RElbow, LWrist, RWrist
-    (77, 255, 255),
-    (77, 255, 204),
-    (77, 204, 255),
-    (191, 255, 77),
-    (77, 191, 255),
-    (191, 255, 77),
-    # LHip, RHip, LKnee, Rknee, LAnkle, RAnkle, Neck
-    (204, 77, 255),
-    (77, 255, 204),
-    (191, 77, 255),
-    (77, 255, 191),
-    (127, 77, 255),
-    (77, 255, 127),
-    (0, 255, 255),
-]
-LIMB_COLOR = [
-    (0, 215, 255),
-    (0, 255, 204),
-    (0, 134, 255),
-    (0, 255, 50),
-    (77, 255, 222),
-    (77, 196, 255),
-    (77, 135, 255),
-    (191, 255, 77),
-    (77, 255, 77),
-    (77, 222, 255),
-    (255, 156, 127),
-    (0, 127, 255),
-    (255, 127, 77),
-    (0, 77, 255),
-    (255, 77, 36),
-]
 
 
-def draw_skeleton(frame: np.array, kps: np.array, color: tuple = None):
+def draw_skeleton(frame: np.array, kps: np.array, color):
     part_line = {}
 
     # draw keypoints
     for n in range(len(kps)):
         cor_x, cor_y = int(kps[n, 0]), int(kps[n, 1])
         part_line[n] = (cor_x, cor_y)
-        c = KP_COLOR[n] if color is None else color
-        cv2.circle(frame, (cor_x, cor_y), 3, c, 1)
+        cv2.circle(frame, (cor_x, cor_y), 3, color, 1)
 
     # draw limbs
     for start_p, end_p in EDGE_INDEX:
         if start_p in part_line and end_p in part_line:
             start_xy = part_line[start_p]
             end_xy = part_line[end_p]
-            c = LIMB_COLOR[n] if color is None else color
-            cv2.line(frame, start_xy, end_xy, c, 2, 3)
+            cv2.line(frame, start_xy, end_xy, color, 2, 3)
 
     return frame
 
