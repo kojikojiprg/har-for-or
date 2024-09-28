@@ -65,19 +65,19 @@ class SQVAE(LightningModule):
         )
         return [opt], [sch]
 
-    def forward(self, x_vis, x_spc, quantizer_is_train):
+    def forward(self, x_vis, x_spc, is_train):
         # x_vis (b, seq_len, n_pts, 2)
         # x_spc (b, seq_len, n_pts, 2)
 
         # encoding
-        ze, c_logits = self.encoder(x_vis, x_spc)
+        ze, c_logits, attn_w = self.encoder(x_vis, x_spc, is_train)
         c_prob = F.softmax(c_logits, dim=-1)
         # ze (b, npts, latent_ndim)
         # c_prob (b, n_clusters)
 
         # quantization
         zq, precision_q, prob, log_prob = self.quantizer(
-            ze, c_logits, quantizer_is_train
+            ze, c_logits, is_train
         )
         # zq (b, npts, latent_ndim)
         # prob (b, npts, book_size)
@@ -101,6 +101,7 @@ class SQVAE(LightningModule):
         return (
             ze,
             zq,
+            attn_w,
             precision_q,
             prob,
             log_prob,
@@ -149,6 +150,7 @@ class SQVAE(LightningModule):
         (
             ze,
             zq,
+            attn_w,
             precision_q,
             prob,
             log_prob,
@@ -229,6 +231,7 @@ class SQVAE(LightningModule):
         (
             ze,
             zq,
+            attn_w,
             precision_q,
             prob,
             log_prob,
@@ -253,6 +256,7 @@ class SQVAE(LightningModule):
                 "mse_x_spc": mse_x_spc.item(),
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
+                "attn_w": attn_w[i].cpu().numpy(),
                 "book_prob": prob[i].cpu().numpy(),
                 "book_idx": prob[i].cpu().numpy().argmax(axis=1),
                 "label_prob": c_prob[i].cpu().numpy(),
@@ -310,7 +314,7 @@ class Encoder(nn.Module):
         )
         self.cls_head = ClassificationHead(config)
 
-    def forward(self, x_vis, x_spc, mask=None):
+    def forward(self, x_vis, x_spc, is_train):
         # x_vis (b, seq_len, n_pts, 2)
         # x_spc (b, seq_len, n_pts, 2)
 
@@ -323,13 +327,21 @@ class Encoder(nn.Module):
         # positional embedding
         z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
-        for layer in self.encoders:
-            z, attn_w = layer(z, mask)
+        if is_train:
+            for layer in self.encoders:
+                z, attn_w = layer(z)
+            attn_w_tensor = None
+        else:
+            attn_w_lst = []
+            for layer in self.encoders:
+                z, attn_w = layer(z, need_weights=~is_train)
+                attn_w_lst.append(attn_w)
+            attn_w_tensor = torch.cat(attn_w_lst, dim=0)
         # z (b, n_pts * 2, latent_ndim)
 
         c_logits = self.cls_head(z)  # (b, n_clusters)
 
-        return z, c_logits
+        return z, c_logits, attn_w_tensor
 
 
 class GaussianVectorQuantizer(nn.Module):
