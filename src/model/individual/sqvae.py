@@ -24,7 +24,6 @@ class SQVAE(LightningModule):
     ):
         super().__init__()
         self.config = config
-        self.annotation_path = annotation_path
         self.temp_init = config.temp_init
         self.temp_decay = config.temp_decay
         self.temp_min = config.temp_min
@@ -384,11 +383,11 @@ class GaussianVectorQuantizer(nn.Module):
         param_q = 1 + self.log_param_q.exp()
         precision_q = 0.5 / torch.clamp(param_q, min=1e-10)
 
-        logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
-        books = torch.empty((0, self.book_size, latent_ndim)).to(ze.device)
         if is_train:
             param_q = 1 + self.log_param_q_cls.exp()
             precision_q_cls = 0.5 / torch.clamp(param_q, min=1e-10)
+
+            logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
             zq = torch.empty((0, n_pts, latent_ndim)).to(ze.device)
             for i, c_logit in enumerate(c_logits):
                 c_prob = self.gumbel_softmax_relaxation(c_logit * precision_q_cls)
@@ -414,6 +413,8 @@ class GaussianVectorQuantizer(nn.Module):
                 zq = torch.cat([zq, zqi.view(1, n_pts, latent_ndim)], dim=0)
                 # mean_prob = torch.mean(prob.detach(), dim=0)
         else:
+            logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
+            books = torch.empty((0, self.book_size, latent_ndim)).to(ze.device)
             for i, idx in enumerate(c_logits.argmax(dim=-1)):
                 book = self.books[idx]
                 logit = -self.calc_distance(ze[i], book) * precision_q
