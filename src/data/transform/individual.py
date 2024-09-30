@@ -55,10 +55,10 @@ def individual_to_npz(
     idvs = []
     for i, _id in enumerate(unique_ids):
         data = {
-            "id": _id,
+            "id": np.array(_id),
             "bbox": bboxs_idvs[i],
             "keypoints": kps_idvs[i],
-            "frame_size": frame_size,  # (h, w)
+            "frame_size": np.array(frame_size),  # (h, w)
         }
         if frames_idvs is not None and flows_idvs is not None:
             data["frame"] = frames_idvs[i]

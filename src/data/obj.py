@@ -1,12 +1,11 @@
-from collections import deque
 import time
+from collections import deque
 from multiprocessing import shared_memory
 from multiprocessing.managers import SyncManager
+from threading import Lock
 
 import numpy as np
 import webdataset as wds
-
-from threading import Lock
 
 
 class ShardWritingManager(SyncManager):
@@ -72,7 +71,9 @@ class SharedShardWriter(wds.ShardWriter):
 
                 self.watch_dog_count += 1
                 if self.watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
-                    raise RuntimeError("The dog barked in SharedShardWriter.write_async process!")
+                    raise RuntimeError(
+                        "The dog barked in SharedShardWriter.write_async process!"
+                    )
             self.watch_dog_count = 0
 
             with self.lock:

@@ -122,6 +122,7 @@ def write_shards(
         sink = swm.SharedShardWriter(shard_pattern, maxcount=shard_maxcount, verbose=0)
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
+        async_results.append(write_async_result)
         arr_write_que_async_f = functools.partial(
             _add_write_que_async,
             n_frames_que=n_frames_que,
@@ -169,7 +170,7 @@ def write_shards(
                 async_results = _monitoring_async_tasks(async_results)
                 time.sleep(0.01)  # waiting for coping queue in _add_write_que_async
                 sleep_count += 1
-                if sleep_count > 60 * 3 / 0.001:
+                if sleep_count > 60 * 3 / 0.01:
                     break  # exit infinite loop after 3 min
 
         while [r.ready() for r in async_results].count(False) > 0:
