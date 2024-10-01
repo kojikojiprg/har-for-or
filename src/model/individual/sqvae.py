@@ -215,6 +215,7 @@ class SQVAE(LightningModule):
 
         return loss_total
 
+    @torch.no_grad()
     def predict_step(self, batch):
         keys, ids, x_vis, x_spc, mask = batch
         x_vis = x_vis.to(next(self.parameters()).device)

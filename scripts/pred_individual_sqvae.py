@@ -5,6 +5,7 @@ import sys
 from glob import glob
 
 import cv2
+
 # import numpy as np
 import torch
 from tqdm import tqdm
@@ -19,24 +20,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument("-v", "--version", type=int, default=0)
-    parser.add_argument("-ep", "--epoch", type=int, default=None)
     parser.add_argument("-g", "--gpu_id", type=int, default=None)
     args = parser.parse_args()
     data_root = args.data_root
     v = args.version
-    ep = args.epoch
     gpu_id = args.gpu_id
     device = f"cuda:{gpu_id}"
 
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
-    # data_dirs = [data_root]
-    # data_dir = data_dirs[0]
+    # data_dirs = sorted(glob(os.path.join(data_root, "*/")))[9:]  # 04
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))[11:]  # 05
 
     checkpoint_dir = f"models/individual/sqvae/version_{v}"
-    if ep is not None:
-        checkpoint_path = f"{checkpoint_dir}/sqvae-seq_len90-stride30-256x192-last-epoch={ep}.ckpt"
-    else:
-        checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
+    checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
 
     # load config
     config_path = f"{checkpoint_dir}/individual-sqvae.yaml"
@@ -79,69 +74,68 @@ if __name__ == "__main__":
         os.makedirs(save_dir, exist_ok=True)
 
         model.eval()
-        with torch.no_grad():
-            pre_n_frame = seq_len
-            results_tmp = []
-            for batch in tqdm(dataloader, total=n_samples, desc=f"{data_dir[-2:]}"):
-                results = model.predict_step(batch)
-                for result in results:
-                    n_frame = int(result["key"].split("_")[1])
-                    key = result["key"]
-                    _id = result["id"]
+        pre_n_frame = seq_len
+        results_tmp = []
+        for batch in tqdm(dataloader, total=n_samples, desc=f"{data_dir[-2:]}"):
+            results = model.predict_step(batch)
+            for result in results:
+                n_frame = int(result["key"].split("_")[1])
+                key = result["key"]
+                _id = result["id"]
 
-                    path = os.path.join(save_dir, f"{key}.pkl")
-                    with open(path, "wb") as f:
-                        pickle.dump(result, f)
+                path = os.path.join(save_dir, f"{key}.pkl")
+                with open(path, "wb") as f:
+                    pickle.dump(result, f)
 
-                    # collect mse
-                    if _id not in mse_x_vis_dict:
-                        mse_x_vis_dict[_id] = {}
-                        mse_x_spc_dict[_id] = {}
-                    mse_x_vis_dict[_id][n_frame] = result["mse_x_vis"]
-                    mse_x_spc_dict[_id][n_frame] = result["mse_x_spc"]
+                # collect mse
+                if _id not in mse_x_vis_dict:
+                    mse_x_vis_dict[_id] = {}
+                    mse_x_spc_dict[_id] = {}
+                mse_x_vis_dict[_id][n_frame] = result["mse_x_vis"]
+                mse_x_spc_dict[_id][n_frame] = result["mse_x_spc"]
 
-                    # collect latent features
-                    latent_features["id"].append(result["id"])
-                    latent_features["ze"].append(result["ze"])
-                    latent_features["zq"].append(result["zq"])
-                    latent_features["book_idx"].append(result["book_idx"])
-                    latent_features["label"].append(result["label"])
+                # collect latent features
+                latent_features["id"].append(result["id"])
+                latent_features["ze"].append(result["ze"])
+                latent_features["zq"].append(result["zq"])
+                latent_features["book_idx"].append(result["book_idx"])
+                latent_features["label"].append(result["label"])
 
-                    # plot bboxs
-                    if pre_n_frame < n_frame:
-                        for i in range(stride):
-                            n_frame_tmp = pre_n_frame - stride + i
-                            idx_data = seq_len - stride + i
+                # plot bboxs
+                if pre_n_frame < n_frame:
+                    for i in range(stride):
+                        n_frame_tmp = pre_n_frame - stride + i
+                        idx_data = seq_len - stride + i
 
-                            frame = cap.read(n_frame_tmp)[1]
-                            frame = cv2.putText(
-                                frame,
-                                f"frame:{n_frame_tmp}",
-                                (10, 40),
-                                cv2.FONT_HERSHEY_COMPLEX,
-                                1.0,
-                                (255, 255, 255),
-                                1,
-                            )
+                        frame = cap.read(n_frame_tmp)[1]
+                        frame = cv2.putText(
+                            frame,
+                            f"frame:{n_frame_tmp}",
+                            (10, 40),
+                            cv2.FONT_HERSHEY_COMPLEX,
+                            1.0,
+                            (255, 255, 255),
+                            1,
+                        )
 
-                            frame_vis = vis.plot_on_frame(
-                                frame.copy(), results_tmp, idx_data, frame_size, "x_vis"
-                            )
-                            wrt_x_vis.write(frame_vis)
-                            frame_spc = vis.plot_on_frame(
-                                frame.copy(), results_tmp, idx_data, frame_size, "x_spc"
-                            )
-                            wrt_x_spc.write(frame_spc)
-                            frame_cluster = vis.plot_on_frame(
-                                frame.copy(), results_tmp, idx_data, frame_size, "cluster"
-                            )
-                            wrt_cluster.write(frame_cluster)
+                        frame_vis = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "x_vis"
+                        )
+                        wrt_x_vis.write(frame_vis)
+                        frame_spc = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "x_spc"
+                        )
+                        wrt_x_spc.write(frame_spc)
+                        frame_cluster = vis.plot_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size, "cluster"
+                        )
+                        wrt_cluster.write(frame_cluster)
 
-                        results_tmp = []
-                        pre_n_frame = n_frame
+                    results_tmp = []
+                    pre_n_frame = n_frame
 
-                    # add result in temporary result list
-                    results_tmp.append(result)
+                # add result in temporary result list
+                results_tmp.append(result)
 
         del cap, wrt_x_vis, wrt_x_spc, wrt_cluster
 
