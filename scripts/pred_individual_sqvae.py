@@ -27,8 +27,7 @@ if __name__ == "__main__":
     gpu_id = args.gpu_id
     device = f"cuda:{gpu_id}"
 
-    # data_dirs = sorted(glob(os.path.join(data_root, "*/")))[9:]  # 04
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))[11:]  # 05
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
     checkpoint_dir = f"models/individual/sqvae/version_{v}"
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
