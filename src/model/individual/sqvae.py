@@ -335,8 +335,8 @@ class Encoder(nn.Module):
             attn_w_lst = []
             for layer in self.encoders:
                 z, attn_w = layer(z, need_weights=~is_train)
-                attn_w_lst.append(attn_w)
-            attn_w_tensor = torch.cat(attn_w_lst, dim=0)
+                attn_w_lst.append(attn_w.unsqueeze(0))
+            attn_w_tensor = torch.cat(attn_w_lst, dim=1)
         # z (b, n_pts * 2, latent_ndim)
 
         c_logits = self.cls_head(z)  # (b, n_clusters)
