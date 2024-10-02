@@ -201,7 +201,7 @@ import torch.nn as nn
 #     ):
 #         super().__init__()
 #         self.emb_hidden_ndim = emb_hidden_ndim
-#         # self.emb_vis = PixcelEmbedding(
+#         # self.emb_kps = PixcelEmbedding(
 #         #     hidden_ndim, out_ndim, nheads, nlayers, dropout, patch_size, img_size
 #         # )
 #         self.feature = nn.Parameter(
@@ -212,9 +212,9 @@ import torch.nn as nn
 #             torch.full((1, 1), -float("inf")), requires_grad=False
 #         )
 #         self.npatchs = 3
-#         self.emb_vis = PointEmbedding(emb_hidden_ndim, nheads, dropout, "keypoints")
-#         self.emb_spc = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
-#         self.emb_spc_diff = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
+#         self.emb_kps = PointEmbedding(emb_hidden_ndim, nheads, dropout, "keypoints")
+#         self.emb_bbox = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
+#         self.emb_bbox_diff = PointEmbedding(emb_hidden_ndim, nheads, dropout, "bbox")
 #         self.attn = nn.MultiheadAttention(
 #             emb_hidden_ndim, nheads, dropout, batch_first=True
 #         )
@@ -223,25 +223,25 @@ import torch.nn as nn
 #             nn.SiLU(),
 #         )
 
-#     def forward(self, x_vis, x_spc, x_spc_diff, lmd_vis=0.3):
-#         x_vis = self.emb_vis(x_vis)
-#         x_spc = self.emb_spc(x_spc)
-#         x_spc_diff = self.emb_spc_diff(x_spc_diff)
-#         # lmd_spc = (1 - lmd_vis) / 2
-#         # x = x_vis * lmd_vis + x_spc * lmd_spc + x_spc_diff * lmd_spc
-#         # x = x_vis + x_spc + x_spc_diff
+#     def forward(self, x_kps, x_bbox, x_bbox_diff, lmd_kps=0.3):
+#         x_kps = self.emb_kps(x_kps)
+#         x_bbox = self.emb_bbox(x_bbox)
+#         x_bbox_diff = self.emb_bbox_diff(x_bbox_diff)
+#         # lmd_bbox = (1 - lmd_kps) / 2
+#         # x = x_kps * lmd_kps + x_bbox * lmd_bbox + x_bbox_diff * lmd_bbox
+#         # x = x_kps + x_bbox + x_bbox_diff
 
 #         # attention
-#         b, seq_len = x_vis.size()[:2]
-#         x_vis = x_vis.view(b * seq_len, 1, self.emb_hidden_ndim)
-#         x_spc = x_spc.view(b * seq_len, 1, self.emb_hidden_ndim)
-#         x_spc_diff = x_spc_diff.view(b * seq_len, 1, self.emb_hidden_ndim)
+#         b, seq_len = x_kps.size()[:2]
+#         x_kps = x_kps.view(b * seq_len, 1, self.emb_hidden_ndim)
+#         x_bbox = x_bbox.view(b * seq_len, 1, self.emb_hidden_ndim)
+#         x_bbox_diff = x_bbox_diff.view(b * seq_len, 1, self.emb_hidden_ndim)
 #         fp = self.feature.repeat((b, seq_len, 1)).view(
 #             b * seq_len, 1, self.emb_hidden_ndim
 #         )
-#         x = torch.cat([fp, x_vis, x_spc, x_spc_diff], dim=1)
+#         x = torch.cat([fp, x_kps, x_bbox, x_bbox_diff], dim=1)
 #         fp_mask = self.feature_mask.repeat((b, seq_len, 1))
-#         pad_mask = torch.full((b, seq_len, self.npatchs), 0.0).to(x_vis.device)
+#         pad_mask = torch.full((b, seq_len, self.npatchs), 0.0).to(x_kps.device)
 #         pad_mask = torch.cat([fp_mask, pad_mask], dim=2)
 #         pad_mask = pad_mask.view(b * seq_len, self.npatchs + 1)
 #         x = self.attn(x, x, x, key_padding_mask=pad_mask, need_weights=False)[0]

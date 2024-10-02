@@ -19,8 +19,8 @@ emb_dropout: 0.1
 patch_size: [32, 24]
 
 # optim VAE
-lrc_x_vis: 1
-lrc_x_spc: 1
+lrc_x_kps: 1
+lrc_x_bbox: 1
 lg: 1
 lc: 1
 lr: 0.0001

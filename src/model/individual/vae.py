@@ -97,46 +97,46 @@ class VAE(LightningModule):
         return lg
 
     def training_step(self, batch, batch_idx):
-        keys, ids, x_vis, x_spc, mask = batch
+        keys, ids, x_kps, x_bbox, mask = batch
         keys = np.array(keys).T[0]
         ids = ids[0]
-        x_vis = x_vis[0]
-        x_spc = x_spc[0]
+        x_kps = x_kps[0]
+        x_bbox = x_bbox[0]
         # mask = mask[0]
 
         opt_pz_y, opt = self.optimizers()
 
         self.toggle_optimizer(opt)
         # VAE
-        logits = self.Qy_x(x_vis, x_spc)
+        logits = self.Qy_x(x_kps, x_bbox)
         y = F.gumbel_softmax(logits, self.tau, dim=1)
         pi = F.softmax(logits, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y)
+        z, mu, logvar = self.Qz_xy(x_kps, x_bbox, y)
         z_prior, mu_prior, logvar_prior = self.Pz_y(pi)
 
-        b, seq_len = x_vis.size()[:2]
-        x_vis = x_vis.view(b, seq_len, 17 * 2)
-        recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
+        b, seq_len = x_kps.size()[:2]
+        x_kps = x_kps.view(b, seq_len, 17 * 2)
+        recon_x_kps = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.Px_z[: 17 * 2]):
-            recon_x = decoder(x_vis[:, :, i], z[:, i, :])
-            recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
+            recon_x = decoder(x_kps[:, :, i], z[:, i, :])
+            recon_x_kps = torch.cat([recon_x_kps, recon_x], dim=2)
 
-        x_spc = x_spc.view(b, seq_len, 2 * 2)
-        recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
+        x_bbox = x_bbox.view(b, seq_len, 2 * 2)
+        recon_x_bbox = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.Px_z[17 * 2 :]):
-            recon_x = decoder(x_spc[:, :, i], z[:, i, :])
-            recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
+            recon_x = decoder(x_bbox[:, :, i], z[:, i, :])
+            recon_x_bbox = torch.cat([recon_x_bbox, recon_x], dim=2)
 
-        x_vis = x_vis.view(b, seq_len, 17, 2)
-        x_spc = x_spc.view(b, seq_len, 2, 2)
-        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
-        recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
+        x_kps = x_kps.view(b, seq_len, 17, 2)
+        x_bbox = x_bbox.view(b, seq_len, 2, 2)
+        recon_x_kps = recon_x_kps.view(b, seq_len, 17, 2)
+        recon_x_bbox = recon_x_bbox.view(b, seq_len, 2, 2)
 
         # get augumented label
-        logits_aug = self.Qy_x(recon_x_vis, recon_x_spc)
+        logits_aug = self.Qy_x(recon_x_kps, recon_x_bbox)
         y_aug = F.gumbel_softmax(logits_aug, self.tau, dim=1)
         pi_aug = F.softmax(logits_aug, dim=1)
-        z_aug, mu_aug, logvar_aug = self.Qz_xy(recon_x_vis, recon_x_spc, y_aug)
+        z_aug, mu_aug, logvar_aug = self.Qz_xy(recon_x_kps, recon_x_bbox, y_aug)
 
         # calc joint probabilities of the pairwise similarities
         q_sim = self.pairwise_sim(mu, logvar)
@@ -161,14 +161,14 @@ class VAE(LightningModule):
 
         # ELBO
         # reconstruct loss of vis
-        lrc_x_vis = self.loss_x(x_vis, recon_x_vis)
-        logs["vis"] = lrc_x_vis.mean().item()
+        lrc_x_kps = self.loss_x(x_kps, recon_x_kps)
+        logs["vis"] = lrc_x_kps.mean().item()
 
         # reconstruct loss of spc
-        lrc_x_spc = self.loss_x(x_spc, recon_x_spc)
-        logs["spc"] = lrc_x_spc.mean().item()
+        lrc_x_bbox = self.loss_x(x_bbox, recon_x_bbox)
+        logs["spc"] = lrc_x_bbox.mean().item()
 
-        lrc = lrc_x_vis * self.config.lrc_x_vis + lrc_x_spc * self.config.lrc_x_spc
+        lrc = lrc_x_kps * self.config.lrc_x_kps + lrc_x_bbox * self.config.lrc_x_bbox
         lrc = lrc.mean()
 
         # clustering loss
@@ -249,7 +249,7 @@ class VAE(LightningModule):
         #         self.ids_all = []
 
         del z, mu, logvar, z_prior, mu_prior, logvar_prior
-        del keys, ids, x_vis, x_spc, mask
+        del keys, ids, x_kps, x_bbox, mask
 
     @staticmethod
     def log_normal(z, mu, logvar):
@@ -300,40 +300,40 @@ class VAE(LightningModule):
     #     self.untoggle_optimizer(opt_pz_y)
 
     def predict_step(self, batch):
-        keys, ids, x_vis, x_spc, mask = batch
-        x_vis = x_vis.to(next(self.parameters()).device)
-        x_spc = x_spc.to(next(self.parameters()).device)
+        keys, ids, x_kps, x_bbox, mask = batch
+        x_kps = x_kps.to(next(self.parameters()).device)
+        x_bbox = x_bbox.to(next(self.parameters()).device)
         # mask = mask.to(next(self.parameters()).device)
-        if x_vis.ndim == 5:
+        if x_kps.ndim == 5:
             ids = ids[0]
-            x_vis = x_vis[0]
-            x_spc = x_spc[0]
+            x_kps = x_kps[0]
+            x_bbox = x_bbox[0]
             # mask = mask[0]
 
-        logits = self.Qy_x(x_vis, x_spc)
+        logits = self.Qy_x(x_kps, x_bbox)
         y = F.softmax(logits, dim=1)
-        z, mu, logvar = self.Qz_xy(x_vis, x_spc, y)
+        z, mu, logvar = self.Qz_xy(x_kps, x_bbox, y)
 
-        b, seq_len = x_vis.size()[:2]
-        x_vis = x_vis.view(b, seq_len, 17 * 2)
-        recon_x_vis = torch.empty((b, seq_len, 0)).to(self.device)
+        b, seq_len = x_kps.size()[:2]
+        x_kps = x_kps.view(b, seq_len, 17 * 2)
+        recon_x_kps = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.Px_z[: 17 * 2]):
-            recon_x = decoder(x_vis[:, :, i], z[:, i, :])
-            recon_x_vis = torch.cat([recon_x_vis, recon_x], dim=2)
+            recon_x = decoder(x_kps[:, :, i], z[:, i, :])
+            recon_x_kps = torch.cat([recon_x_kps, recon_x], dim=2)
 
-        x_spc = x_spc.view(b, seq_len, 2 * 2)
-        recon_x_spc = torch.empty((b, seq_len, 0)).to(self.device)
+        x_bbox = x_bbox.view(b, seq_len, 2 * 2)
+        recon_x_bbox = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.Px_z[17 * 2 :]):
-            recon_x = decoder(x_spc[:, :, i], z[:, i, :])
-            recon_x_spc = torch.cat([recon_x_spc, recon_x], dim=2)
+            recon_x = decoder(x_bbox[:, :, i], z[:, i, :])
+            recon_x_bbox = torch.cat([recon_x_bbox, recon_x], dim=2)
 
-        mse_x_vis = self.loss_x(x_vis, recon_x_vis, mask)
-        mse_x_spc = self.loss_x(x_spc, recon_x_spc, mask)
+        mse_x_kps = self.loss_x(x_kps, recon_x_kps, mask)
+        mse_x_bbox = self.loss_x(x_bbox, recon_x_bbox, mask)
 
-        x_vis = x_vis.view(b, seq_len, 17, 2)
-        recon_x_vis = recon_x_vis.view(b, seq_len, 17, 2)
-        x_spc = x_spc.view(b, seq_len, 2, 2)
-        recon_x_spc = recon_x_spc.view(b, seq_len, 2, 2)
+        x_kps = x_kps.view(b, seq_len, 17, 2)
+        recon_x_kps = recon_x_kps.view(b, seq_len, 17, 2)
+        x_bbox = x_bbox.view(b, seq_len, 2, 2)
+        recon_x_bbox = recon_x_bbox.view(b, seq_len, 2, 2)
 
         results = []
         for i in range(len(keys)):
@@ -341,14 +341,14 @@ class VAE(LightningModule):
             data = {
                 "key": keys[i],
                 "id": ids[i].cpu().numpy().item(),
-                # "x_vis": x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-                # "fake_x_vis": fake_x_vis[0].cpu().numpy().transpose(0, 2, 3, 1),
-                "x_vis": x_vis[i].cpu().numpy(),
-                "recon_x_vis": recon_x_vis[i].cpu().numpy(),
-                "mse_x_vis": mse_x_vis.item(),
-                "x_spc": x_spc[i].cpu().numpy(),
-                "recon_x_spc": recon_x_spc[i].cpu().numpy(),
-                "mse_x_spc": mse_x_spc.item(),
+                # "x_kps": x_kps[0].cpu().numpy().transpose(0, 2, 3, 1),
+                # "fake_x_kps": fake_x_kps[0].cpu().numpy().transpose(0, 2, 3, 1),
+                "x_kps": x_kps[i].cpu().numpy(),
+                "recon_x_kps": recon_x_kps[i].cpu().numpy(),
+                "mse_x_kps": mse_x_kps.item(),
+                "x_bbox": x_bbox[i].cpu().numpy(),
+                "recon_x_bbox": recon_x_bbox[i].cpu().numpy(),
+                "mse_x_bbox": mse_x_bbox.item(),
                 "z": z[i].cpu().numpy(),
                 "mu": mu[i].cpu().numpy(),
                 "logvar": logvar[i].cpu().numpy(),
@@ -374,8 +374,10 @@ class Qy_x(nn.Module):
 
         self.cls = nn.Parameter(torch.randn((1, 1, config.latent_ndim)))
 
-        self.emb_vis = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
-        self.emb_spc = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_kps = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_bbox = Embedding(
+            config.seq_len, config.hidden_ndim, config.latent_ndim
+        )
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
@@ -389,14 +391,14 @@ class Qy_x(nn.Module):
             MLP(config.latent_ndim, config.n_clusters), nn.Softmax(dim=-1)
         )
 
-    def forward(self, x_vis, x_spc, mask=None):
+    def forward(self, x_kps, x_bbox, mask=None):
         # embedding
-        b, seq_len = x_vis.size()[:2]
+        b, seq_len = x_kps.size()[:2]
 
         # embedding
-        x_vis = self.emb_vis(x_vis)  # (b, 17 * 2, latent_ndim)
-        x_spc = self.emb_spc(x_spc)  # (b, 2 * 2, latent_ndim)
-        z = torch.cat([self.cls.repeat(b, 1, 1), x_vis, x_spc], dim=1)
+        x_kps = self.emb_kps(x_kps)  # (b, 17 * 2, latent_ndim)
+        x_bbox = self.emb_bbox(x_bbox)  # (b, 2 * 2, latent_ndim)
+        z = torch.cat([self.cls.repeat(b, 1, 1), x_kps, x_bbox], dim=1)
         # z (b, (17 + 2) * 2 + 1, latent_ndim)
 
         # positional embedding
@@ -416,8 +418,10 @@ class Qz_xy(nn.Module):
         self.hidden_ndim = config.hidden_ndim
         self.latent_ndim = config.latent_ndim
 
-        self.emb_vis = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
-        self.emb_spc = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_kps = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
+        self.emb_bbox = Embedding(
+            config.seq_len, config.hidden_ndim, config.latent_ndim
+        )
         self.emb_y = MLP(config.n_clusters, config.latent_ndim)
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
@@ -432,14 +436,14 @@ class Qz_xy(nn.Module):
         self.lin_mu = nn.Linear(config.latent_ndim, config.latent_ndim)
         self.lin_logvar = nn.Linear(config.latent_ndim, config.latent_ndim)
 
-    def forward(self, x_vis, x_spc, y, mask=None):
+    def forward(self, x_kps, x_bbox, y, mask=None):
         # embedding
-        b, seq_len = x_vis.size()[:2]
+        b, seq_len = x_kps.size()[:2]
 
         y = self.emb_y(y).view(b, 1, self.latent_ndim)
-        x_vis = self.emb_vis(x_vis) + y  # (b, 17 * 2, latent_ndim)
-        x_spc = self.emb_spc(x_spc) + y  # (b, 2 * 2, latent_ndim)
-        z = torch.cat([x_vis, x_spc], dim=1)
+        x_kps = self.emb_kps(x_kps) + y  # (b, 17 * 2, latent_ndim)
+        x_bbox = self.emb_bbox(x_bbox) + y  # (b, 2 * 2, latent_ndim)
+        z = torch.cat([x_kps, x_bbox], dim=1)
         # z (b, (17 + 2) * 2, latent_ndim)
 
         # positional embedding
