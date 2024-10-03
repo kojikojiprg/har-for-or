@@ -117,16 +117,16 @@ if __name__ == "__main__":
                             1,
                         )
 
-                        frame_kps = vis.plot_on_frame(
-                            frame.copy(), results_tmp, idx_data, frame_size, "x_kps"
+                        frame_kps = vis.plot_kps_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size
                         )
                         wrt_x_kps.write(frame_kps)
-                        frame_bbox = vis.plot_on_frame(
-                            frame.copy(), results_tmp, idx_data, frame_size, "x_bbox"
+                        frame_bbox = vis.plot_bbox_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size
                         )
                         wrt_x_bbox.write(frame_bbox)
-                        frame_cluster = vis.plot_on_frame(
-                            frame.copy(), results_tmp, idx_data, frame_size, "cluster"
+                        frame_cluster = vis.plot_cluster_on_frame(
+                            frame.copy(), results_tmp, idx_data, frame_size
                         )
                         wrt_cluster.write(frame_cluster)
 

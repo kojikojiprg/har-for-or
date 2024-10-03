@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.manifold import TSNE
 
+cm_tab10 = plt.get_cmap("tab10")
+cm_jet = plt.get_cmap("jet", 15)
+
 EDGE_INDEX = [
     (0, 1),  # Head
     (0, 2),
@@ -23,39 +26,108 @@ EDGE_INDEX = [
 ]
 
 
-def draw_skeleton(frame: np.array, kps: np.array, color):
+def draw_skeleton(frame: np.array, kps: np.array, color, thickness=2, plot_kps=True):
     part_line = {}
 
     # draw keypoints
     for n in range(len(kps)):
         cor_x, cor_y = int(kps[n, 0]), int(kps[n, 1])
         part_line[n] = (cor_x, cor_y)
-        cv2.circle(frame, (cor_x, cor_y), 3, color, 1)
+        if plot_kps:
+            cv2.circle(frame, (cor_x, cor_y), 3, color, 1)
 
     # draw limbs
     for start_p, end_p in EDGE_INDEX:
         if start_p in part_line and end_p in part_line:
             start_xy = part_line[start_p]
             end_xy = part_line[end_p]
-            cv2.line(frame, start_xy, end_xy, color, 2, 3)
+            cv2.line(frame, start_xy, end_xy, color, thickness)
 
     return frame
 
 
-def draw_bbox(frame: np.array, bbox: np.array, color: tuple):
+def draw_bbox(frame: np.array, bbox: np.array, color: tuple, thickness=2):
     pt1, pt2 = bbox.astype(int).reshape(2, 2)
-    frame = cv2.rectangle(frame, pt1, pt2, color, 2)
+    frame = cv2.rectangle(frame, pt1, pt2, color, thickness)
     return frame
 
 
-def plot_on_frame(frame, results, idx_data, frame_size, content):
-    cm = plt.get_cmap("tab10")
+def plot_bbox_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
         bbox = data["x_bbox"][idx_data]
-        # mask = data["mask"][idx_data]
-        # if mask:
-        #     continue
+        mse_x_bbox = data["mse_x_bbox"]
+        fake_bbox = data["recon_x_bbox"][idx_data]
+
+        bbox = (bbox.copy() + 1) / 2 * frame_size
+        fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
+
+        # id
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
+
+        # bbox and fake_bbox
+        frame = draw_bbox(frame, bbox, color=(0, 255, 0))
+        frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
+
+        # mse
+        pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
+        frame = cv2.putText(
+            frame,
+            f"{mse_x_bbox:.3f}",
+            pt,
+            cv2.FONT_HERSHEY_COMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+
+    return frame
+
+
+def plot_kps_on_frame(frame, results, idx_data, frame_size):
+    for data in results:
+        _id = data["id"]
+        bbox = data["x_bbox"][idx_data]
+        kps = data["x_kps"][idx_data]
+        fake_kps = data["recon_x_kps"][idx_data]
+        mse_x_kps = data["mse_x_kps"]
+
+        bbox = (bbox.copy() + 1) / 2 * frame_size
+        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+        fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+
+        # id
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
+
+        # kps
+        frame = draw_skeleton(frame, kps, color=(0, 255, 0))
+        frame = draw_skeleton(frame, fake_kps, color=(0, 0, 255))
+
+        # mse
+        pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
+        frame = cv2.putText(
+            frame,
+            f"{mse_x_kps:.3f}",
+            pt,
+            cv2.FONT_HERSHEY_COMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+    return frame
+
+
+def plot_cluster_on_frame(frame, results, idx_data, frame_size):
+    for data in results:
+        _id = data["id"]
+        bbox = data["x_bbox"][idx_data]
+        label = str(data["label"])
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
 
@@ -65,72 +137,52 @@ def plot_on_frame(frame, results, idx_data, frame_size, content):
             frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
         )
 
-        # bbox = bbox.copy() * frame_size
-        if content == "x_kps":
-            # fake_img = data["fake_x_kps"][idx_data]
-            kps = data["x_kps"][idx_data]
-            fake_kps = data["recon_x_kps"][idx_data]
-            mse_x_kps = data["mse_x_kps"]
+        # bbox
+        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = tuple(color[::-1])  # RGB -> BGR
+        frame = draw_bbox(frame, bbox, color)
 
-            # resize imgs and write
-            # x1, y1, x2, y2 = bbox.reshape(4).astype(int)
-            # fake_img = cv2.resize(fake_img, (x2 - x1, y2 - y1))
-            # fake_img = fake_img[:, :, :3]
-            # mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-            # fake_img = ((fake_img * std) + mean) * 255
-            # frame[y1:y2, x1:x2] = (fake_img).astype(np.uint8)
+        # clustering label
+        pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
+        frame = cv2.putText(frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 0.8, color, 2)
+    return frame
 
-            kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-            fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-            frame = draw_skeleton(frame, kps, color=(0, 255, 0))
-            frame = draw_skeleton(frame, fake_kps, color=(0, 0, 255))
 
-            # mse
-            pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
-            frame = cv2.putText(
-                frame,
-                f"{mse_x_kps:.3f}",
-                pt,
-                cv2.FONT_HERSHEY_COMPLEX,
-                0.8,
-                (255, 255, 255),
-                2,
-            )
-        elif content == "x_bbox":
-            mse_x_bbox = data["mse_x_bbox"]
-            fake_bbox = data["recon_x_bbox"][idx_data]
+def plot_attention_on_frame(frame, results, idx_data, frame_size):
+    for data in results:
+        _id = data["id"]
+        bbox = data["x_bbox"][idx_data]
+        kps = data["x_kps"][idx_data]
+        attn_w = data["attn_w"][-1]  # attention of last encoder layer
 
-            # bbox and fake_bbox
-            fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
-            # fake_bbox = fake_bbox.copy() * frame_size
-            frame = draw_bbox(frame, bbox, color=(0, 255, 0))
-            frame = draw_bbox(frame, fake_bbox, color=(0, 0, 255))
+        bbox = (bbox.copy() + 1) / 2 * frame_size
+        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
 
-            # mse
-            pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
-            frame = cv2.putText(
-                frame,
-                f"{mse_x_bbox:.3f}",
-                pt,
-                cv2.FONT_HERSHEY_COMPLEX,
-                0.8,
-                (255, 255, 255),
-                2,
-            )
-        elif content == "cluster":
-            label = str(data["label"])
+        # id
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
 
-            color = (np.array(cm(int(label))[:3]) * 255).astype(int).tolist()
-            color = tuple(color[::-1])  # RGB -> BGR
-            frame = draw_bbox(frame, bbox, color)
+        frame = draw_bbox(frame, bbox, (255, 240, 240), 1)
+        frame = draw_skeleton(frame, kps, (255, 240, 240), 1, False)
 
-            # clustering label
-            pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
-            frame = cv2.putText(
-                frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 0.8, color, 2
-            )
-        else:
-            raise ValueError
+        # plot attention
+        attn_w = attn_w.mean(axis=0)  # mean by query
+        attn_w = attn_w[0::2] + attn_w[1::2]  # sum x and y
+        attn_w = (attn_w * 100).astype(int)
+        for i in range(len(kps)):
+            pt = kps[i].astype(int).tolist()
+            w = attn_w[i]
+            c = (np.array(cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
+        for i in range(len(bbox)):
+            pt = bbox[i].astype(int).tolist()
+            w = attn_w[i + len(kps)]
+            c = (np.array(cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
 
     return frame
 
@@ -226,7 +278,7 @@ def plot_tsne(
     lut=None,
     legend=True,
 ):
-    tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
+    tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, max_iter=1000)
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
     cm = plt.get_cmap(cmap, lut)
