@@ -6,7 +6,6 @@ from glob import glob
 
 import cv2
 
-# import numpy as np
 import torch
 from tqdm import tqdm
 from webdataset import WebLoader
@@ -35,7 +34,6 @@ if __name__ == "__main__":
     # load config
     config_path = f"{checkpoint_dir}/individual-sqvae.yaml"
     config = yaml_handler.load(config_path)
-
     seq_len = config.seq_len
     stride = config.stride
 
@@ -61,14 +59,11 @@ if __name__ == "__main__":
         frame_size = cap.size
 
         # create writers
-        wrt_x_kps = video.Writer(f"{data_dir}/pred_x_kps.mp4", cap.fps, cap.size)
-        wrt_x_bbox = video.Writer(f"{data_dir}/pred_x_bbox.mp4", cap.fps, cap.size)
+        wrt_kps = video.Writer(f"{data_dir}/pred_kps.mp4", cap.fps, cap.size)
+        wrt_bbox = video.Writer(f"{data_dir}/pred_bbox.mp4", cap.fps, cap.size)
         wrt_cluster = video.Writer(f"{data_dir}/pred_cluster.mp4", cap.fps, cap.size)
 
         # pred
-        mse_x_kps_dict = {}
-        mse_x_bbox_dict = {}
-        latent_features = {"id": [], "book_idx": [], "label": [], "ze": [], "zq": []}
         save_dir = os.path.join(data_dir, "pred")
         os.makedirs(save_dir, exist_ok=True)
 
@@ -85,20 +80,6 @@ if __name__ == "__main__":
                 path = os.path.join(save_dir, f"{key}.pkl")
                 with open(path, "wb") as f:
                     pickle.dump(result, f)
-
-                # collect mse
-                if _id not in mse_x_kps_dict:
-                    mse_x_kps_dict[_id] = {}
-                    mse_x_bbox_dict[_id] = {}
-                mse_x_kps_dict[_id][n_frame] = result["mse_x_kps"]
-                mse_x_bbox_dict[_id][n_frame] = result["mse_x_bbox"]
-
-                # collect latent features
-                latent_features["id"].append(result["id"])
-                latent_features["ze"].append(result["ze"])
-                latent_features["zq"].append(result["zq"])
-                latent_features["book_idx"].append(result["book_idx"])
-                latent_features["label"].append(result["label"])
 
                 # plot bboxs
                 if pre_n_frame < n_frame:
@@ -120,11 +101,11 @@ if __name__ == "__main__":
                         frame_kps = vis.plot_kps_on_frame(
                             frame.copy(), results_tmp, idx_data, frame_size
                         )
-                        wrt_x_kps.write(frame_kps)
+                        wrt_kps.write(frame_kps)
                         frame_bbox = vis.plot_bbox_on_frame(
                             frame.copy(), results_tmp, idx_data, frame_size
                         )
-                        wrt_x_bbox.write(frame_bbox)
+                        wrt_bbox.write(frame_bbox)
                         frame_cluster = vis.plot_cluster_on_frame(
                             frame.copy(), results_tmp, idx_data, frame_size
                         )
@@ -136,27 +117,4 @@ if __name__ == "__main__":
                 # add result in temporary result list
                 results_tmp.append(result)
 
-        del cap, wrt_x_kps, wrt_x_bbox, wrt_cluster
-
-        # # plot mse
-        # vis.plot_mse(
-        #     mse_x_kps_dict,
-        #     max_n_frame,
-        #     stride,
-        #     0.05,
-        #     "MSE_x_kps",
-        #     f"{data_dir}/pred_x_kps.jpg",
-        # )
-        # vis.plot_mse(
-        #     mse_x_bbox_dict,
-        #     max_n_frame,
-        #     stride,
-        #     0.05,
-        #     "MSE_x_bbox",
-        #     f"{data_dir}/pred_x_bbox.jpg",
-        # )
-
-        # # plot latent feature
-        # X = np.array(latent_features["mu"]).reshape(-1, config.latent_ndim * 19 * 2)
-        # labels = np.array(latent_features["label"])
-        # vis.plot_tsne(X, labels, 10, f"{data_dir}/pred_mu_tsne_label.jpg", cmap="tab10")
+        del cap, wrt_kps, wrt_bbox, wrt_cluster

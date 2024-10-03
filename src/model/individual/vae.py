@@ -299,6 +299,7 @@ class VAE(LightningModule):
     #     self.log("lpzy", loss.item(), prog_bar=True)
     #     self.untoggle_optimizer(opt_pz_y)
 
+    @torch.no_grad()
     def predict_step(self, batch):
         keys, ids, x_kps, x_bbox, mask = batch
         x_kps = x_kps.to(next(self.parameters()).device)
