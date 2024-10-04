@@ -1,6 +1,7 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from sklearn.manifold import TSNE
 
 cm_tab10 = plt.get_cmap("tab10")
@@ -150,7 +151,7 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
 
 def plot_attention_on_frame(frame, results, idx_data, frame_size):
     for data in results:
-        _id = data["id"]
+        label = str(data["label"])
         bbox = data["x_bbox"][idx_data]
         kps = data["x_kps"][idx_data]
         attn_w = data["attn_w"][-1]  # attention of last encoder layer
@@ -158,14 +159,16 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size):
         bbox = (bbox.copy() + 1) / 2 * frame_size
         kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
 
-        # id
+        # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
         frame = cv2.putText(
-            frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+            frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
         )
 
-        frame = draw_bbox(frame, bbox, (255, 240, 240), 1)
-        frame = draw_skeleton(frame, kps, (255, 240, 240), 1, False)
+        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = tuple(color[::-1])  # RGB -> BGR
+        frame = draw_bbox(frame, bbox, color, 1)
+        frame = draw_skeleton(frame, kps, color, 1, False)
 
         # plot attention
         attn_w = attn_w.mean(axis=0)  # mean by query
@@ -185,6 +188,45 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size):
             frame = cv2.circle(frame, pt, 3, c, -1)
 
     return frame
+
+
+def arange_attention_heatmaps(results, n_clusters, n_layers, vmax=0.5, size=(600, 940)):
+    fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
+    fig.tight_layout()
+    axs = fig.subplots(n_clusters, n_layers)
+    for label in range(n_clusters):
+        attn_w = np.array([r["attn_w"] for r in results if r["label"] == label])
+        if len(attn_w) > 0:
+            attn_w = attn_w.mean(axis=0)
+            for i in range(n_layers):
+                sns.heatmap(
+                    attn_w[i],
+                    annot=False,
+                    cmap="Blues",
+                    ax=axs[label, i],
+                    cbar=False,
+                    xticklabels=False,
+                    yticklabels=False,
+                    vmin=0.0,
+                    vmax=vmax,
+                )
+        else:
+            # set blank
+            for i in range(n_layers):
+                axs[label, i].set_axis_off()
+
+    # set titles
+    for i in range(n_layers):
+        axs[0, i].set_xlabel(f"Layer {i}")
+        axs[0, i].xaxis.set_label_position("top")
+    for i in range(n_clusters):
+        axs[i, 0].set_ylabel(f"Label {i}")
+
+    fig.subplots_adjust(0.04, 0.01, 0.99, 0.98)
+    fig.canvas.draw()
+    img = np.array(fig.canvas.renderer.buffer_rgba())
+    plt.close()
+    return img
 
 
 def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=False):

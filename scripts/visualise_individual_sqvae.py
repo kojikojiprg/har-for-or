@@ -4,6 +4,8 @@ import pickle
 import sys
 from glob import glob
 
+import cv2
+import numpy as np
 from tqdm import tqdm
 
 sys.path.append(".")
@@ -16,6 +18,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data_root = args.data_root
     v = args.version
+    size_heatmaps = (600, 940)  # (w, h)
 
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
@@ -45,12 +48,15 @@ if __name__ == "__main__":
         cap = video.Capture(video_path)
         max_n_frame = cap.frame_count
         frame_size = cap.size
+        attn_frame_size = (cap.size[0] + size_heatmaps[0], cap.size[1])
 
         # create writers
         wrt_kps = video.Writer(f"{data_dir}/pred_kps.mp4", cap.fps, cap.size)
         wrt_bbox = video.Writer(f"{data_dir}/pred_bbox.mp4", cap.fps, cap.size)
         wrt_cluster = video.Writer(f"{data_dir}/pred_cluster.mp4", cap.fps, cap.size)
-        wrt_attn = video.Writer(f"{data_dir}/pred_attention.mp4", cap.fps, cap.size)
+        wrt_attn = video.Writer(
+            f"{data_dir}/pred_attention.mp4", cap.fps, attn_frame_size
+        )
 
         for n_frame in tqdm(range(cap.frame_count), ncols=100):
             _, frame = cap.read()
@@ -62,26 +68,40 @@ if __name__ == "__main__":
                     config.seq_len
                     + ((n_frame - config.seq_len) // config.stride + 1) * config.stride
                 )
-                idx_data = config.seq_len - (n_frame_result - n_frame)
+                idx_data = config.seq_len - (n_frame_result - n_frame)  # (seq_len - stride, seq_len - 1)
 
             result_tmp = [
                 r for r in results if int(r["key"].split("_")[1]) == n_frame_result
             ]
-            frame_bbox = vis.plot_bbox_on_frame(
-                frame.copy(), result_tmp, idx_data, cap.size
-            )
-            wrt_bbox.write(frame_bbox)
+
+            # plot kps
             frame_kps = vis.plot_kps_on_frame(
-                frame.copy(), result_tmp, idx_data, cap.size
+                frame.copy(), result_tmp, idx_data, frame_size
             )
             wrt_kps.write(frame_kps)
+
+            # plot bbox
+            frame_bbox = vis.plot_bbox_on_frame(
+                frame.copy(), result_tmp, idx_data, frame_size
+            )
+            wrt_bbox.write(frame_bbox)
+
+            # plot clustering
             frame_cluster = vis.plot_cluster_on_frame(
-                frame.copy(), result_tmp, idx_data, cap.size
+                frame.copy(), result_tmp, idx_data, frame_size
             )
             wrt_cluster.write(frame_cluster)
+
+            # plot attention
             frame_attention = vis.plot_attention_on_frame(
-                frame.copy(), result_tmp, idx_data, cap.size
+                frame.copy(), result_tmp, idx_data, frame_size
             )
+            if idx_data == 60 or n_frame == 0:
+                img_heatmaps = vis.arange_attention_heatmaps(
+                    result_tmp, config.n_clusters, config.nlayers, size=size_heatmaps
+                )
+                img_heatmaps = cv2.cvtColor(img_heatmaps, cv2.COLOR_RGBA2BGR)
+            frame_attention = np.concatenate([frame_attention, img_heatmaps], axis=1)
             wrt_attn.write(frame_attention)
 
         del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn
