@@ -192,7 +192,9 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
     return frame
 
 
-def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vmaxs=(0.5, 0.3, 0.2)):
+def arange_attention_heatmaps(
+    results, n_clusters, n_layers, size=(600, 940), vmaxs=(0.5, 0.3, 0.2)
+):
     fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
     fig.tight_layout()
     axs = fig.subplots(n_clusters, n_layers)
@@ -215,7 +217,11 @@ def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vm
         else:
             # set blank
             for i in range(n_layers):
-                axs[label, i].set_axis_off()
+                ax = axs[label, i]
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.tick_params(axis="both", color="w")
+                ax.spines[["left", "right", "bottom", "top"]].set_visible(False)
 
     # set titles
     for i in range(n_layers):
