@@ -193,7 +193,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
 
 
 def arange_attention_heatmaps(
-    results, n_clusters, n_layers, size=(600, 940), vmaxs=(0.5, 0.3, 0.2)
+    results, n_clusters, n_layers, size, vmaxs=(0.5, 0.3, 0.2)
 ):
     fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
     fig.tight_layout()

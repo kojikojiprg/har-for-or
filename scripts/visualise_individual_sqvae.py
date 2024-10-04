@@ -18,7 +18,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     data_root = args.data_root
     v = args.version
-    size_heatmaps = (600, 940)  # (w, h)
 
     data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
@@ -47,6 +46,8 @@ if __name__ == "__main__":
         cap = video.Capture(video_path)
         max_n_frame = cap.frame_count
         frame_size = cap.size
+
+        size_heatmaps = (config.nlayers * 200, cap.size[1])
         attn_frame_size = (cap.size[0] + size_heatmaps[0], cap.size[1])
 
         # create writers
