@@ -27,7 +27,6 @@ if __name__ == "__main__":
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
     config_path = f"{checkpoint_dir}/individual-sqvae.yaml"
     config = yaml_handler.load(config_path)
-
     seq_len = config.seq_len
     stride = config.stride
 
@@ -64,11 +63,8 @@ if __name__ == "__main__":
                 n_frame_result = config.seq_len
                 idx_data = n_frame
             else:
-                n_frame_result = (
-                    config.seq_len
-                    + ((n_frame - config.seq_len) // config.stride + 1) * config.stride
-                )
-                idx_data = config.seq_len - (n_frame_result - n_frame)  # (seq_len - stride, seq_len - 1)
+                n_frame_result = seq_len + ((n_frame - seq_len) // stride + 1) * stride
+                idx_data = seq_len - (n_frame_result - n_frame)
 
             result_tmp = [
                 r for r in results if int(r["key"].split("_")[1]) == n_frame_result
@@ -96,7 +92,7 @@ if __name__ == "__main__":
             frame_attention = vis.plot_attention_on_frame(
                 frame.copy(), result_tmp, idx_data, frame_size
             )
-            if idx_data == 60 or n_frame == 0:
+            if idx_data == seq_len - stride or n_frame == 0:
                 img_heatmaps = vis.arange_attention_heatmaps(
                     result_tmp, config.n_clusters, config.nlayers, size=size_heatmaps
                 )
