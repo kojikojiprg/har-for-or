@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.manifold import TSNE
 
 cm_tab10 = plt.get_cmap("tab10")
-cm_jet = plt.get_cmap("jet", 15)
+cm_jet = plt.get_cmap("jet", 100)
 
 EDGE_INDEX = [
     (0, 1),  # Head
@@ -149,7 +149,7 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
     return frame
 
 
-def plot_attention_on_frame(frame, results, idx_data, frame_size):
+def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
     for data in results:
         label = str(data["label"])
         bbox = data["x_bbox"][idx_data]
@@ -173,6 +173,8 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size):
         # plot attention
         attn_w = attn_w.mean(axis=0)  # mean by query
         attn_w = attn_w[0::2] + attn_w[1::2]  # sum x and y
+        attn_w = np.clip(attn_w, 0.0, vmax)  # (0.0, vmax)
+        attn_w = attn_w * (1 / vmax)  # (0.0, 1.0)
         attn_w = (attn_w * 100).astype(int)
         for i in range(len(kps)):
             pt = kps[i].astype(int).tolist()
@@ -190,7 +192,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size):
     return frame
 
 
-def arange_attention_heatmaps(results, n_clusters, n_layers, vmax=0.5, size=(600, 940)):
+def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vmax=0.5):
     fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
     fig.tight_layout()
     axs = fig.subplots(n_clusters, n_layers)
@@ -202,7 +204,7 @@ def arange_attention_heatmaps(results, n_clusters, n_layers, vmax=0.5, size=(600
                 sns.heatmap(
                     attn_w[i],
                     annot=False,
-                    cmap="Blues",
+                    cmap="jet",
                     ax=axs[label, i],
                     cbar=False,
                     xticklabels=False,

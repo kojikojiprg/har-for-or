@@ -94,7 +94,7 @@ if __name__ == "__main__":
             )
             if idx_data == seq_len - stride or n_frame == 0:
                 img_heatmaps = vis.arange_attention_heatmaps(
-                    result_tmp, config.n_clusters, config.nlayers, size=size_heatmaps
+                    result_tmp, config.n_clusters, config.nlayers, size_heatmaps
                 )
                 img_heatmaps = cv2.cvtColor(img_heatmaps, cv2.COLOR_RGBA2BGR)
             frame_attention = np.concatenate([frame_attention, img_heatmaps], axis=1)
