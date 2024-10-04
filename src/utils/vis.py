@@ -154,7 +154,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
         label = str(data["label"])
         bbox = data["x_bbox"][idx_data]
         kps = data["x_kps"][idx_data]
-        attn_w = data["attn_w"][-1]  # attention of last encoder layer
+        attn_w = data["attn_w"]
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
         kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
@@ -171,7 +171,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
         frame = draw_skeleton(frame, kps, color, 1, False)
 
         # plot attention
-        attn_w = attn_w.mean(axis=0)  # mean by query
+        attn_w = attn_w.mean(axis=(1, 0))
         attn_w = attn_w[0::2] + attn_w[1::2]  # sum x and y
         attn_w = np.clip(attn_w, 0.0, vmax)  # (0.0, vmax)
         attn_w = attn_w * (1 / vmax)  # (0.0, 1.0)
@@ -192,7 +192,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
     return frame
 
 
-def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vmax=0.5):
+def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vmaxs=(0.5, 0.3, 0.2)):
     fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
     fig.tight_layout()
     axs = fig.subplots(n_clusters, n_layers)
@@ -210,7 +210,7 @@ def arange_attention_heatmaps(results, n_clusters, n_layers, size=(600, 940), vm
                     xticklabels=False,
                     yticklabels=False,
                     vmin=0.0,
-                    vmax=vmax,
+                    vmax=vmaxs[i],
                 )
         else:
             # set blank
