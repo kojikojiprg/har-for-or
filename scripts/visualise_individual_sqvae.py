@@ -19,7 +19,7 @@ if __name__ == "__main__":
     data_root = args.data_root
     v = args.version
 
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))[8:]
 
     # load config
     checkpoint_dir = f"models/individual/sqvae/version_{v}"
@@ -70,35 +70,53 @@ if __name__ == "__main__":
             result_tmp = [
                 r for r in results if int(r["key"].split("_")[1]) == n_frame_result
             ]
+            print(result_tmp[0].keys())
 
-            # plot kps
-            frame_kps = vis.plot_kps_on_frame(
-                frame.copy(), result_tmp, idx_data, frame_size
+            # put frame number
+            frame = cv2.putText(
+                frame,
+                f"frame:{n_frame}",
+                (10, 40),
+                cv2.FONT_HERSHEY_COMPLEX,
+                1.0,
+                (255, 255, 255),
+                1,
             )
-            wrt_kps.write(frame_kps)
 
-            # plot bbox
-            frame_bbox = vis.plot_bbox_on_frame(
-                frame.copy(), result_tmp, idx_data, frame_size
-            )
-            wrt_bbox.write(frame_bbox)
-
-            # plot clustering
-            frame_cluster = vis.plot_cluster_on_frame(
-                frame.copy(), result_tmp, idx_data, frame_size
-            )
-            wrt_cluster.write(frame_cluster)
-
-            # plot attention
-            frame_attention = vis.plot_attention_on_frame(
-                frame.copy(), result_tmp, idx_data, frame_size
-            )
-            if idx_data == seq_len - stride or n_frame == 0:
-                img_heatmaps = vis.arange_attention_heatmaps(
-                    result_tmp, config.n_clusters, config.nlayers, size_heatmaps
+            if len(result_tmp) != 0:
+                # plot kps
+                frame_kps = vis.plot_kps_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
-                img_heatmaps = cv2.cvtColor(img_heatmaps, cv2.COLOR_RGBA2BGR)
-            frame_attention = np.concatenate([frame_attention, img_heatmaps], axis=1)
+
+                # plot bbo
+                frame_bbox = vis.plot_bbox_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size
+                )
+
+                # plot cluster
+                frame_cluster = vis.plot_cluster_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size
+                )
+
+                # plot attention
+                frame_attention = vis.plot_attention_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size
+                )
+                if idx_data == seq_len - stride or n_frame == 0:
+                    img_heatmaps = vis.arange_attention_heatmaps(
+                        result_tmp, config.n_clusters, config.nlayers, size_heatmaps
+                    )
+                    img_heatmaps = cv2.cvtColor(img_heatmaps, cv2.COLOR_RGBA2BGR)
+                frame_attention = np.concatenate(
+                    [frame_attention, img_heatmaps], axis=1
+                )
+            else:
+                frame_kps = frame_bbox = frame_cluster = frame_attention = frame
+
+            wrt_kps.write(frame_kps)
+            wrt_bbox.write(frame_bbox)
+            wrt_cluster.write(frame_cluster)
             wrt_attn.write(frame_attention)
 
         del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn

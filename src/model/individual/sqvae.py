@@ -248,10 +248,10 @@ class SQVAE(LightningModule):
                 "id": ids[i].cpu().numpy().item(),
                 "x_kps": x_kps[i].cpu().numpy(),
                 "recon_x_kps": recon_x_kps[i].cpu().numpy(),
-                "mse_x_kps": mse_x_kps.item(),
+                "mse_x_kps": mse_x_kps[i].item(),
                 "x_bbox": x_bbox[i].cpu().numpy(),
                 "recon_x_bbox": recon_x_bbox[i].cpu().numpy(),
-                "mse_x_bbox": mse_x_bbox.item(),
+                "mse_x_bbox": mse_x_bbox[i].item(),
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
                 "attn_w": attn_w[i].cpu().numpy(),
@@ -335,7 +335,7 @@ class Encoder(nn.Module):
             attn_w_lst = []
             for layer in self.encoders:
                 z, attn_w = layer(z, need_weights=~is_train)
-                attn_w_lst.append(attn_w.unsqueeze(0))
+                attn_w_lst.append(attn_w.unsqueeze(1))
             attn_w_tensor = torch.cat(attn_w_lst, dim=1)
         # z (b, n_pts * 2, latent_ndim)
 
