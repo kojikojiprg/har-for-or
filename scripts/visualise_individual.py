@@ -14,17 +14,21 @@ from src.utils import video, vis, yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
+    parser.add_argument(
+        "-mt", "--model_type", required=False, type=str, default="sqvae"
+    )
     parser.add_argument("-v", "--version", type=int, default=0)
     args = parser.parse_args()
     data_root = args.data_root
+    model_type = args.model_type
     v = args.version
 
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))[8:]
+    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
 
     # load config
-    checkpoint_dir = f"models/individual/sqvae/version_{v}"
+    checkpoint_dir = f"models/individual/{model_type}/version_{v}"
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
-    config_path = f"{checkpoint_dir}/individual-sqvae.yaml"
+    config_path = f"{checkpoint_dir}/individual-{model_type}.yaml"
     config = yaml_handler.load(config_path)
     seq_len = config.seq_len
     stride = config.stride
@@ -35,7 +39,7 @@ if __name__ == "__main__":
             data_dir = data_dir[:-1]
 
         # load results
-        paths = glob(os.path.join(data_dir, "pred", "*"))
+        paths = glob(os.path.join(data_dir, f"pred_{model_type}", "*"))
         results = []
         for path in paths:
             with open(path, "rb") as f:
@@ -58,7 +62,7 @@ if __name__ == "__main__":
             f"{data_dir}/pred_attention.mp4", cap.fps, attn_frame_size
         )
 
-        for n_frame in tqdm(range(cap.frame_count), ncols=100):
+        for n_frame in tqdm(range(cap.frame_count), desc=f"{data_dir[-2:]}", ncols=100):
             _, frame = cap.read()
             if n_frame < config.seq_len:
                 n_frame_result = config.seq_len
@@ -70,7 +74,6 @@ if __name__ == "__main__":
             result_tmp = [
                 r for r in results if int(r["key"].split("_")[1]) == n_frame_result
             ]
-            print(result_tmp[0].keys())
 
             # put frame number
             frame = cv2.putText(

@@ -27,14 +27,14 @@ EDGE_INDEX = [
 ]
 
 
-def draw_skeleton(frame: np.array, kps: np.array, color, thickness=2, plot_kps=True):
+def draw_skeleton(frame: np.array, kps: np.array, color, thickness=2, plot_limbs_only=False):
     part_line = {}
 
     # draw keypoints
     for n in range(len(kps)):
         cor_x, cor_y = int(kps[n, 0]), int(kps[n, 1])
         part_line[n] = (cor_x, cor_y)
-        if plot_kps:
+        if not plot_limbs_only:
             cv2.circle(frame, (cor_x, cor_y), 3, color, 1)
 
     # draw limbs
@@ -56,9 +56,9 @@ def draw_bbox(frame: np.array, bbox: np.array, color: tuple, thickness=2):
 def plot_bbox_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
-        bbox = data["x_bbox"][idx_data]
-        mse_x_bbox = data["mse_x_bbox"]
-        fake_bbox = data["recon_x_bbox"][idx_data]
+        bbox = data["bbox"][idx_data]
+        mse_bbox = data["mse_bbox"]
+        fake_bbox = data["recon_bbox"][idx_data]
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
         fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
@@ -77,7 +77,7 @@ def plot_bbox_on_frame(frame, results, idx_data, frame_size):
         pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
         frame = cv2.putText(
             frame,
-            f"{mse_x_bbox:.3f}",
+            f"{mse_bbox:.3f}",
             pt,
             cv2.FONT_HERSHEY_COMPLEX,
             0.8,
@@ -91,10 +91,10 @@ def plot_bbox_on_frame(frame, results, idx_data, frame_size):
 def plot_kps_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
-        bbox = data["x_bbox"][idx_data]
-        kps = data["x_kps"][idx_data]
-        fake_kps = data["recon_x_kps"][idx_data]
-        mse_x_kps = data["mse_x_kps"]
+        bbox = data["bbox"][idx_data]
+        kps = data["kps"][idx_data]
+        fake_kps = data["recon_kps"][idx_data]
+        mse_kps = data["mse_kps"]
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
         kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
@@ -114,7 +114,7 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size):
         pt = tuple(np.min(bbox, axis=0).astype(int))  # top-left
         frame = cv2.putText(
             frame,
-            f"{mse_x_kps:.3f}",
+            f"{mse_kps:.3f}",
             pt,
             cv2.FONT_HERSHEY_COMPLEX,
             0.8,
@@ -127,7 +127,7 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size):
 def plot_cluster_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
-        bbox = data["x_bbox"][idx_data]
+        bbox = data["bbox"][idx_data]
         label = str(data["label"])
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
@@ -152,8 +152,8 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
 def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
     for data in results:
         label = str(data["label"])
-        bbox = data["x_bbox"][idx_data]
-        kps = data["x_kps"][idx_data]
+        bbox = data["bbox"][idx_data]
+        kps = data["kps"][idx_data]
         attn_w = data["attn_w"]
 
         bbox = (bbox.copy() + 1) / 2 * frame_size
@@ -165,10 +165,11 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
             frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
         )
 
+        # plot bbox and skeleton limbs
         color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
         color = tuple(color[::-1])  # RGB -> BGR
-        frame = draw_bbox(frame, bbox, color, 1)
-        frame = draw_skeleton(frame, kps, color, 1, False)
+        frame = draw_bbox(frame, bbox, color, 2)
+        frame = draw_skeleton(frame, kps, color, 1, True)
 
         # plot attention
         attn_w = attn_w.mean(axis=(1, 0))
