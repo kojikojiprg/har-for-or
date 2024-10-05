@@ -64,12 +64,12 @@ class SQVAE(LightningModule):
         )
         return [opt], [sch]
 
-    def forward(self, x_kps, x_bbox, is_train):
-        # x_kps (b, seq_len, n_pts, 2)
-        # x_bbox (b, seq_len, n_pts, 2)
+    def forward(self, kps, bbox, is_train):
+        # kps (b, seq_len, n_pts, 2)
+        # bbox (b, seq_len, n_pts, 2)
 
         # encoding
-        ze, c_logits, attn_w = self.encoder(x_kps, x_bbox, is_train)
+        ze, c_logits, attn_w = self.encoder(kps, bbox, is_train)
         c_prob = F.softmax(c_logits, dim=-1)
         # ze (b, npts, latent_ndim)
         # c_prob (b, n_clusters)
@@ -80,20 +80,20 @@ class SQVAE(LightningModule):
         # prob (b, npts, book_size)
 
         # reconstruction
-        b, seq_len = x_kps.size()[:2]
-        x_kps = x_kps.view(b, seq_len, self.n_pts_kps * 2)
-        recon_x_kps = torch.empty((b, seq_len, 0)).to(self.device)
+        b, seq_len = kps.size()[:2]
+        kps = kps.view(b, seq_len, self.n_pts_kps * 2)
+        recon_kps = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.decoders[: self.n_pts_kps * 2]):
-            recon_x = decoder(x_kps[:, :, i], zq[:, i, :])
-            recon_x_kps = torch.cat([recon_x_kps, recon_x], dim=2)
-        recon_x_kps = recon_x_kps.view(b, seq_len, self.n_pts_kps, 2)
+            recon_x = decoder(kps[:, :, i], zq[:, i, :])
+            recon_kps = torch.cat([recon_kps, recon_x], dim=2)
+        recon_kps = recon_kps.view(b, seq_len, self.n_pts_kps, 2)
 
-        x_bbox = x_bbox.view(b, seq_len, 2 * 2)
-        recon_x_bbox = torch.empty((b, seq_len, 0)).to(self.device)
+        bbox = bbox.view(b, seq_len, 2 * 2)
+        recon_bbox = torch.empty((b, seq_len, 0)).to(self.device)
         for i, decoder in enumerate(self.decoders[self.n_pts_kps * 2 :]):
-            recon_x = decoder(x_bbox[:, :, i], zq[:, i, :])
-            recon_x_bbox = torch.cat([recon_x_bbox, recon_x], dim=2)
-        recon_x_bbox = recon_x_bbox.view(b, seq_len, 2, 2)
+            recon_x = decoder(bbox[:, :, i], zq[:, i, :])
+            recon_bbox = torch.cat([recon_bbox, recon_x], dim=2)
+        recon_bbox = recon_bbox.view(b, seq_len, 2, 2)
 
         return (
             ze,
@@ -102,8 +102,8 @@ class SQVAE(LightningModule):
             precision_q,
             prob,
             log_prob,
-            recon_x_kps,
-            recon_x_bbox,
+            recon_kps,
+            recon_bbox,
             c_prob,
         )
 
@@ -132,11 +132,11 @@ class SQVAE(LightningModule):
         return torch.sum(prob * log_prob, dim=(0, 1)).mean()
 
     def training_step(self, batch, batch_idx):
-        keys, ids, x_kps, x_bbox, mask = batch
+        keys, ids, kps, bbox, mask = batch
         keys = np.array(keys).T[0]
         ids = ids[0]
-        x_kps = x_kps[0]
-        x_bbox = x_bbox[0]
+        kps = kps[0]
+        bbox = bbox[0]
         # mask = mask[0]
 
         # update temperature of gumbel softmax
@@ -151,19 +151,19 @@ class SQVAE(LightningModule):
             precision_q,
             prob,
             log_prob,
-            recon_x_kps,
-            recon_x_bbox,
+            recon_kps,
+            recon_bbox,
             c_prob,
-        ) = self(x_kps, x_bbox, True)
+        ) = self(kps, bbox, True)
 
         # ELBO loss
-        lrc_x_kps = self.loss_x(x_kps, recon_x_kps)
-        lrc_x_bbox = self.loss_x(x_bbox, recon_x_bbox)
+        lrc_kps = self.loss_x(kps, recon_kps)
+        lrc_bbox = self.loss_x(bbox, recon_bbox)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(prob, log_prob)
         loss_dict = dict(
-            x_kps=lrc_x_kps.item(),
-            x_bbox=lrc_x_bbox.item(),
+            kps=lrc_kps.item(),
+            bbox=lrc_bbox.item(),
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
@@ -202,7 +202,7 @@ class SQVAE(LightningModule):
         lc = lc_real * 10 + lc_psuedo * 0.1
 
         loss_total = (
-            (lrc_x_kps + lrc_x_bbox) * self.config.lmd_lrc
+            (lrc_kps + lrc_bbox) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
             + lc * self.config.lmd_c
@@ -215,15 +215,14 @@ class SQVAE(LightningModule):
 
     @torch.no_grad()
     def predict_step(self, batch):
-        keys, ids, x_kps, x_bbox, mask = batch
-        x_kps = x_kps.to(next(self.parameters()).device)
-        x_bbox = x_bbox.to(next(self.parameters()).device)
-        # mask = mask.to(next(self.parameters()).device)
-        if x_kps.ndim == 5:
+        keys, ids, kps, bbox, mask = batch
+        keys = np.array(keys).T[0]
+        kps = kps.to(next(self.parameters()).device)
+        bbox = bbox.to(next(self.parameters()).device)
+        if kps.ndim == 5:
             ids = ids[0]
-            x_kps = x_kps[0]
-            x_bbox = x_bbox[0]
-            # mask = mask[0]
+            kps = kps[0]
+            bbox = bbox[0]
 
         # forward
         (
@@ -233,25 +232,25 @@ class SQVAE(LightningModule):
             precision_q,
             prob,
             log_prob,
-            recon_x_kps,
-            recon_x_bbox,
+            recon_kps,
+            recon_bbox,
             c_prob,
-        ) = self(x_kps, x_bbox, False)
+        ) = self(kps, bbox, False)
 
-        mse_x_kps = self.mse_x(x_kps, recon_x_kps)
-        mse_x_bbox = self.mse_x(x_bbox, recon_x_bbox)
+        mse_kps = self.mse_x(kps, recon_kps)
+        mse_bbox = self.mse_x(bbox, recon_bbox)
 
         results = []
         for i in range(len(keys)):
             data = {
-                "key": keys[i],
+                "key": keys[i].item(),
                 "id": ids[i].cpu().numpy().item(),
-                "x_kps": x_kps[i].cpu().numpy(),
-                "recon_x_kps": recon_x_kps[i].cpu().numpy(),
-                "mse_x_kps": mse_x_kps[i].item(),
-                "x_bbox": x_bbox[i].cpu().numpy(),
-                "recon_x_bbox": recon_x_bbox[i].cpu().numpy(),
-                "mse_x_bbox": mse_x_bbox[i].item(),
+                "kps": kps[i].cpu().numpy(),
+                "recon_kps": recon_kps[i].cpu().numpy(),
+                "mse_kps": mse_kps[i].item(),
+                "bbox": bbox[i].cpu().numpy(),
+                "recon_bbox": recon_bbox[i].cpu().numpy(),
+                "mse_bbox": mse_bbox[i].item(),
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
                 "attn_w": attn_w[i].cpu().numpy(),
@@ -314,14 +313,14 @@ class Encoder(nn.Module):
         )
         self.cls_head = ClassificationHead(config)
 
-    def forward(self, x_kps, x_bbox, is_train):
-        # x_kps (b, seq_len, n_pts, 2)
-        # x_bbox (b, seq_len, n_pts, 2)
+    def forward(self, kps, bbox, is_train):
+        # kps (b, seq_len, n_pts, 2)
+        # bbox (b, seq_len, n_pts, 2)
 
         # embedding
-        x_kps = self.emb_kps(x_kps)  # (b, n_pts * 2, latent_ndim)
-        x_bbox = self.emb_bbox(x_bbox)  # (b, n_pts * 2, latent_ndim)
-        z = torch.cat([x_kps, x_bbox], dim=1)
+        kps = self.emb_kps(kps)  # (b, n_pts * 2, latent_ndim)
+        bbox = self.emb_bbox(bbox)  # (b, n_pts * 2, latent_ndim)
+        z = torch.cat([kps, bbox], dim=1)
         # z (b, n_pts * 2, latent_ndim)
 
         # positional embedding
