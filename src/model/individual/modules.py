@@ -6,7 +6,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 
-from src.model.layers import MLP, TransformerEncoderBlock
+from src.model.layers import MLP, TransformerDecoderBlock, TransformerEncoderBlock
+
+
+def get_n_pts(config: SimpleNamespace):
+    if not config.mask_leg:
+        n_pts = 17 + 2
+    else:  # mask ankles and knees
+        n_pts = 17 - 4 + 2
+    return n_pts
 
 
 class ClassificationHead(nn.Module):
@@ -42,40 +50,39 @@ class Embedding(nn.Module):
     def __init__(self, latent_ndim):
         super().__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv2d(1, latent_ndim // 4, (10, 1), (5, 1), bias=False),
+            nn.Conv1d(1, latent_ndim // 4, 10, 5, bias=False),
             nn.GroupNorm(1, latent_ndim // 4),
             nn.SiLU(),
         )  # 90 -> 17
         self.conv2 = nn.Sequential(
-            nn.Conv2d(latent_ndim // 4, latent_ndim // 2, (5, 1), (3, 1), bias=False),
+            nn.Conv1d(latent_ndim // 4, latent_ndim // 2, 5, 3, bias=False),
             nn.GroupNorm(1, latent_ndim // 2),
             nn.SiLU(),
         )  # 17 -> 5
         self.conv3 = nn.Sequential(
-            nn.Conv2d(latent_ndim // 2, latent_ndim, (5, 1), bias=False),
+            nn.Conv1d(latent_ndim // 2, latent_ndim, 5, bias=False),
             nn.GroupNorm(1, latent_ndim),
             nn.SiLU(),
         )  # 5 -> 1
 
     def forward(self, x):
-        b, seq_len, n_pts = x.size()[:3]
-        x = x.view(b, 1, seq_len, n_pts * 2)
+        # x (b, seq_len)
+        x = x.unsqueeze(1)  # x (b, 1, seq_len)
         x = self.conv1(x)
         x = self.conv2(x)
-        x = self.conv3(x)  # (b, ndim, 1, n_pts * 2)
-        x = x.squeeze(2)  # (b, ndim, n_pts * 2)
-        x = x.permute(0, 2, 1)  # (b, n_pts * 2, ndim)
+        x = self.conv3(x)  # (b, ndim, 1)
+        x = x.permute(0, 2, 1)  # (b, 1, ndim)
         return x
 
 
 class Encoder(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
-        # self.emb_kps = Embedding(config.seq_len, config.hidden_ndim, config.latent_ndim)
-        # self.emb_bbox = Embedding(
-        #     config.seq_len, config.hidden_ndim, config.latent_ndim
-        # )
-        self.emb = Embedding(config.latent_ndim)
+        self.latent_ndim = config.latent_ndim
+        self.n_pts = get_n_pts(config)
+        self.embs = nn.ModuleList(
+            [Embedding(config.latent_ndim) for _ in range(self.n_pts * 2)]
+        )
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
@@ -91,11 +98,14 @@ class Encoder(nn.Module):
         # bbox (b, seq_len, n_pts, 2)
 
         # embedding
-        # kps = self.emb_kps(kps)  # (b, n_pts * 2, latent_ndim)
-        # bbox = self.emb_bbox(bbox)  # (b, n_pts * 2, latent_ndim)
-        # z = torch.cat([kps, bbox], dim=1)
+        b, seq_len = kps.size()[:2]
+        kps = kps.view(b, seq_len, -1)
+        bbox = bbox.view(b, seq_len, -1)
         x = torch.cat([kps, bbox], dim=2)
-        z = self.emb(x)
+        z = torch.empty((b, 0, self.latent_ndim)).to(kps.device)
+        for i in range(self.n_pts * 2):
+            z_one = self.embs[i](x[:, :, i])
+            z = torch.cat([z, z_one], dim=1)
         # z (b, n_pts * 2, latent_ndim)
 
         # positional embedding
@@ -108,7 +118,7 @@ class Encoder(nn.Module):
         else:
             attn_w_lst = []
             for layer in self.encoders:
-                z, attn_w = layer(z, need_weights=~is_train)
+                z, attn_w = layer(z, need_weights=True)
                 attn_w_lst.append(attn_w.unsqueeze(1))
             attn_w_tensor = torch.cat(attn_w_lst, dim=1)
         # z (b, n_pts * 2, latent_ndim)
@@ -224,138 +234,129 @@ class GaussianVectorQuantizer(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
-        latent_ndim = config.latent_ndim
-        self.seq_len = config.seq_len
-        if not config.mask_leg:
-            self.n_pts = 17 + 2
-        else:  # mask ankles and knees
-            self.n_pts = 17 - 4 + 2
+        self.n_pts = get_n_pts(config)
+        self.decoders = nn.ModuleList(
+            [DecoderModule(config) for _ in range(self.n_pts * 2)]
+        )
 
+    def forward(self, kps, bbox, zq):
+        b, seq_len = kps.size()[:2]
+        kps = kps.view(b, seq_len, -1)
+        recon_kps = torch.empty((b, seq_len, 0)).to(kps.device)
+        for i, decoder in enumerate(self.decoders[: (self.n_pts - 2) * 2]):
+            recon_x = decoder(kps[:, :, i], zq[:, i, :])
+            recon_kps = torch.cat([recon_kps, recon_x], dim=2)
+        recon_kps = recon_kps.view(b, seq_len, (self.n_pts - 2), 2)
+
+        bbox = bbox.view(b, seq_len, -1)
+        recon_bbox = torch.empty((b, seq_len, 0)).to(bbox.device)
+        for i, decoder in enumerate(self.decoders[(self.n_pts - 2) * 2 :]):
+            recon_x = decoder(bbox[:, :, i], zq[:, (self.n_pts - 2) * 2 + i, :])
+            recon_bbox = torch.cat([recon_bbox, recon_x], dim=2)
+        recon_bbox = recon_bbox.view(b, seq_len, 2, 2)
+
+        return recon_kps, recon_bbox
+
+
+class DecoderModule(nn.Module):
+    def __init__(self, config: SimpleNamespace):
+        super().__init__()
+        self.latent_ndim = config.latent_ndim
+
+        self.x_start = nn.Parameter(
+            torch.randn((1, 1, config.latent_ndim), dtype=torch.float32),
+            requires_grad=True,
+        )
+
+        self.emb = MLP(1, config.latent_ndim)
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
-        self.encoders = nn.ModuleList(
+        self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
+        self.decoders = nn.ModuleList(
             [
-                TransformerEncoderBlock(
+                TransformerDecoderBlock(
                     config.latent_ndim, config.nheads, config.dropout
                 )
                 for _ in range(config.nlayers)
             ]
         )
-
-        self.conv_transpose1 = nn.Sequential(
-            nn.ConvTranspose2d(latent_ndim, latent_ndim // 2, (5, 1), bias=False),
-            nn.GroupNorm(1, latent_ndim // 2),
-            nn.SiLU(),
-        )
-        self.conv_transpose2 = nn.Sequential(
-            nn.ConvTranspose2d(
-                latent_ndim // 2, latent_ndim // 4, (5, 1), (3, 1), bias=False
-            ),
-            nn.GroupNorm(1, latent_ndim // 4),
-            nn.SiLU(),
-        )
-        self.conv_transpose3 = nn.Sequential(
-            nn.ConvTranspose2d(latent_ndim // 4, 1, (10, 1), (5, 1), bias=False),
-            nn.GroupNorm(1, 1),
+        self.mlp = nn.Sequential(
+            MLP(config.latent_ndim, 1),
             nn.Tanh(),
         )
 
-    def forward(self, zq, mask=None):
-        zq = self.pe.rotate_queries_or_keys(zq, seq_dim=1)
+    def forward(self, x, zq, mask=None):
+        # x (b, seq_len)
+        # zq (b, latent_ndim)
 
-        for layer in self.encoders:
-            zq, attn_w = layer(zq)
+        b, seq_len = x.size()
+        x = x.view(b, seq_len, 1)
+        x = self.emb(x)  # (b, seq_len, latent_ndim)
 
-        zq = zq.permute(0, 2, 1)  # (b, ndim, n_pts * 2)
-        recon_x = zq.unsqueeze(2)  # (b, n_pts * 2, ndim)
-        recon_x = self.conv_transpose1(recon_x)
-        recon_x = self.conv_transpose2(recon_x)
-        recon_x = self.conv_transpose3(recon_x)
+        # concat start token
+        x = torch.cat([self.x_start.repeat((b, 1, 1)), x], dim=1)
+        x = x[:, :-1]  # (b, seq_len, latent_ndim)
 
-        b = zq.size(0)
-        recon_x = recon_x.view(b, self.seq_len, self.n_pts, 2)
-        recon_kps, recon_bbox = recon_x[:, :, :-2, :], recon_x[:, :, -2:, :]
-        return recon_kps, recon_bbox
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+
+        zq = self.mlp_z(zq)
+        zq = zq.view(b, seq_len, self.latent_ndim)
+        for layer in self.decoders:
+            x = layer(x, zq, mask)
+        # x (b, seq_len, latent_ndim)
+
+        recon_x = self.mlp(x).view(b, seq_len, 1)
+
+        return recon_x
 
 
 # class Decoder(nn.Module):
 #     def __init__(self, config: SimpleNamespace):
 #         super().__init__()
-#         if not config.mask_leg:
-#             n_pts = (17 + 2)
-#         else:  # mask ankles and knees
-#             n_pts = (17 - 4 + 2)
+#         latent_ndim = config.latent_ndim
+#         self.seq_len = config.seq_len
+#         self.n_pts = get_n_pts(config)
 
-#         self.decoders = nn.ModuleList(
-#             [DecoderModule(self.config) for _ in range(n_pts * 2)]
-#         )
-
-#     def forward(self, kps, bbox, zq):
-#         b, seq_len = kps.size()[:2]
-#         kps = kps.view(b, seq_len, -1)
-#         recon_kps = torch.empty((b, seq_len, 0)).to(self.device)
-#         for i, decoder in enumerate(self.decoders[: 17 * 2]):
-#             recon_x = decoder(kps[:, :, i], zq[:, i, :])
-#             recon_kps = torch.cat([recon_kps, recon_x], dim=2)
-#         recon_kps = recon_kps.view(b, seq_len, 17, 2)
-
-#         bbox = bbox.view(b, seq_len, -1)
-#         recon_bbox = torch.empty((b, seq_len, 0)).to(self.device)
-#         for i, decoder in enumerate(self.decoders[17 * 2 :]):
-#             recon_x = decoder(bbox[:, :, i], zq[:, i, :])
-#             recon_bbox = torch.cat([recon_bbox, recon_x], dim=2)
-#         recon_bbox = recon_bbox.view(b, seq_len, 2, 2)
-
-#         return recon_kps, recon_bbox
-
-
-# class DecoderModule(nn.Module):
-#     def __init__(self, config: SimpleNamespace):
-#         super().__init__()
-#         self.latent_ndim = config.latent_ndim
-
-#         self.x_start = nn.Parameter(
-#             torch.randn((1, 1, config.latent_ndim), dtype=torch.float32),
-#             requires_grad=True,
-#         )
-
-#         self.emb = MLP(1, config.latent_ndim)
 #         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
-#         self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
-#         self.decoders = nn.ModuleList(
+#         self.encoders = nn.ModuleList(
 #             [
-#                 TransformerDecoderBlock(
+#                 TransformerEncoderBlock(
 #                     config.latent_ndim, config.nheads, config.dropout
 #                 )
 #                 for _ in range(config.nlayers)
 #             ]
 #         )
-#         self.mlp = nn.Sequential(
-#             MLP(config.latent_ndim, config.hidden_ndim),
+
+#         self.conv_transpose1 = nn.Sequential(
+#             nn.ConvTranspose2d(latent_ndim, latent_ndim // 2, (5, 1), bias=False),
+#             nn.GroupNorm(1, latent_ndim // 2),
 #             nn.SiLU(),
-#             MLP(config.hidden_ndim, 1),
+#         )
+#         self.conv_transpose2 = nn.Sequential(
+#             nn.ConvTranspose2d(
+#                 latent_ndim // 2, latent_ndim // 4, (5, 1), (3, 1), bias=False
+#             ),
+#             nn.GroupNorm(1, latent_ndim // 4),
+#             nn.SiLU(),
+#         )
+#         self.conv_transpose3 = nn.Sequential(
+#             nn.ConvTranspose2d(latent_ndim // 4, 1, (10, 1), (5, 1), bias=False),
+#             nn.GroupNorm(1, 1),
 #             nn.Tanh(),
 #         )
 
-#     def forward(self, x, zq, mask=None):
-#         # x (b, seq_len)
-#         # zq (b, latent_ndim)
+#     def forward(self, zq, mask=None):
+#         zq = self.pe.rotate_queries_or_keys(zq, seq_dim=1)
 
-#         b, seq_len = x.size()
-#         x = x.view(b, seq_len, 1)
-#         x = self.emb(x)  # (b, seq_len, latent_ndim)
+#         for layer in self.encoders:
+#             zq, attn_w = layer(zq)
 
-#         # concat start token
-#         x = torch.cat([self.x_start.repeat((b, 1, 1)), x], dim=1)
-#         x = x[:, :-1]  # (b, seq_len, latent_ndim)
+#         zq = zq.permute(0, 2, 1)  # (b, ndim, n_pts * 2)
+#         recon_x = zq.unsqueeze(2)  # (b, n_pts * 2, ndim)
+#         recon_x = self.conv_transpose1(recon_x)
+#         recon_x = self.conv_transpose2(recon_x)
+#         recon_x = self.conv_transpose3(recon_x)
 
-#         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
-
-#         zq = self.mlp_z(zq)
-#         zq = zq.view(b, seq_len, self.latent_ndim)
-#         for layer in self.decoders:
-#             x = layer(x, zq, mask)
-#         # x (b, seq_len, latent_ndim)
-
-#         recon_x = self.mlp(x).view(b, seq_len, 1)
-
-#         return recon_x
+#         b = zq.size(0)
+#         recon_x = recon_x.view(b, self.seq_len, self.n_pts, 2)
+#         recon_kps, recon_bbox = recon_x[:, :, :-2, :], recon_x[:, :, -2:, :]
+#         return recon_kps, recon_bbox

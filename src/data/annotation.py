@@ -16,7 +16,6 @@ def load_annotation_train(
     data_root: str,
     checkpoint_dir: str,
     config: SimpleNamespace,
-    min_n_samples: int = 1000,
     seed: int = 42,
 ):
     np.random.seed(seed)
@@ -63,7 +62,7 @@ def load_annotation_train(
             used_annotation.append((k, label))
             count_sum += int(c)
             count_non_labeled -= int(c)
-            if count_sum >= min_n_samples:
+            if count_sum >= config.min_n_labeled_samples:
                 summary_annotation.append((label, count_sum))
                 break
 

@@ -64,8 +64,7 @@ class SQVAE(LightningModule):
         # prob (b, npts, book_size)
 
         # reconstruction
-        # recon_kps, recon_bbox = self.decoder(kps, bbox, zq)
-        recon_kps, recon_bbox = self.decoder(zq)
+        recon_kps, recon_bbox = self.decoder(kps, bbox, zq)
 
         return (
             ze,
@@ -188,7 +187,7 @@ class SQVAE(LightningModule):
     @torch.no_grad()
     def predict_step(self, batch):
         keys, ids, kps, bbox, mask = batch
-        keys = np.array(keys).T[0]
+        keys = np.array(keys).T[0].tolist()
         kps = kps.to(next(self.parameters()).device)
         bbox = bbox.to(next(self.parameters()).device)
         if kps.ndim == 5:
@@ -215,7 +214,7 @@ class SQVAE(LightningModule):
         results = []
         for i in range(len(keys)):
             data = {
-                "key": keys[i].item(),
+                "key": keys[i],
                 "id": ids[i].cpu().numpy().item(),
                 "kps": kps[i].cpu().numpy(),
                 "recon_kps": recon_kps[i].cpu().numpy(),
