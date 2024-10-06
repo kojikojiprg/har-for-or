@@ -10,7 +10,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.strategies import DDPStrategy
 
 sys.path.append(".")
-from src.data import individual_train_dataloader
+from src.data import individual_train_dataloader, load_annotation_train
 from src.model import SQVAE, VAE
 from src.utils import yaml_handler
 
@@ -40,27 +40,32 @@ if __name__ == "__main__":
     config_path = f"configs/individual-{model_type}.yaml"
     config = yaml_handler.load(config_path)
 
-    # create checkpoint directory of this version
-    checkpoint_dir = f"models/individual/{model_type}"
-    ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
-    ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
-    if len(ckpt_dirs) > 0:
-        max_v_num = 0
-        for d in ckpt_dirs:
-            last_ckpt_dir = os.path.dirname(d)
-            v_num = int(last_ckpt_dir.split("/")[-1].replace("version_", ""))
-            if v_num > max_v_num:
-                max_v_num = v_num
-        v_num = max_v_num + 1
-    else:
-        v_num = 0
-    checkpoint_dir = os.path.join(checkpoint_dir, f"version_{v_num}")
-
     if "WORLD_SIZE" not in os.environ:
+        # create checkpoint directory of this version
+        checkpoint_dir = f"models/individual/{model_type}"
+        ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
+        ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
+        if len(ckpt_dirs) > 0:
+            max_v_num = 0
+            for d in ckpt_dirs:
+                last_ckpt_dir = os.path.dirname(d)
+                v_num = int(last_ckpt_dir.split("/")[-1].replace("version_", ""))
+                if v_num > max_v_num:
+                    max_v_num = v_num
+            v_num = max_v_num + 1
+        else:
+            v_num = 0
+        checkpoint_dir = os.path.join(checkpoint_dir, f"version_{v_num}")
+
         # copy config
         os.makedirs(checkpoint_dir, exist_ok=False)
         copy_config_path = os.path.join(checkpoint_dir, f"individual-{model_type}.yaml")
         shutil.copyfile(config_path, copy_config_path)
+    else:
+        checkpoint_dir = f"models/individual/{model_type}"
+        ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
+        ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
+        checkpoint_dir = ckpt_dirs[-1]
 
     # model checkpoint callback
     h, w = config.img_size
@@ -73,6 +78,9 @@ if __name__ == "__main__":
         save_last=True,
     )
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-{epoch}"
+
+    # create annotation
+    annotations = load_annotation_train(data_root, checkpoint_dir, config)
 
     # load dataset
     dataloader, n_batches = individual_train_dataloader(
@@ -88,7 +96,7 @@ if __name__ == "__main__":
     elif model_type == "sqvae":
         if unsupervised_training:
             ann_path = None
-        model = SQVAE(config, annotation_path=ann_path)
+        model = SQVAE(config, annotations)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 

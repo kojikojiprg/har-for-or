@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
+from numpy.typing import NDArray
 from rotary_embedding_torch import RotaryEmbedding
 
 from src.model.layers import (
@@ -17,11 +18,7 @@ from src.model.layers import (
 
 
 class SQVAE(LightningModule):
-    def __init__(
-        self,
-        config: SimpleNamespace,
-        annotation_path: Optional[str] = None,
-    ):
+    def __init__(self, config: SimpleNamespace, annotations: Optional[NDArray] = None):
         super().__init__()
         self.config = config
         self.temp_init = config.temp_init
@@ -41,8 +38,7 @@ class SQVAE(LightningModule):
         self.decoder = None
         self.quantizer = None
 
-        self.annotation_path = annotation_path
-        self.annotations = None
+        self.annotations = annotations
 
     def configure_model(self):
         if self.encoder is not None:
@@ -52,10 +48,6 @@ class SQVAE(LightningModule):
             [Decoder(self.config) for _ in range(self.n_pts * 2)]
         )
         self.quantizer = GaussianVectorQuantizer(self.config)
-
-        if self.annotation_path is not None:
-            anns = np.loadtxt(self.annotation_path, str, delimiter=" ", skiprows=1)
-            self.annotations = anns
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)

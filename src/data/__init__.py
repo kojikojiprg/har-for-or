@@ -1,3 +1,4 @@
+from .annotation import load_annotation_train
 from .dataset import (
     individual_pred_dataloader,
     individual_train_dataloader,
