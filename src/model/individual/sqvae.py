@@ -88,11 +88,11 @@ class SQVAE(LightningModule):
         return F.mse_loss(recon_x, x, reduction="none").mean(dim=(1, 2, 3))  # (b,)
 
     def loss_x(self, x, recon_x):
-        mses = self.mse_x(x, recon_x).sum()
+        mses = self.mse_x(x, recon_x)
+        return mses.mean()
         # n_pts = x.size(2) * x.size(3)
         # loss_x = n_pts * torch.log(mses) / 2
         # return loss_x
-        return mses.mean()
 
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
