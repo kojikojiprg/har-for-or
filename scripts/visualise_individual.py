@@ -51,8 +51,10 @@ if __name__ == "__main__":
         max_n_frame = cap.frame_count
         frame_size = cap.size
 
-        size_heatmaps = (config.nlayers * 200, cap.size[1])
-        attn_frame_size = (cap.size[0] + size_heatmaps[0], cap.size[1])
+        size_heatmap_attn = (config.nlayers * 200, cap.size[1])
+        attn_frame_size = (cap.size[0] + size_heatmap_attn[0], cap.size[1])
+        size_heatmap_book = (400, cap.size[1])
+        book_frame_size = (cap.size[0] + size_heatmap_book[0], cap.size[1])
 
         # create writers
         wrt_kps = video.Writer(f"{data_dir}/pred_kps.mp4", cap.fps, cap.size)
@@ -60,6 +62,9 @@ if __name__ == "__main__":
         wrt_cluster = video.Writer(f"{data_dir}/pred_cluster.mp4", cap.fps, cap.size)
         wrt_attn = video.Writer(
             f"{data_dir}/pred_attention.mp4", cap.fps, attn_frame_size
+        )
+        wrt_book = video.Writer(
+            f"{data_dir}/pred_book_indices.mp4", cap.fps, book_frame_size
         )
 
         for n_frame in tqdm(range(cap.frame_count), desc=f"{data_dir[-2:]}", ncols=100):
@@ -107,19 +112,33 @@ if __name__ == "__main__":
                     frame.copy(), result_tmp, idx_data, frame_size
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
-                    img_heatmaps = vis.arange_attention_heatmaps(
-                        result_tmp, config.n_clusters, config.nlayers, size_heatmaps
+                    img_heatmaps_attn = vis.arange_attention_heatmaps(
+                        result_tmp, config.n_clusters, config.nlayers, size_heatmap_attn
                     )
-                    img_heatmaps = cv2.cvtColor(img_heatmaps, cv2.COLOR_RGBA2BGR)
+                    img_heatmaps_attn = cv2.cvtColor(img_heatmaps_attn, cv2.COLOR_RGBA2BGR)
                 frame_attention = np.concatenate(
-                    [frame_attention, img_heatmaps], axis=1
+                    [frame_attention, img_heatmaps_attn], axis=1
+                )  # plot attention
+
+                # plot book indices
+                frame_book = vis.plot_book_idx_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size, config.book_size
+                )
+                if idx_data == seq_len - stride or n_frame == 0:
+                    img_heatmaps_book = vis.arange_attention_heatmaps(
+                        result_tmp, config.n_clusters, config.nlayers, size_heatmap_attn
+                    )
+                    img_heatmaps_book = cv2.cvtColor(img_heatmaps_book, cv2.COLOR_RGBA2BGR)
+                frame_book = np.concatenate(
+                    [frame_book, img_heatmaps_book], axis=1
                 )
             else:
-                frame_kps = frame_bbox = frame_cluster = frame_attention = frame
+                frame_kps = frame_bbox = frame_cluster = frame_attention, frame_book = frame
 
             wrt_kps.write(frame_kps)
             wrt_bbox.write(frame_bbox)
             wrt_cluster.write(frame_cluster)
             wrt_attn.write(frame_attention)
+            wrt_book.write(frame_book)
 
-        del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn
+        del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn, wrt_book

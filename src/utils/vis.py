@@ -27,7 +27,9 @@ EDGE_INDEX = [
 ]
 
 
-def draw_skeleton(frame: np.array, kps: np.array, color, thickness=2, plot_limbs_only=False):
+def draw_skeleton(
+    frame: np.array, kps: np.array, color, thickness=2, plot_limbs_only=False
+):
     part_line = {}
 
     # draw keypoints
@@ -194,9 +196,9 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
 
 
 def arange_attention_heatmaps(
-    results, n_clusters, n_layers, size, vmaxs=(0.5, 0.3, 0.1)
+    results, n_clusters, n_layers, plot_figsize, vmaxs=(0.5, 0.3, 0.1)
 ):
-    fig = plt.figure(figsize=(size[0] / 100, size[1] / 100))
+    fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
     fig.tight_layout()
     axs = fig.subplots(n_clusters, n_layers)
     for label in range(n_clusters):
@@ -232,6 +234,88 @@ def arange_attention_heatmaps(
         axs[i, 0].set_ylabel(f"Label {i}")
 
     fig.subplots_adjust(0.04, 0.01, 0.99, 0.98)
+    fig.canvas.draw()
+    img = np.array(fig.canvas.renderer.buffer_rgba())
+    plt.close()
+    return img
+
+
+def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
+    cm = plt.get_cmap("turbo", book_size)
+    for data in results:
+        label = str(data["label"])
+        bbox = data["bbox"][idx_data]
+        kps = data["kps"][idx_data]
+        book_idx = data["book_idx"]
+
+        bbox = (bbox.copy() + 1) / 2 * frame_size
+        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+
+        # clustering label
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
+
+        # plot bbox and skeleton limbs
+        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = tuple(color[::-1])  # RGB -> BGR
+        frame = draw_bbox(frame, bbox, color, 2)
+        frame = draw_skeleton(frame, kps, color, 1, True)
+
+        # plot attention
+        for i in range(len(kps)):
+            pt = kps[i].astype(int).tolist()
+            idx = book_idx[i]
+            c = (np.array(cm(idx))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
+        for i in range(len(bbox)):
+            pt = bbox[i].astype(int).tolist()
+            idx = book_idx[i + len(kps)]
+            c = (np.array(cm(idx))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
+
+    return frame
+
+
+def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=1.0):
+    fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
+    fig.tight_layout()
+    axs = fig.subplots(n_clusters, 1)
+    for label in range(n_clusters):
+        book_indices = np.array([r["book_idx"] for r in results if r["label"] == label])
+        if len(book_indices) > 0:
+            book_indices_one_hot = np.eye(book_size)[book_indices]
+            book_indices_count = book_indices_one_hot.sum(axis=0)
+            book_indices_ratio = book_indices_count / book_indices_count.sum(
+                axis=1, keepdims=True
+            )
+            sns.heatmap(
+                book_indices_ratio,
+                annot=False,
+                cmap="Blues",
+                ax=axs[label],
+                cbar=False,
+                xticklabels=False,
+                yticklabels=False,
+                vmin=0.0,
+                vmax=vmax,
+            )
+        else:
+            # set blank
+            ax = axs[label]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.tick_params(axis="both", color="w")
+            ax.spines[["left", "right", "bottom", "top"]].set_visible(False)
+
+    # set titles
+    for i in range(n_clusters):
+        axs[i].set_ylabel(f"Label {i}")
+
+    fig.subplots_adjust(0.1, 0.01, 0.99, 0.99)
     fig.canvas.draw()
     img = np.array(fig.canvas.renderer.buffer_rgba())
     plt.close()
