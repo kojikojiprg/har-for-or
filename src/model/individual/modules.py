@@ -46,32 +46,80 @@ class ClassificationHead(nn.Module):
         return x
 
 
+# class Embedding(nn.Module):
+#     def __init__(self, latent_ndim):
+#         super().__init__()
+#         self.conv1 = nn.Sequential(
+#             nn.Conv1d(1, latent_ndim // 4, 10, 5, bias=False),
+#             nn.GroupNorm(1, latent_ndim // 4),
+#             nn.SiLU(),
+#         )  # 90 -> 17
+#         self.conv2 = nn.Sequential(
+#             nn.Conv1d(latent_ndim // 4, latent_ndim // 2, 5, 3, bias=False),
+#             nn.GroupNorm(1, latent_ndim // 2),
+#             nn.SiLU(),
+#         )  # 17 -> 5
+#         self.conv3 = nn.Sequential(
+#             nn.Conv1d(latent_ndim // 2, latent_ndim, 5, bias=False),
+#             nn.GroupNorm(1, latent_ndim),
+#             nn.SiLU(),
+#         )  # 5 -> 1
+
+#     def forward(self, x):
+#         # x (b, seq_len)
+#         x = x.unsqueeze(1)  # x (b, 1, seq_len)
+#         x = self.conv1(x)
+#         x = self.conv2(x)
+#         x = self.conv3(x)  # (b, ndim, 1)
+#         x = x.permute(0, 2, 1)  # (b, 1, ndim)
+#         return x
+
+
 class Embedding(nn.Module):
-    def __init__(self, latent_ndim):
+    def __init__(self, seq_len, latent_ndim):
         super().__init__()
+        # self.conv1 = nn.Sequential(
+        #     nn.Conv2d(1, latent_ndim // 4, (10, 1), (5, 1), bias=False),
+        #     nn.GroupNorm(1, latent_ndim // 4),
+        #     nn.SiLU(),
+        # )  # 90 -> 17
+        # self.conv2 = nn.Sequential(
+        #     nn.Conv2d(latent_ndim // 4, latent_ndim // 2, (5, 1), (3, 1), bias=False),
+        #     nn.GroupNorm(1, latent_ndim // 2),
+        #     nn.SiLU(),
+        # )  # 17 -> 5
+        # self.conv3 = nn.Sequential(
+        #     nn.Conv2d(latent_ndim // 2, latent_ndim, (5, 1), bias=False),
+        #     nn.GroupNorm(1, latent_ndim),
+        #     nn.SiLU(),
+        # )  # 5 -> 1
         self.conv1 = nn.Sequential(
-            nn.Conv1d(1, latent_ndim // 4, 10, 5, bias=False),
+            nn.Conv1d(seq_len, latent_ndim // 4, 1),
             nn.GroupNorm(1, latent_ndim // 4),
             nn.SiLU(),
-        )  # 90 -> 17
+        )
         self.conv2 = nn.Sequential(
-            nn.Conv1d(latent_ndim // 4, latent_ndim // 2, 5, 3, bias=False),
+            nn.Conv1d(latent_ndim // 4, latent_ndim // 2, 1),
             nn.GroupNorm(1, latent_ndim // 2),
             nn.SiLU(),
-        )  # 17 -> 5
+        )
         self.conv3 = nn.Sequential(
-            nn.Conv1d(latent_ndim // 2, latent_ndim, 5, bias=False),
+            nn.Conv1d(latent_ndim // 2, latent_ndim, 1),
             nn.GroupNorm(1, latent_ndim),
             nn.SiLU(),
-        )  # 5 -> 1
+        )
 
     def forward(self, x):
-        # x (b, seq_len)
-        x = x.unsqueeze(1)  # x (b, 1, seq_len)
+        # x (b, seq_len, n_pts)
+        # x = x.unsqueeze(1)  # x (b, 1, seq_len, n_pts)
+        # x = self.conv1(x)
+        # x = self.conv2(x)
+        # x = self.conv3(x)  # (b, ndim, 1, n_pts)
+        # x = x.squeeze(2)  # (b, ndim, n_pts)
         x = self.conv1(x)
         x = self.conv2(x)
-        x = self.conv3(x)  # (b, ndim, 1)
-        x = x.permute(0, 2, 1)  # (b, 1, ndim)
+        x = self.conv3(x)  # (b, ndim, n_pts)
+        x = x.permute(0, 2, 1)  # (b, n_pts, ndim)
         return x
 
 
@@ -80,9 +128,10 @@ class Encoder(nn.Module):
         super().__init__()
         self.latent_ndim = config.latent_ndim
         self.n_pts = get_n_pts(config)
-        self.embs = nn.ModuleList(
-            [Embedding(config.latent_ndim) for _ in range(self.n_pts * 2)]
-        )
+        # self.embs = nn.ModuleList(
+        #     [Embedding(config.latent_ndim) for _ in range(self.n_pts * 2)]
+        # )
+        self.emb = Embedding(config.seq_len, config.latent_ndim)
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
@@ -102,10 +151,11 @@ class Encoder(nn.Module):
         kps = kps.view(b, seq_len, -1)
         bbox = bbox.view(b, seq_len, -1)
         x = torch.cat([kps, bbox], dim=2)
-        z = torch.empty((b, 0, self.latent_ndim)).to(kps.device)
-        for i in range(self.n_pts * 2):
-            z_one = self.embs[i](x[:, :, i])
-            z = torch.cat([z, z_one], dim=1)
+        # z = torch.empty((b, 0, self.latent_ndim)).to(kps.device)
+        # for i in range(self.n_pts * 2):
+        #     z_one = self.embs[i](x[:, :, i])
+        #     z = torch.cat([z, z_one], dim=1)
+        z = self.emb(x)
         # z (b, n_pts * 2, latent_ndim)
 
         # positional embedding
@@ -270,7 +320,7 @@ class DecoderModule(nn.Module):
 
         self.emb = MLP(1, config.latent_ndim)
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
-        self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
+        # self.mlp_z = MLP(config.latent_ndim, config.latent_ndim * config.seq_len)
         self.decoders = nn.ModuleList(
             [
                 TransformerDecoderBlock(
@@ -279,9 +329,19 @@ class DecoderModule(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        self.mlp = nn.Sequential(
-            MLP(config.latent_ndim, 1),
-            nn.Tanh(),
+        # self.mlp = nn.Sequential(
+        #     MLP(config.latent_ndim, 1),
+        #     nn.Tanh(),
+        # )
+        self.out = nn.Sequential(
+            nn.Conv1d(config.latent_ndim, config.latent_ndim // 2, 1),
+            nn.GroupNorm(1, config.latent_ndim // 2),
+            nn.SiLU(),
+            nn.Conv1d(config.latent_ndim // 2, config.latent_ndim // 4, 1),
+            nn.GroupNorm(1, config.latent_ndim // 4),
+            nn.SiLU(),
+            nn.Conv1d(config.latent_ndim // 4, 1, 1),
+            nn.SiLU(),
         )
 
     def forward(self, x, zq, mask=None):
@@ -298,13 +358,17 @@ class DecoderModule(nn.Module):
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
-        zq = self.mlp_z(zq)
-        zq = zq.view(b, seq_len, self.latent_ndim)
+        # zq = self.mlp_z(zq)
+        # zq = zq.view(b, seq_len, self.latent_ndim)
+        zq = zq.unsqueeze(1).repeat(1, seq_len, 1)
         for layer in self.decoders:
             x = layer(x, zq, mask)
         # x (b, seq_len, latent_ndim)
 
-        recon_x = self.mlp(x).view(b, seq_len, 1)
+        # recon_x = self.mlp(x).view(b, seq_len, 1)
+        x = x.permute(0, 2, 1)
+        recon_x = self.out(x)
+        recon_x = recon_x.permute(0, 2, 1)
 
         return recon_x
 
