@@ -330,8 +330,12 @@ class DecoderModule(nn.Module):
             ]
         )
         # self.mlp = nn.Sequential(
-        #     MLP(config.latent_ndim, 1),
-        #     nn.Tanh(),
+        #     MLP(config.latent_ndim, config.latent_ndim // 2),
+        #     nn.SiLU(),
+        #     MLP(config.latent_ndim // 2, config.latent_ndim // 4),
+        #     nn.SiLU(),
+        #     MLP(config.latent_ndim // 4, 1),
+        #     nn.SiLU(),
         # )
         self.out = nn.Sequential(
             nn.Conv1d(config.latent_ndim, config.latent_ndim // 2, 1),
@@ -341,7 +345,7 @@ class DecoderModule(nn.Module):
             nn.GroupNorm(1, config.latent_ndim // 4),
             nn.SiLU(),
             nn.Conv1d(config.latent_ndim // 4, 1, 1),
-            nn.SiLU(),
+            nn.Tanh(),
         )
 
     def forward(self, x, zq, mask=None):
