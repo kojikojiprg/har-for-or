@@ -84,7 +84,7 @@ def individual_train_dataloader(
     n_batches = int(n_batches / len(gpu_ids) / config.batch_size)
     if n_batches % config.accumulate_grad_batches != 0:
         n_batches -= n_batches % config.accumulate_grad_batches
-    dataloader.repeat(config.epochs, n_batches)
+    dataloader.repeat(config.epochs, n_batches).with_length(n_batches)
 
     return dataloader, n_batches
 
