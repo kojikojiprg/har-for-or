@@ -4,8 +4,18 @@ import numpy as np
 import seaborn as sns
 from sklearn.manifold import TSNE
 
-cm_tab10 = plt.get_cmap("tab10")
-cm_jet = plt.get_cmap("jet", 100)
+_cm_tab10 = plt.get_cmap("tab10")
+_cm_jet = plt.get_cmap("jet", 100)
+_tanh1 = np.tanh(1)
+
+
+def _scale_bbox(bbox, frame_size):
+    return (bbox.copy() + _tanh1) / (2 * _tanh1) * frame_size
+
+
+def _scale_kps(kps, bbox):
+    return (kps.copy() + _tanh1) / (2 * _tanh1) * (bbox[1] - bbox[0]) + bbox[0]
+
 
 EDGE_INDEX = [
     (0, 1),  # Head
@@ -98,9 +108,9 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size):
         fake_kps = data["recon_kps"][idx_data]
         mse_kps = data["mse_kps"]
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
-        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-        fake_kps = (fake_kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+        bbox = _scale_bbox(bbox, frame_size)
+        kps = _scale_kps(kps, bbox)
+        fake_kps = _scale_kps(fake_kps, bbox)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -132,7 +142,7 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
         bbox = data["bbox"][idx_data]
         label = str(data["label"])
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
+        bbox = _scale_bbox(bbox, frame_size)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -141,7 +151,7 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
         )
 
         # bbox
-        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = (np.array(_cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
         color = tuple(color[::-1])  # RGB -> BGR
         frame = draw_bbox(frame, bbox, color)
 
@@ -158,8 +168,8 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
         kps = data["kps"][idx_data]
         attn_w = data["attn_w"]
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
-        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+        bbox = _scale_bbox(bbox, frame_size)
+        kps = _scale_kps(kps, bbox)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -168,7 +178,7 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
         )
 
         # plot bbox and skeleton limbs
-        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = (np.array(_cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
         color = tuple(color[::-1])  # RGB -> BGR
         frame = draw_bbox(frame, bbox, color, 2)
         frame = draw_skeleton(frame, kps, color, 1, True)
@@ -182,13 +192,13 @@ def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
         for i in range(len(kps)):
             pt = kps[i].astype(int).tolist()
             w = attn_w[i]
-            c = (np.array(cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = (np.array(_cm_jet(w))[:3] * 255).astype(int).tolist()
             c = c[::-1]
             frame = cv2.circle(frame, pt, 3, c, -1)
         for i in range(len(bbox)):
             pt = bbox[i].astype(int).tolist()
             w = attn_w[i + len(kps)]
-            c = (np.array(cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = (np.array(_cm_jet(w))[:3] * 255).astype(int).tolist()
             c = c[::-1]
             frame = cv2.circle(frame, pt, 3, c, -1)
 
@@ -248,8 +258,8 @@ def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
         kps = data["kps"][idx_data]
         book_idx = data["book_idx"]
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
-        kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
+        bbox = _scale_bbox(bbox, frame_size)
+        kps = _scale_kps(kps, bbox)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -258,7 +268,7 @@ def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
         )
 
         # plot bbox and skeleton limbs
-        color = (np.array(cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = (np.array(_cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
         color = tuple(color[::-1])  # RGB -> BGR
         frame = draw_bbox(frame, bbox, color, 2)
         frame = draw_skeleton(frame, kps, color, 1, True)

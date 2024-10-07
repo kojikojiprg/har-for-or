@@ -6,13 +6,19 @@ from torchvision.transforms import Compose, Normalize
 
 
 class NormalizeBbox:
-    def __call__(self, bbox, frame_size):
+    def __init__(self):
+        self.tanh1 = np.tanh(1)
+
+    def __call__(self, bbox, frame_size, lmd=2):
         bbox = bbox / np.array(frame_size)  # [0, 1]
-        bbox = 2 * bbox - 1  # [-1, 1]
+        bbox = 2 * self.tanh1 * bbox - self.tanh1  # [-tanh2, tanh2]
         return bbox
 
 
 class NormalizeKeypoints:
+    def __init__(self):
+        self.tanh1 = np.tanh(1)
+
     def __call__(self, kps, bbox):
         ndim = kps.ndim
         if ndim == 4:
@@ -20,14 +26,14 @@ class NormalizeKeypoints:
             bbox = bbox.reshape(n_ids, seq_len, 2, 2)
             kps = kps - bbox[:, :, 0].reshape(n_ids, seq_len, 1, 2)
             kps /= (bbox[:, :, 1] - bbox[:, :, 0]).reshape(n_ids, seq_len, 1, 2)
-            kps = 2 * kps - 1
+            kps = 2 * self.tanh1 * kps - self.tanh1
             return kps
         elif ndim == 3:
             n = kps.shape[0]
             bbox = bbox.reshape(n, 2, 2)
             kps = kps - bbox[:, 0].reshape(n, 1, 2)
             kps /= (bbox[:, 1] - bbox[:, 0]).reshape(n, 1, 2)
-            kps = 2 * kps - 1
+            kps = 2 * self.tanh1 * kps - self.tanh1
             return kps
         else:
             raise ValueError
