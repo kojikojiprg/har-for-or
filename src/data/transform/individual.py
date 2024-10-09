@@ -109,35 +109,38 @@ def individual_npz_to_tensor(
     kps_transform,
     mask_leg,
     range_points,
+    load_frame_flow=False,
 ):
     key = sample["__key__"]
-    npz = list(np.load(io.BytesIO(sample["npz"])).values())
-    if len(npz) == 4:
-        _id, bboxs, kps, frame_size = npz
+
+    npz = np.load(io.BytesIO(sample["npz"]))
+    _id = npz["id"]
+    bboxs = npz["bbox"]
+    kps = npz["keypoints"]
+    frame_size = npz["frame_size"]
+    if load_frame_flow:
+        frames = npz["frame"]
+        flows = npz["flow"]
+    else:
         frames = None
         flows = None
-    elif len(npz) == 6:
-        _id, frames, flows, bboxs, kps, frame_size = npz
-    else:
-        raise ValueError
 
     if len(bboxs) < seq_len:
         # padding
         pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0))
         bboxs = np.pad(bboxs, pad_shape, constant_values=-1e10)
         kps = np.pad(kps, pad_shape, constant_values=-1e10)
-        # if frames is not None and flows is not None:
-        #     pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
-        #     frames = np.pad(frames, pad_shape, constant_values=-1)
-        #     flows = np.pad(flows, pad_shape, constant_values=-1e10)
+        if load_frame_flow:
+            pad_shape = ((0, seq_len - len(bboxs)), (0, 0), (0, 0), (0, 0))
+            frames = np.pad(frames, pad_shape, constant_values=-1)
+            flows = np.pad(flows, pad_shape, constant_values=-1e10)
 
-    # if frames is not None and flows is not None:
-    #     frames = frame_transform(frames)
-    #     flows = flow_transform(flows)
-    #     pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
-    # else:
-    #     pixcels = None
-    pixcels = None
+    if load_frame_flow:
+        frames = frame_transform(frames)
+        flows = flow_transform(flows)
+        pixcels = torch.cat([frames, flows], dim=1).to(torch.float32)
+    else:
+        pixcels = None
 
     mask = torch.from_numpy(np.any(bboxs <= -1e9, axis=(1, 2))).to(torch.bool)
 
@@ -149,7 +152,9 @@ def individual_npz_to_tensor(
     kps = torch.from_numpy(kps).to(torch.float32)
 
     bboxs[mask] = -1.0
-    bboxs[~mask] = bbox_transform(bboxs[~mask], frame_size[::-1], range_points)  # frame_size: (h, w)
+    bboxs[~mask] = bbox_transform(
+        bboxs[~mask], frame_size[::-1], range_points
+    )  # frame_size: (h, w)
     bboxs = interpolate_points(bboxs, mask).reshape(seq_len, 2, 2)
     bboxs = torch.from_numpy(bboxs).to(torch.float32)
 

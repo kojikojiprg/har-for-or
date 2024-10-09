@@ -1,15 +1,14 @@
 import os
 import sys
 from glob import glob
-from math import ceil
 from types import SimpleNamespace
 
 import numpy as np
-import webdataset as wds
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.append(".")
-from src.data.dataset import load_dataset
+from src.data.dataset import load_dataset_mapped
 
 
 def load_annotation_train(
@@ -90,20 +89,12 @@ def count_samples(data_root: str, config: SimpleNamespace):
     else:
         # load dataset
         data_dirs = glob(f"{data_root}/train/**/")
-        dataset, n_samples = load_dataset(data_dirs, "individual", config, False)
-        dataset = dataset.batched(config.batch_size, partial=True)
-        dataloader = wds.WebLoader(
-            dataset,
-            num_workers=16,
-            pin_memory=True,
-            # persistent_workers=True,
-        )
-        n_batches = ceil(n_samples / config.batch_size)
-        dataloader.repeat(1, n_batches)
+        dataset = load_dataset_mapped(data_dirs, "individual", config)
+        dataloader = DataLoader(dataset, num_workers=16, pin_memory=True)
 
         # count labels
         count_keys = {}
-        for batch in tqdm(iter(dataloader), ncols=100, total=n_batches, desc="annot"):
+        for batch in tqdm(iter(dataloader), ncols=100, desc="annot"):
             keys = np.array(batch[0]).ravel()
             for key in keys:
                 video_num, n_frame, _id = key.split("_")

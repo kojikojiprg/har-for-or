@@ -3,11 +3,11 @@ import sys
 
 import cv2
 import numpy as np
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from webdataset import WebLoader
 
 sys.path.append(".")
-from src.data import load_dataset
+from src.data import load_dataset_mapped
 from src.utils import video, vis, yaml_handler
 
 
@@ -41,8 +41,8 @@ if __name__ == "__main__":
     stride = config.stride
 
     # load dataset
-    dataset, n_samples = load_dataset(data_dirs, "individual", config, False)
-    dataloader = WebLoader(dataset, num_workers=1, pin_memory=True)
+    dataset = load_dataset_mapped(data_dirs, "individual", config, False)
+    dataloader = DataLoader(dataset, num_workers=1, pin_memory=True)
 
     # load video
     video_path = f"{data_dir}.mp4"
@@ -55,7 +55,7 @@ if __name__ == "__main__":
 
     pre_n_frame = seq_len
     data_tmp = []
-    for batch in tqdm(dataloader, total=n_samples, ncols=100):
+    for batch in tqdm(dataloader, ncols=100):
         keys, ids, kps, bbox, mask = batch
         if kps.ndim == 5:
             ids = ids[0]
@@ -85,7 +85,11 @@ if __name__ == "__main__":
                 )
                 for _id_tmp, kps_tmp, bbox_tmp in data_tmp:
                     frame = plot_on_frame(
-                        frame, _id_tmp, bbox_tmp[idx_data], kps_tmp[idx_data], frame_size
+                        frame,
+                        _id_tmp,
+                        bbox_tmp[idx_data],
+                        kps_tmp[idx_data],
+                        frame_size,
                     )
 
                 wrt.write(frame)

@@ -55,7 +55,7 @@ if __name__ == "__main__":
             data_dir = data_dir[:-1]
 
         # load dataset
-        dataloader, n_samples = individual_pred_dataloader(
+        dataloader = individual_pred_dataloader(
             data_dir, "individual", config, [gpu_id]
         )
 
@@ -64,9 +64,7 @@ if __name__ == "__main__":
         os.makedirs(save_dir, exist_ok=True)
 
         model.eval()
-        for batch in tqdm(
-            dataloader, total=n_samples, desc=f"{data_dir[-2:]}", ncols=100
-        ):
+        for batch in tqdm(dataloader, desc=f"{data_dir[-2:]}", ncols=100):
             results = model.predict_step(batch)
             for result in results:
                 key = result["key"]

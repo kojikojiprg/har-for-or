@@ -83,14 +83,18 @@ if __name__ == "__main__":
     annotations = load_annotation_train(data_root, checkpoint_dir, config)
 
     # load dataset
-    dataloader, n_batches = individual_train_dataloader(
-        os.path.join(data_root, "train"), "individual", config, gpu_ids
+    dataloader = individual_train_dataloader(
+        os.path.join(data_root, "train"),
+        "individual",
+        config,
+        gpu_ids,
+        is_mapped=True,
     )
 
     # create model
     ann_path = f"{data_root}/annotation/role.txt"
     if model_type == "vae":
-        model = VAE(config, n_batches, annotation_path=ann_path)
+        model = VAE(config, annotation_path=ann_path)
         # model = VAE(config, n_batches)
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
     elif model_type == "sqvae":
