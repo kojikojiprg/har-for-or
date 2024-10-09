@@ -127,6 +127,7 @@ def load_dataset_iterable(
             kps_transform=NormalizeKeypoints(),
             mask_leg=config.mask_leg,
             range_points=config.range_points,
+            load_frame_flow=False,  # TODO: set True when use frame and flow
         )
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":

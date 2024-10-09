@@ -88,7 +88,7 @@ if __name__ == "__main__":
         "individual",
         config,
         gpu_ids,
-        is_mapped=True,
+        is_mapped=False,
     )
 
     # create model
