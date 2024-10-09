@@ -41,7 +41,7 @@ class SQVAE(LightningModule):
         self.cls_head = ClassificationHead(self.config)
 
     def configure_optimizers(self):
-        opt = torch.optim.Adam(self.parameters(), lr=self.config.lr)
+        opt = torch.optim.RAdam(self.parameters(), lr=self.config.lr)
         sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
         return [opt], [sch]
 
@@ -100,13 +100,22 @@ class SQVAE(LightningModule):
     def loss_kl_discrete(self, prob, log_prob):
         return torch.sum(prob * log_prob, dim=(0, 1)).mean()
 
-    def training_step(self, batch, batch_idx):
+    def process_batch(self, batch):
         keys, ids, kps, bbox, mask = batch
-        keys = np.array(keys).T[0]
-        ids = ids[0]
-        kps = kps[0]
-        bbox = bbox[0]
-        # mask = mask[0]
+        keys = np.array(keys).ravel()
+        if kps.device != self.device:
+            kps = kps.to(self.device)
+            bbox = bbox.to(self.device)
+        if kps.ndim == 5:
+            ids = ids[0]
+            kps = kps[0]
+            bbox = bbox[0]
+            # mask = mask[0]
+
+        return keys, ids, kps, bbox, mask
+
+    def training_step(self, batch, batch_idx):
+        keys, ids, kps, bbox, mask = self.process_batch(batch)
 
         # update temperature of gumbel softmax
         temp_cur = self.calc_temperature()
@@ -185,14 +194,7 @@ class SQVAE(LightningModule):
 
     @torch.no_grad()
     def predict_step(self, batch):
-        keys, ids, kps, bbox, mask = batch
-        keys = np.array(keys).T[0].tolist()
-        kps = kps.to(next(self.parameters()).device)
-        bbox = bbox.to(next(self.parameters()).device)
-        if kps.ndim == 5:
-            ids = ids[0]
-            kps = kps[0]
-            bbox = bbox[0]
+        keys, ids, kps, bbox, mask = self.process_batch(batch)
 
         # forward
         (
