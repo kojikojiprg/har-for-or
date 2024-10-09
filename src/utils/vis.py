@@ -4,17 +4,10 @@ import numpy as np
 import seaborn as sns
 from sklearn.manifold import TSNE
 
+from src.data.transform import NormalizeBbox, NormalizeKeypoints
+
 _cm_tab10 = plt.get_cmap("tab10")
 _cm_jet = plt.get_cmap("jet", 100)
-_tanh1 = np.tanh(1)
-
-
-def _scale_bbox(bbox, frame_size):
-    return (bbox.copy() + _tanh1) / (2 * _tanh1) * frame_size
-
-
-def _scale_kps(kps, bbox):
-    return (kps.copy() + _tanh1) / (2 * _tanh1) * (bbox[1] - bbox[0]) + bbox[0]
 
 
 EDGE_INDEX = [
@@ -65,15 +58,15 @@ def draw_bbox(frame: np.array, bbox: np.array, color: tuple, thickness=2):
     return frame
 
 
-def plot_bbox_on_frame(frame, results, idx_data, frame_size):
+def plot_bbox_on_frame(frame, results, idx_data, frame_size, range_points):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
         mse_bbox = data["mse_bbox"]
         fake_bbox = data["recon_bbox"][idx_data]
 
-        bbox = (bbox.copy() + 1) / 2 * frame_size
-        fake_bbox = (fake_bbox.copy() + 1) / 2 * frame_size
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        fake_bbox = NormalizeBbox.reverse(fake_bbox, frame_size, range_points)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -100,7 +93,7 @@ def plot_bbox_on_frame(frame, results, idx_data, frame_size):
     return frame
 
 
-def plot_kps_on_frame(frame, results, idx_data, frame_size):
+def plot_kps_on_frame(frame, results, idx_data, frame_size, range_points):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
@@ -108,9 +101,9 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size):
         fake_kps = data["recon_kps"][idx_data]
         mse_kps = data["mse_kps"]
 
-        bbox = _scale_bbox(bbox, frame_size)
-        kps = _scale_kps(kps, bbox)
-        fake_kps = _scale_kps(fake_kps, bbox)
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+        fake_kps = NormalizeKeypoints.reverse(fake_kps, bbox, range_points)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -136,13 +129,13 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size):
     return frame
 
 
-def plot_cluster_on_frame(frame, results, idx_data, frame_size):
+def plot_cluster_on_frame(frame, results, idx_data, frame_size, range_points):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
         label = str(data["label"])
 
-        bbox = _scale_bbox(bbox, frame_size)
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -161,15 +154,17 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size):
     return frame
 
 
-def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.5):
+def plot_attention_on_frame(
+    frame, results, idx_data, frame_size, range_points, vmax=0.5
+):
     for data in results:
         label = str(data["label"])
         bbox = data["bbox"][idx_data]
         kps = data["kps"][idx_data]
         attn_w = data["attn_w"]
 
-        bbox = _scale_bbox(bbox, frame_size)
-        kps = _scale_kps(kps, bbox)
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -209,7 +204,6 @@ def arange_attention_heatmaps(
     results, n_clusters, n_layers, plot_figsize, vmaxs=(0.5, 0.3, 0.1)
 ):
     fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
-    fig.tight_layout()
     axs = fig.subplots(n_clusters, n_layers)
     for label in range(n_clusters):
         attn_w = np.array([r["attn_w"] for r in results if r["label"] == label])
@@ -243,14 +237,16 @@ def arange_attention_heatmaps(
     for i in range(n_clusters):
         axs[i, 0].set_ylabel(f"Label {i}")
 
-    fig.subplots_adjust(0.04, 0.01, 0.99, 0.98)
+    fig.tight_layout()
     fig.canvas.draw()
     img = np.array(fig.canvas.renderer.buffer_rgba())
     plt.close()
     return img
 
 
-def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
+def plot_book_idx_on_frame(
+    frame, results, idx_data, frame_size, book_size, range_points
+):
     cm = plt.get_cmap("turbo", book_size)
     for data in results:
         label = str(data["label"])
@@ -258,8 +254,8 @@ def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
         kps = data["kps"][idx_data]
         book_idx = data["book_idx"]
 
-        bbox = _scale_bbox(bbox, frame_size)
-        kps = _scale_kps(kps, bbox)
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -292,7 +288,6 @@ def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
 
 def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=1.0):
     fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
-    fig.tight_layout()
     axs = fig.subplots(n_clusters, 1)
     for label in range(n_clusters):
         book_indices = np.array([r["book_idx"] for r in results if r["label"] == label])
@@ -325,7 +320,7 @@ def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=
     for i in range(n_clusters):
         axs[i].set_ylabel(f"Label {i}")
 
-    fig.subplots_adjust(0.1, 0.01, 0.99, 0.99)
+    fig.tight_layout()
     fig.canvas.draw()
     img = np.array(fig.canvas.renderer.buffer_rgba())
     plt.close()

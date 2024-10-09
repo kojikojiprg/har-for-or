@@ -50,6 +50,7 @@ def load_dataset(
             bbox_transform=NormalizeBbox(),
             kps_transform=NormalizeKeypoints(),
             mask_leg=config.mask_leg,
+            range_points=config.range_points,
         )
         dataset = dataset.map(idv_npz_to_tensor)
     elif dataset_type == "group":

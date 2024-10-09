@@ -6,37 +6,31 @@ from torchvision.transforms import Compose, Normalize
 
 
 class NormalizeBbox:
-    def __init__(self):
-        self.tanh1 = np.tanh(1)
-
-    def __call__(self, bbox, frame_size, lmd=2):
+    def __call__(self, bbox, frame_size, range_points):
         bbox = bbox / np.array(frame_size)  # [0, 1]
-        bbox = 2 * self.tanh1 * bbox - self.tanh1  # [-tanh2, tanh2]
+        bbox = (2 * range_points * bbox) - range_points  # [-range, range]
         return bbox
+
+    @staticmethod
+    def reverse(bbox, frame_size, range_points):
+        return (bbox.copy() + range_points) / (2 * range_points) * frame_size
 
 
 class NormalizeKeypoints:
-    def __init__(self):
-        self.tanh1 = np.tanh(1)
+    def __call__(self, kps, bbox, range_points):
+        seq_len = kps.shape[0]
+        assert kps.ndim == 3, f"kps.shape = {kps.shape}"
+        kps = kps - bbox[:, 0, :].reshape(seq_len, 1, 2)
+        kps = kps / (bbox[:, 1, :] - bbox[:, 0, :]).reshape(seq_len, 1, 2)
+        kps = (2 * range_points * kps) - range_points
+        return kps
 
-    def __call__(self, kps, bbox):
-        ndim = kps.ndim
-        if ndim == 4:
-            n_ids, seq_len = kps.shape[:2]
-            bbox = bbox.reshape(n_ids, seq_len, 2, 2)
-            kps = kps - bbox[:, :, 0].reshape(n_ids, seq_len, 1, 2)
-            kps /= (bbox[:, :, 1] - bbox[:, :, 0]).reshape(n_ids, seq_len, 1, 2)
-            kps = 2 * self.tanh1 * kps - self.tanh1
-            return kps
-        elif ndim == 3:
-            n = kps.shape[0]
-            bbox = bbox.reshape(n, 2, 2)
-            kps = kps - bbox[:, 0].reshape(n, 1, 2)
-            kps /= (bbox[:, 1] - bbox[:, 0]).reshape(n, 1, 2)
-            kps = 2 * self.tanh1 * kps - self.tanh1
-            return kps
-        else:
-            raise ValueError
+    @staticmethod
+    def reverse(kps, bbox, range_points):
+        kps = (kps.copy() + range_points) / (2 * range_points)
+        kps = kps * (bbox[1] - bbox[0])
+        kps = kps + bbox[0]
+        return kps
 
 
 class TimeSeriesToTensor:
