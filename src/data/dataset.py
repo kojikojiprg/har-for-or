@@ -23,7 +23,6 @@ from .transform import (
 
 class IndividualDatasetMapped(Dataset):
     def __init__(self, shard_paths, func_to_tensor):
-        super().__init__()
         self.keys = []
         self.ids = []
         self.bboxs = []
@@ -52,7 +51,6 @@ class IndividualDatasetMapped(Dataset):
         bbox = self.bboxs[index]
         kps = self.kps[index]
         mask = self.masks[index]
-
         return key, _id, bbox, kps, mask
 
 
@@ -65,7 +63,6 @@ def load_dataset_mapped(
     stride = int(config.stride)
     h, w = config.img_size
     shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
-    n_samples = 0
     for dir_path in data_dirs:
         shard_paths_tmp = sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))
         shard_paths += shard_paths_tmp
@@ -94,7 +91,7 @@ def load_dataset_mapped(
     else:
         raise ValueError
 
-    return dataset, n_samples
+    return dataset
 
 
 def load_dataset_iterable(
