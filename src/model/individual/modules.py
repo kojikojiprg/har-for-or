@@ -17,33 +17,72 @@ def get_n_pts(config: SimpleNamespace):
     return n_pts
 
 
+# class ClassificationHead(nn.Module):
+#     def __init__(self, config: SimpleNamespace):
+#         super().__init__()
+#         ndim = config.latent_ndim
+#         self.conv = nn.Sequential(
+#             nn.Conv1d(ndim, ndim * 2, 1, bias=False),
+#             nn.SiLU(),
+#             nn.AvgPool1d(2),  # 38 -> 19 (mask_leg: 30 -> 15)
+#             nn.Conv1d(ndim * 2, ndim * 4, 1, bias=False),
+#             nn.SiLU(),
+#             nn.AvgPool1d(3, 2),  # 19 -> 9 (mask_leg: 15 -> 7)
+#             nn.Conv1d(ndim * 4, ndim * 8, 1, bias=False),
+#             nn.SiLU(),
+#             nn.AvgPool1d(3, 2),  # 9 -> 4 (mask_leg: 7 -> 3)
+#         )
+#         if not config.mask_leg:
+#             self.mlp = MLP(4 * ndim * 8, config.n_clusters)
+#         else:
+#             self.mlp = MLP(3 * ndim * 8, config.n_clusters)
+
+#     def forward(self, x):
+#         # x (b, n_pts, latent_ndim)
+#         x = x.permute(0, 2, 1)
+#         x = self.conv(x)  # (b, ndim, 4 or 3)
+#         x = x.view(x.size(0), -1)
+#         x = self.mlp(x)  # (b, n_clusters)
+#         return x
+
+
 class ClassificationHead(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         ndim = config.latent_ndim
-        self.conv = nn.Sequential(
-            nn.Conv1d(ndim, ndim * 2, 1, bias=False),
-            nn.SiLU(),
-            nn.AvgPool1d(2),  # 38 -> 19 (mask_leg: 30 -> 15)
-            nn.Conv1d(ndim * 2, ndim * 4, 1, bias=False),
-            nn.SiLU(),
-            nn.AvgPool1d(3, 2),  # 19 -> 9 (mask_leg: 15 -> 7)
-            nn.Conv1d(ndim * 4, ndim * 8, 1, bias=False),
-            nn.SiLU(),
-            nn.AvgPool1d(3, 2),  # 9 -> 4 (mask_leg: 7 -> 3)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, ndim))
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
+        self.encoders = nn.ModuleList(
+            [
+                TransformerEncoderBlock(
+                    config.latent_ndim, config.nheads, config.dropout
+                )
+                # for _ in range(config.nlayers)
+                for _ in range(1)
+            ]
         )
-        if not config.mask_leg:
-            self.mlp = MLP(4 * ndim * 8, config.n_clusters)
-        else:
-            self.mlp = MLP(3 * ndim * 8, config.n_clusters)
+        self.mlp = MLP(ndim, config.n_clusters)
 
-    def forward(self, x):
+    def forward(self, z, is_train):
         # x (b, n_pts, latent_ndim)
-        x = x.permute(0, 2, 1)
-        x = self.conv(x)  # (b, ndim, 4 or 3)
-        x = x.view(x.size(0), -1)
-        x = self.mlp(x)  # (b, n_clusters)
-        return x
+        b = z.size(0)
+        cls_token = self.cls_token.repeat(b, 1, 1)
+        z = torch.cat([cls_token, z], dim=1)
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
+        if is_train:
+            for layer in self.encoders:
+                z, attn_w = layer(z)
+            attn_w_tensor = None
+        else:
+            attn_w_lst = []
+            for layer in self.encoders:
+                z, attn_w = layer(z, need_weights=True)
+                attn_w_lst.append(attn_w.unsqueeze(1))
+            attn_w_tensor = torch.cat(attn_w_lst, dim=1)
+
+        logits = self.mlp(z[:, 0, :])  # (b, n_clusters)
+
+        return logits, attn_w_tensor
 
 
 class Embedding(nn.Module):
@@ -280,14 +319,18 @@ class DecoderModule(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
+        # self.mlp = nn.Sequential(
+        #     MLP(config.latent_ndim, config.latent_ndim // 2),
+        #     nn.GroupNorm(1, config.seq_len),
+        #     nn.SiLU(),
+        #     MLP(config.latent_ndim // 2, config.latent_ndim // 4),
+        #     nn.GroupNorm(1, config.seq_len),
+        #     nn.SiLU(),
+        #     MLP(config.latent_ndim // 4, 1),
+        #     nn.Tanh(),
+        # )
         self.mlp = nn.Sequential(
-            MLP(config.latent_ndim, config.latent_ndim // 2),
-            nn.GroupNorm(1, config.seq_len),
-            nn.SiLU(),
-            MLP(config.latent_ndim // 2, config.latent_ndim // 4),
-            nn.GroupNorm(1, config.seq_len),
-            nn.SiLU(),
-            MLP(config.latent_ndim // 4, 1),
+            MLP(config.latent_ndim, 1),
             nn.Tanh(),
         )
 

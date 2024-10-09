@@ -51,7 +51,7 @@ class SQVAE(LightningModule):
 
         # encoding
         ze, attn_w = self.encoder(kps, bbox, is_train)
-        c_logits = self.cls_head(ze)
+        c_logits, attn_w_cls = self.cls_head(ze, is_train)
         c_prob = F.softmax(c_logits, dim=-1)
         # ze (b, npts, latent_ndim)
         # c_prob (b, n_clusters)
@@ -85,7 +85,7 @@ class SQVAE(LightningModule):
         )
 
     def mse_x(self, x, recon_x):
-        return F.mse_loss(recon_x, x, reduction="none").mean(dim=(1, 2, 3))  # (b,)
+        return F.mse_loss(recon_x, x, reduction="none").sum(dim=(1, 2, 3))  # (b,)
 
     def loss_x(self, x, recon_x):
         mses = self.mse_x(x, recon_x)
@@ -142,7 +142,8 @@ class SQVAE(LightningModule):
         # clustering loss
         c_prior = torch.full_like(c_prob, 1 / self.n_clusters)
         c_prob = torch.clamp(c_prob, min=1e-10)
-        lc_psuedo = (c_prior * (c_prior.log() - c_prob.log())).mean()
+        # lc_psuedo = (c_prob * (c_prob.log() - c_prior.log())).mean()
+        lc_psuedo = F.kl_div(c_prob.log(), c_prior)
         loss_dict["c_psuedo"] = lc_psuedo.item()
 
         if self.annotations is not None:
