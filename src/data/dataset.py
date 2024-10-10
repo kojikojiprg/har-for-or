@@ -101,8 +101,8 @@ def load_dataset_iterable(
 
     seq_len = int(config.seq_len)
     stride = int(config.stride)
-    h, w = config.img_size
-    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-{h}x{w}" + "-*.tar"
+    # h, w = config.img_size
+    shard_pattern = f"{dataset_type}-seq_len{seq_len}-stride{stride}-*.tar"
     n_samples = 0
     for dir_path in data_dirs:
         shard_paths_tmp = sorted(glob(os.path.join(dir_path, "shards", shard_pattern)))

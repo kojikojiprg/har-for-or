@@ -68,8 +68,8 @@ if __name__ == "__main__":
         checkpoint_dir = ckpt_dirs[-1]
 
     # model checkpoint callback
-    h, w = config.img_size
-    filename = f"{model_type}-seq_len{config.seq_len}-stride{config.stride}-{h}x{w}"
+    # h, w = config.img_size
+    filename = f"{model_type}-seq_len{config.seq_len}-stride{config.stride}"
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
         filename=filename + "-best-{epoch}",
