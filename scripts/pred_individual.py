@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
         # load dataset
         dataloader = individual_pred_dataloader(
-            data_dir, "individual", config, [gpu_id]
+            data_dir, "individual", config, [gpu_id], False
         )
 
         # pred

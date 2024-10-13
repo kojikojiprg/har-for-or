@@ -3,15 +3,15 @@ max_shard_count: 100
 seq_len: 90
 stride: 30
 mask_leg: True
-range_points: 0.9
+range_points: 0.7
 
 # model
 n_clusters: 5
 temp_init: 1.0
-temp_decay: 0.00001
-temp_min: 0.000001
+temp_decay: 0.004
+temp_min: 0.001
 param_q_init: 10
-param_q_cls_init: 10
+param_q_cls_init: 2
 book_size: 128
 latent_ndim: 64
 nheads: 8
@@ -24,12 +24,13 @@ lmd_klc: 1
 lmd_kld: 0.1
 lmd_c: 1
 
-lr: 0.001
+lr: 0.002
+betas: [0.9, 0.95]
 lr_gamma: 0.95
 
 # training
 min_n_labeled_samples: 1000
-epochs: 50
-batch_size: 32
+epochs: 100
+batch_size: 64
 accumulate_grad_batches: 1
 num_workers: 8

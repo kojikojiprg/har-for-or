@@ -17,35 +17,6 @@ def get_n_pts(config: SimpleNamespace):
     return n_pts
 
 
-# class ClassificationHead(nn.Module):
-#     def __init__(self, config: SimpleNamespace):
-#         super().__init__()
-#         ndim = config.latent_ndim
-#         self.conv = nn.Sequential(
-#             nn.Conv1d(ndim, ndim * 2, 1, bias=False),
-#             nn.SiLU(),
-#             nn.AvgPool1d(2),  # 38 -> 19 (mask_leg: 30 -> 15)
-#             nn.Conv1d(ndim * 2, ndim * 4, 1, bias=False),
-#             nn.SiLU(),
-#             nn.AvgPool1d(3, 2),  # 19 -> 9 (mask_leg: 15 -> 7)
-#             nn.Conv1d(ndim * 4, ndim * 8, 1, bias=False),
-#             nn.SiLU(),
-#             nn.AvgPool1d(3, 2),  # 9 -> 4 (mask_leg: 7 -> 3)
-#         )
-#         if not config.mask_leg:
-#             self.mlp = MLP(4 * ndim * 8, config.n_clusters)
-#         else:
-#             self.mlp = MLP(3 * ndim * 8, config.n_clusters)
-
-#     def forward(self, x):
-#         # x (b, n_pts, latent_ndim)
-#         x = x.permute(0, 2, 1)
-#         x = self.conv(x)  # (b, ndim, 4 or 3)
-#         x = x.view(x.size(0), -1)
-#         x = self.mlp(x)  # (b, n_clusters)
-#         return x
-
-
 class ClassificationHead(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
@@ -89,17 +60,17 @@ class Embedding(nn.Module):
     def __init__(self, seq_len, latent_ndim):
         super().__init__()
         self.conv1 = nn.Sequential(
-            nn.Conv1d(seq_len, latent_ndim // 4, 1),
-            nn.GroupNorm(1, latent_ndim // 4),
+            nn.Conv1d(seq_len, latent_ndim * 4, 1),
+            nn.GroupNorm(1, latent_ndim * 4),
             nn.SiLU(),
         )
         self.conv2 = nn.Sequential(
-            nn.Conv1d(latent_ndim // 4, latent_ndim // 2, 1),
-            nn.GroupNorm(1, latent_ndim // 2),
+            nn.Conv1d(latent_ndim * 4, latent_ndim * 2, 1),
+            nn.GroupNorm(1, latent_ndim * 2),
             nn.SiLU(),
         )
         self.conv3 = nn.Sequential(
-            nn.Conv1d(latent_ndim // 2, latent_ndim, 1),
+            nn.Conv1d(latent_ndim * 2, latent_ndim, 1),
             nn.GroupNorm(1, latent_ndim),
             nn.SiLU(),
         )
@@ -118,9 +89,6 @@ class Encoder(nn.Module):
         super().__init__()
         self.latent_ndim = config.latent_ndim
         self.n_pts = get_n_pts(config)
-        # self.embs = nn.ModuleList(
-        #     [Embedding(config.latent_ndim) for _ in range(self.n_pts * 2)]
-        # )
         self.emb = Embedding(config.seq_len, config.latent_ndim)
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
@@ -141,10 +109,6 @@ class Encoder(nn.Module):
         kps = kps.view(b, seq_len, -1)
         bbox = bbox.view(b, seq_len, -1)
         x = torch.cat([kps, bbox], dim=2)
-        # z = torch.empty((b, 0, self.latent_ndim)).to(kps.device)
-        # for i in range(self.n_pts * 2):
-        #     z_one = self.embs[i](x[:, :, i])
-        #     z = torch.cat([z, z_one], dim=1)
         z = self.emb(x)
         # z (b, n_pts * 2, latent_ndim)
 

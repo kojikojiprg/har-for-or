@@ -29,7 +29,6 @@ class SQVAE(LightningModule):
         self.decoder = None
         self.quantizer = None
         self.cls_head = None
-
         self.annotations = annotations
 
     def configure_model(self):
@@ -41,7 +40,7 @@ class SQVAE(LightningModule):
         self.cls_head = ClassificationHead(self.config)
 
     def configure_optimizers(self):
-        opt = torch.optim.RAdam(self.parameters(), lr=self.config.lr)
+        opt = torch.optim.AdamW(self.parameters(), self.config.lr, self.config.betas)
         sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
         return [opt], [sch]
 
@@ -84,11 +83,17 @@ class SQVAE(LightningModule):
             ]
         )
 
-    def mse_x(self, x, recon_x):
-        return F.mse_loss(recon_x, x, reduction="none").sum(dim=(1, 2, 3))  # (b,)
+    def mse_x(self, x, recon_x, reduction):
+        mse = F.mse_loss(recon_x, x, reduction="none")
+        if reduction == "mean":
+            return mse.mean(dim=(1, 2, 3))  # (b,)
+        elif reduction == "sum":
+            return mse.sum(dim=(1, 2, 3))  # (b,)
+        else:
+            return mse  # (b,)
 
     def loss_x(self, x, recon_x):
-        mses = self.mse_x(x, recon_x)
+        mses = self.mse_x(x, recon_x, "sum")
         return mses.mean()
         # n_pts = x.size(2) * x.size(3)
         # loss_x = n_pts * torch.log(mses) / 2
@@ -209,8 +214,8 @@ class SQVAE(LightningModule):
             c_prob,
         ) = self(kps, bbox, False)
 
-        mse_kps = self.mse_x(kps, recon_kps)
-        mse_bbox = self.mse_x(bbox, recon_bbox)
+        mse_kps = self.mse_x(kps, recon_kps, "mean")
+        mse_bbox = self.mse_x(bbox, recon_bbox, "mean")
 
         results = []
         for i in range(len(keys)):
