@@ -54,6 +54,8 @@ if __name__ == "__main__":
 
         size_heatmap_attn = (config.nlayers * 200, cap.size[1])
         attn_frame_size = (cap.size[0] + size_heatmap_attn[0], cap.size[1])
+        size_heatmap_attn_cls = (200, cap.size[1])
+        attn_cls_frame_size = (cap.size[0] + size_heatmap_attn[0], cap.size[1])
         size_heatmap_book = (400, cap.size[1])
         book_frame_size = (cap.size[0] + size_heatmap_book[0], cap.size[1])
 
@@ -63,6 +65,9 @@ if __name__ == "__main__":
         wrt_cluster = video.Writer(f"{data_dir}/pred_cluster.mp4", cap.fps, cap.size)
         wrt_attn = video.Writer(
             f"{data_dir}/pred_attention.mp4", cap.fps, attn_frame_size
+        )
+        wrt_attn_cls = video.Writer(
+            f"{data_dir}/pred_attention_clustering.mp4", cap.fps, attn_cls_frame_size
         )
         wrt_book = video.Writer(
             f"{data_dir}/pred_book_indices.mp4", cap.fps, book_frame_size
@@ -109,7 +114,7 @@ if __name__ == "__main__":
                 )
 
                 # plot attention
-                frame_attention = vis.plot_attention_on_frame(
+                frame_attn = vis.plot_attention_on_frame(
                     frame.copy(), result_tmp, idx_data, frame_size, range_points
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
@@ -119,13 +124,31 @@ if __name__ == "__main__":
                     img_heatmaps_attn = cv2.cvtColor(
                         img_heatmaps_attn, cv2.COLOR_RGBA2BGR
                     )
-                frame_attention = np.concatenate(
-                    [frame_attention, img_heatmaps_attn], axis=1
-                )  # plot attention
+                frame_attn = np.concatenate([frame_attn, img_heatmaps_attn], axis=1)
+
+                # plot attention
+                frame_attn_cls = vis.plot_attention_clustering_on_frame(
+                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                )
+                if idx_data == seq_len - stride or n_frame == 0:
+                    img_heatmaps_attn_cls = vis.arange_attention_clustering_heatmaps(
+                        result_tmp, config.n_clusters, size_heatmap_attn_cls
+                    )
+                    img_heatmaps_attn_cls = cv2.cvtColor(
+                        img_heatmaps_attn_cls, cv2.COLOR_RGBA2BGR
+                    )
+                frame_attn_cls = np.concatenate(
+                    [frame_attn_cls, img_heatmaps_attn_cls], axis=1
+                )
 
                 # plot book indices
                 frame_book = vis.plot_book_idx_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, config.book_size, range_points
+                    frame.copy(),
+                    result_tmp,
+                    idx_data,
+                    frame_size,
+                    config.book_size,
+                    range_points,
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
                     img_heatmaps_book = vis.arange_attention_heatmaps(
@@ -139,13 +162,15 @@ if __name__ == "__main__":
                 frame_kps = frame
                 frame_bbox = frame
                 frame_cluster = frame
-                frame_attention = frame
+                frame_attn = frame
+                frame_attn_cls = frame
                 frame_book = frame
 
             wrt_kps.write(frame_kps)
             wrt_bbox.write(frame_bbox)
             wrt_cluster.write(frame_cluster)
-            wrt_attn.write(frame_attention)
+            wrt_attn.write(frame_attn)
+            wrt_attn_cls.write(frame_attn_cls)
             wrt_book.write(frame_book)
 
-        del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn, wrt_book
+        del cap, wrt_kps, wrt_bbox, wrt_cluster, wrt_attn, wrt_attn_cls, wrt_book

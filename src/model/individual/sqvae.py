@@ -67,6 +67,7 @@ class SQVAE(LightningModule):
             ze,
             zq,
             attn_w,
+            attn_w_cls,
             precision_q,
             prob,
             log_prob,
@@ -95,9 +96,6 @@ class SQVAE(LightningModule):
     def loss_x(self, x, recon_x):
         mses = self.mse_x(x, recon_x, "sum")
         return mses.mean()
-        # n_pts = x.size(2) * x.size(3)
-        # loss_x = n_pts * torch.log(mses) / 2
-        # return loss_x
 
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
@@ -131,6 +129,7 @@ class SQVAE(LightningModule):
             ze,
             zq,
             attn_w,
+            attn_w_cls,
             precision_q,
             prob,
             log_prob,
@@ -206,6 +205,7 @@ class SQVAE(LightningModule):
             ze,
             zq,
             attn_w,
+            attn_w_cls,
             precision_q,
             prob,
             log_prob,
@@ -231,6 +231,7 @@ class SQVAE(LightningModule):
                 "ze": ze[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
                 "attn_w": attn_w[i].cpu().numpy(),
+                "attn_w_cls": attn_w_cls[i].cpu().numpy(),
                 "book_prob": prob[i].cpu().numpy(),
                 "book_idx": prob[i].cpu().numpy().argmax(axis=1),
                 "label_prob": c_prob[i].cpu().numpy(),

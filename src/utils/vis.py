@@ -244,6 +244,90 @@ def arange_attention_heatmaps(
     return img
 
 
+def plot_attention_clustering_on_frame(
+    frame, results, idx_data, frame_size, range_points, vmax=0.5
+):
+    for data in results:
+        label = str(data["label"])
+        bbox = data["bbox"][idx_data]
+        kps = data["kps"][idx_data]
+        attn_w_cls = data["attn_w_cls"]
+
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+
+        # clustering label
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, label, pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
+
+        # plot bbox and skeleton limbs
+        color = (np.array(_cm_tab10(int(label))[:3]) * 255).astype(int).tolist()
+        color = tuple(color[::-1])  # RGB -> BGR
+        frame = draw_bbox(frame, bbox, color, 2)
+        frame = draw_skeleton(frame, kps, color, 1, True)
+
+        # plot attention
+        attn_w_cls = attn_w_cls[:, 1:, 1:]
+        attn_w_cls = attn_w_cls.mean(axis=(1, 0))
+        attn_w_cls = attn_w_cls[0::2] + attn_w_cls[1::2]  # sum x and y
+        attn_w_cls = np.clip(attn_w_cls, 0.0, vmax)  # (0.0, vmax)
+        attn_w_cls = attn_w_cls * (1 / vmax)  # (0.0, 1.0)
+        attn_w_cls = (attn_w_cls * 100).astype(int)
+        for i in range(len(kps)):
+            pt = kps[i].astype(int).tolist()
+            w = attn_w_cls[i]
+            c = (np.array(_cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
+        for i in range(len(bbox)):
+            pt = bbox[i].astype(int).tolist()
+            w = attn_w_cls[i + len(kps)]
+            c = (np.array(_cm_jet(w))[:3] * 255).astype(int).tolist()
+            c = c[::-1]
+            frame = cv2.circle(frame, pt, 3, c, -1)
+
+    return frame
+
+
+def arange_attention_clustering_heatmaps(results, n_clusters, plot_figsize, vmax=0.5):
+    fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
+    axs = fig.subplots(n_clusters, 1).ravel()
+    for label in range(n_clusters):
+        attn_w_cls = np.array([r["attn_w_cls"] for r in results if r["label"] == label])
+        if len(attn_w_cls) > 0:
+            attn_w_cls = attn_w_cls.mean(axis=0)
+            sns.heatmap(
+                attn_w_cls[0],
+                annot=False,
+                cmap="jet",
+                ax=axs[label],
+                cbar=False,
+                xticklabels=False,
+                yticklabels=False,
+                vmin=0.0,
+                vmax=vmax,
+            )
+        else:
+            # set blank
+            ax = axs[label]
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.tick_params(axis="both", color="w")
+            ax.spines[["left", "right", "bottom", "top"]].set_visible(False)
+
+    # set titles
+    for i in range(n_clusters):
+        axs[i].set_ylabel(f"Label {i}")
+
+    fig.tight_layout()
+    fig.canvas.draw()
+    img = np.array(fig.canvas.renderer.buffer_rgba())
+    plt.close()
+    return img
+
+
 def plot_book_idx_on_frame(
     frame, results, idx_data, frame_size, book_size, range_points
 ):
