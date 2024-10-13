@@ -55,7 +55,7 @@ if __name__ == "__main__":
         size_heatmap_attn = (config.nlayers * 200, cap.size[1])
         attn_frame_size = (cap.size[0] + size_heatmap_attn[0], cap.size[1])
         size_heatmap_attn_cls = (200, cap.size[1])
-        attn_cls_frame_size = (cap.size[0] + size_heatmap_attn[0], cap.size[1])
+        attn_cls_frame_size = (cap.size[0] + size_heatmap_attn_cls[0], cap.size[1])
         size_heatmap_book = (400, cap.size[1])
         book_frame_size = (cap.size[0] + size_heatmap_book[0], cap.size[1])
 
@@ -151,8 +151,11 @@ if __name__ == "__main__":
                     range_points,
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
-                    img_heatmaps_book = vis.arange_attention_heatmaps(
-                        result_tmp, config.n_clusters, config.nlayers, size_heatmap_attn
+                    img_heatmaps_book = vis.arange_book_idx_heatmaps(
+                        result_tmp,
+                        config.n_clusters,
+                        size_heatmap_book,
+                        config.book_size,
                     )
                     img_heatmaps_book = cv2.cvtColor(
                         img_heatmaps_book, cv2.COLOR_RGBA2BGR

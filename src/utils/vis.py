@@ -269,8 +269,7 @@ def plot_attention_clustering_on_frame(
         frame = draw_skeleton(frame, kps, color, 1, True)
 
         # plot attention
-        attn_w_cls = attn_w_cls[:, 1:, 1:]
-        attn_w_cls = attn_w_cls.mean(axis=(1, 0))
+        attn_w_cls = attn_w_cls[0, 0, 1:]
         attn_w_cls = attn_w_cls[0::2] + attn_w_cls[1::2]  # sum x and y
         attn_w_cls = np.clip(attn_w_cls, 0.0, vmax)  # (0.0, vmax)
         attn_w_cls = attn_w_cls * (1 / vmax)  # (0.0, 1.0)
