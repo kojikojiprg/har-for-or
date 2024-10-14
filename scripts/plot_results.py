@@ -68,7 +68,6 @@ if __name__ == "__main__":
 
     label_preds = []
     label_gts = []
-    miss_ids = []
     ann_keys = annotations.T[0]
     for result in results:
         key = result["key"]
@@ -87,11 +86,6 @@ if __name__ == "__main__":
         else:
             label_gt = int(ann_tmp[0, 1])
         label_gts.append(label_gt)
-
-        if label_pred != label_gt and int(label) not in miss_ids:
-            miss_ids.append(int(label))
-
-    miss_ids = np.array(miss_ids)
 
     cm = confusion_matrix(label_gts, label_preds).T
     figpath = f"{img_dir}/cm_test_{video_num}.png"
