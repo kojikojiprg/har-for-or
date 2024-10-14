@@ -91,7 +91,7 @@ if __name__ == "__main__":
     figpath = f"{img_dir}/cm_test_{video_num}.png"
     vis.plot_cm(cm, classes, figpath, normalize=True)
 
-    path = f"{img_dir}/cm_test_report.tsv"
+    path = f"{img_dir}/cm_test_{video_num}_report.tsv"
     report = classification_report(
         label_gts, label_preds, digits=3, output_dict=True, zero_division=0
     )
