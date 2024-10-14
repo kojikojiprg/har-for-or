@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -5,6 +7,9 @@ import seaborn as sns
 from sklearn.manifold import TSNE
 
 from src.data.transform import NormalizeBbox, NormalizeKeypoints
+
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman"]
 
 _cm_tab10 = plt.get_cmap("tab10")
 _cm_jet = plt.get_cmap("jet", 100)
@@ -410,6 +415,20 @@ def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=
     return img
 
 
+def moving_average(vals, size):
+    b = np.ones(size) / size
+    vals_mean = np.convolve(vals, b, mode="same")
+
+    n_conv = math.ceil(size / 2)
+
+    vals_mean[0] *= size / n_conv
+    for i in range(1, n_conv):
+        vals_mean[i] *= size / (i + n_conv)
+        vals_mean[-i] *= size / (i + n_conv - (size % 2))
+
+    return vals_mean
+
+
 def plot_mse(
     mse_x_dict,
     frame_count,
@@ -443,15 +462,14 @@ def plot_mse(
     )
 
     # moving average
-    b = np.ones(mv_size) / mv_size
-    mse_ratio = np.convolve(mse_ratio, b, mode="same")
+    mse_ratio = moving_average(mse_ratio, mv_size)
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 1, 1)
     ax1.plot(vals, color="black", linewidth=1, alpha=0.3, label=ids)
     ax1.set_xlim(0, n_samples)
     ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
-    ax1.set_xlabel("min")
+    ax1.set_xlabel("Minutes")
     margin = abs(ylim[1] - ylim[0]) * 0.05
     ax1.set_ylim(ylim[0] - margin, ylim[1] + margin)
     ylabels = np.linspace(ylim[0], ylim[1], 6)
@@ -461,9 +479,8 @@ def plot_mse(
     ax2 = ax1.twinx()
     ax2.plot(mse_ratio, color="red", linewidth=1, label="mean")
     ax2.set_ylim(-0.05, 1.05)
-    ax2.set_ylabel(f"ratio (mse>{th})")
+    ax2.set_ylabel(f"Ratio (MSE > {th})")
 
-    # plt.legend()
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:
@@ -471,8 +488,15 @@ def plot_mse(
     plt.close()
 
 
-def plot_label_count(
-    label_counts, frame_count, stride, mv_size=30, figpath=None, is_show=False
+def plot_label_ratio_cumsum(
+    label_counts,
+    classes,
+    frame_count,
+    stride,
+    mv_size=30,
+    figpath=None,
+    is_show=False,
+    ylim_twinx=(0, 15),
 ):
     cm = plt.get_cmap("tab10")
 
@@ -485,94 +509,51 @@ def plot_label_count(
 
         idxs = n_frames // stride
         n_samples = frame_count // stride + 1
-        vals = np.full((n_samples,), np.nan, np.float32)
+        vals = np.zeros((n_samples,), np.float32)
         vals[idxs] = counts
 
         vals_dict[label] = vals
 
-    ids = list(vals_dict.keys())
+    labels = list(vals_dict.keys())
     vals = np.array(list(vals_dict.values())).T
-    vals = np.nan_to_num(vals, 0)
 
     # moving average
-    b = np.ones(mv_size) / mv_size
     for i in range(vals.shape[1]):
-        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
+        vals.T[i] = moving_average(vals.T[i], mv_size)
 
-    fig = plt.figure(figsize=(12, 4))
-    ax1 = fig.add_subplot(1, 1, 1)
-    for _id, val in zip(ids, vals.T):
-        c = cm(_id)
-        if _id != 4:
-            ax1.plot(val, linewidth=1, c=c, label=_id)
-        else:
-            ax1.plot(val, linewidth=1, c=c, label=_id, linestyle="--", alpha=0.5)
-    ax1.set_xlim(0, n_samples)
-    ax1.set_xlabel("min")
-    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
-    ax1.set_ylabel("count")
-    plt.legend(bbox_to_anchor=(1.01, 1))
-
-    # plt.legend()
-    if figpath is not None:
-        plt.savefig(figpath, bbox_inches="tight")
-    if is_show:
-        plt.show()
-    plt.close()
-
-
-def plot_label_ratio(
-    label_counts, frame_count, stride, mv_size=30, figpath=None, is_show=False
-):
-    cm = plt.get_cmap("tab10")
-
-    vals_dict = {}
-    for label, count_dict in label_counts.items():
-        if len(count_dict) < 2:
-            continue
-        n_frames = np.array(list(count_dict.keys()))
-        counts = np.array(list(count_dict.values()))
-
-        idxs = n_frames // stride
-        n_samples = frame_count // stride + 1
-        vals = np.full((n_samples,), np.nan, np.float32)
-        vals[idxs] = counts
-
-        vals_dict[label] = vals
-
-    ids = list(vals_dict.keys())
-    vals = np.array(list(vals_dict.values())).T
-    vals = np.nan_to_num(vals, 0)
-    sums = vals.sum(axis=1).reshape(-1, 1)
+    # compute ratio
+    sums = vals.sum(axis=1, keepdims=True)
     sums[sums == 0] = 1
     vals /= sums
-    # t = torch.tensor(vals)
-    # softmax = torch.nn.functional.softmax(t, dim=1)
-    # vals = softmax.numpy()
-
-    # moving average
-    b = np.ones(mv_size) / mv_size
-    for i in range(vals.shape[1]):
-        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
-    for i in range(vals.shape[1]):
-        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 1, 1)
-    for _id, val in zip(ids, vals.T):
-        c = cm(_id)
-        if _id != 4:
-            ax1.plot(val, linewidth=1, c=c, label=_id)
-        else:
-            ax1.plot(val, linewidth=1, c=c, label=_id, linestyle="--", alpha=0.5)
-    ax1.set_xlim(0, n_samples)
-    ax1.set_xlabel("min")
-    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
-    ax1.set_ylabel("ratio")
-    ax1.set_ylim(-0.05, 1.05)
-    ax1.legend(bbox_to_anchor=(1.01, 1))
+    vals_cumsum = np.cumsum(vals[:, ::-1], axis=1)
+    x = np.arange(n_samples)
+    for label, val in zip(labels[::-1], vals_cumsum.T):
+        c = cm(label)
+        if label == 4:
+            y1 = np.zeros((n_samples,))
+        ax1.fill_between(x, y1, val, facecolor=c, label=classes[label], alpha=0.5)
+        y1 = val
 
-    # plt.legend()
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("Minutes")
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
+    ax1.set_ylabel("Label Ratio")
+    ax1.set_ylim(0, 1)
+
+    ax2 = ax1.twinx()
+    ax2.plot(sums.ravel(), color="black", label="Number of Individuals")
+    ax2.set_ylim(ylim_twinx)
+    ax2.set_ylabel("Number of Individuals")
+
+    ax1_handles, ax1_labels = ax1.get_legend_handles_labels()
+    ax2_handles, ax2_labels = ax2.get_legend_handles_labels()
+    handles = ax1_handles[::-1] + ax2_handles
+    labels = ax1_labels[::-1] + ax2_labels
+    ax1.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc="upper left")
+
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:
@@ -583,6 +564,7 @@ def plot_label_ratio(
 def plot_tsne(
     X,
     labels,
+    classes,
     perplexity=10,
     figpath=None,
     is_show=False,
@@ -602,11 +584,9 @@ def plot_tsne(
         else:
             ci = int(label)
         c = cm(ci)
-        plt.scatter(x.T[0], x.T[1], s=3, c=c, label=label)
-    # plt.xticks([])
-    # plt.yticks([])
+        plt.scatter(x.T[0], x.T[1], s=3, c=c, label=classes[label])
     if legend:
-        plt.legend(bbox_to_anchor=(1.01, 1))
+        plt.legend(bbox_to_anchor=(1.01, 1), loc="upper left")
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight")
     if is_show:
@@ -620,7 +600,7 @@ def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
     )  # normalize columns
     array[array < 0.005] = np.nan  # don't annotate (would appear as 0.00)
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 9), tight_layout=True)
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6), tight_layout=True)
     ticklabels = labels
     vmax = 1.0 if normalize else None
     sns.heatmap(
@@ -637,8 +617,6 @@ def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
         yticklabels=ticklabels,
     ).set_facecolor((1, 1, 1))
 
-    # title = "Confusion Matrix" + " Normalized" * normalize
-    # ax.set_title(title)
     ax.set_xlabel("True")
     ax.set_xticklabels(labels, rotation=90)
     ax.set_ylabel("Predicted")
