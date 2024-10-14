@@ -410,7 +410,17 @@ def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=
     return img
 
 
-def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=False):
+def plot_mse(
+    mse_x_dict,
+    frame_count,
+    stride,
+    th,
+    ylabel,
+    mv_size=10,
+    figpath=None,
+    is_show=False,
+    ylim=(0, 1),
+):
     vals_dict = {}
     for _id, mse_dict in mse_x_dict.items():
         if len(mse_dict) < 2:
@@ -432,21 +442,25 @@ def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=
         np.nan_to_num(vals), axis=1
     )
 
-    num = 5
-    b = np.ones(num) / num
+    # moving average
+    b = np.ones(mv_size) / mv_size
     mse_ratio = np.convolve(mse_ratio, b, mode="same")
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 1, 1)
     ax1.plot(vals, color="black", linewidth=1, alpha=0.3, label=ids)
     ax1.set_xlim(0, n_samples)
-    ax1.set_xlabel("sec")
-    ax1.set_ylim(0, 1.0)
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
+    ax1.set_xlabel("min")
+    margin = abs(ylim[1] - ylim[0]) * 0.05
+    ax1.set_ylim(ylim[0] - margin, ylim[1] + margin)
+    ylabels = np.linspace(ylim[0], ylim[1], 6)
+    ax1.set_yticks(ylabels)
     ax1.set_ylabel(ylabel)
 
     ax2 = ax1.twinx()
     ax2.plot(mse_ratio, color="red", linewidth=1, label="mean")
-    ax2.set_ylim(0, 10)
+    ax2.set_ylim(-0.05, 1.05)
     ax2.set_ylabel(f"ratio (mse>{th})")
 
     # plt.legend()
@@ -457,9 +471,13 @@ def plot_mse(mse_x_dict, frame_count, stride, th, ylabel, figpath=None, is_show=
     plt.close()
 
 
-def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=False):
+def plot_label_count(
+    label_counts, frame_count, stride, mv_size=30, figpath=None, is_show=False
+):
+    cm = plt.get_cmap("tab10")
+
     vals_dict = {}
-    for label, count_dict in labels_dict.items():
+    for label, count_dict in label_counts.items():
         if len(count_dict) < 2:
             continue
         n_frames = np.array(list(count_dict.keys()))
@@ -474,14 +492,85 @@ def plot_label_count(labels_dict, frame_count, stride, figpath=None, is_show=Fal
 
     ids = list(vals_dict.keys())
     vals = np.array(list(vals_dict.values())).T
+    vals = np.nan_to_num(vals, 0)
+
+    # moving average
+    b = np.ones(mv_size) / mv_size
+    for i in range(vals.shape[1]):
+        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 1, 1)
-    ax1.plot(vals, linewidth=1, label=ids)
+    for _id, val in zip(ids, vals.T):
+        c = cm(_id)
+        if _id != 4:
+            ax1.plot(val, linewidth=1, c=c, label=_id)
+        else:
+            ax1.plot(val, linewidth=1, c=c, label=_id, linestyle="--", alpha=0.5)
     ax1.set_xlim(0, n_samples)
-    ax1.set_xlabel("sec")
+    ax1.set_xlabel("min")
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
     ax1.set_ylabel("count")
-    plt.legend()
+    plt.legend(bbox_to_anchor=(1.01, 1))
+
+    # plt.legend()
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight")
+    if is_show:
+        plt.show()
+    plt.close()
+
+
+def plot_label_ratio(
+    label_counts, frame_count, stride, mv_size=30, figpath=None, is_show=False
+):
+    cm = plt.get_cmap("tab10")
+
+    vals_dict = {}
+    for label, count_dict in label_counts.items():
+        if len(count_dict) < 2:
+            continue
+        n_frames = np.array(list(count_dict.keys()))
+        counts = np.array(list(count_dict.values()))
+
+        idxs = n_frames // stride
+        n_samples = frame_count // stride + 1
+        vals = np.full((n_samples,), np.nan, np.float32)
+        vals[idxs] = counts
+
+        vals_dict[label] = vals
+
+    ids = list(vals_dict.keys())
+    vals = np.array(list(vals_dict.values())).T
+    vals = np.nan_to_num(vals, 0)
+    sums = vals.sum(axis=1).reshape(-1, 1)
+    sums[sums == 0] = 1
+    vals /= sums
+    # t = torch.tensor(vals)
+    # softmax = torch.nn.functional.softmax(t, dim=1)
+    # vals = softmax.numpy()
+
+    # moving average
+    b = np.ones(mv_size) / mv_size
+    for i in range(vals.shape[1]):
+        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
+    for i in range(vals.shape[1]):
+        vals.T[i] = np.convolve(vals.T[i], b, mode="same")
+
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 1, 1)
+    for _id, val in zip(ids, vals.T):
+        c = cm(_id)
+        if _id != 4:
+            ax1.plot(val, linewidth=1, c=c, label=_id)
+        else:
+            ax1.plot(val, linewidth=1, c=c, label=_id, linestyle="--", alpha=0.5)
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("min")
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
+    ax1.set_ylabel("ratio")
+    ax1.set_ylim(-0.05, 1.05)
+    ax1.legend(bbox_to_anchor=(1.01, 1))
 
     # plt.legend()
     if figpath is not None:
@@ -505,6 +594,7 @@ def plot_tsne(
     embedded = tsne.fit_transform(X)
     unique_labels = np.unique(labels)
     cm = plt.get_cmap(cmap, lut)
+    plt.figure(figsize=(5, 5))
     for label in unique_labels:
         x = embedded[labels == label]
         if lut is not None:
@@ -513,8 +603,8 @@ def plot_tsne(
             ci = int(label)
         c = cm(ci)
         plt.scatter(x.T[0], x.T[1], s=3, c=c, label=label)
-    plt.xticks([])
-    plt.yticks([])
+    # plt.xticks([])
+    # plt.yticks([])
     if legend:
         plt.legend(bbox_to_anchor=(1.01, 1))
     if figpath is not None:
@@ -522,3 +612,41 @@ def plot_tsne(
     if is_show:
         plt.show()
     plt.close()
+
+
+def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
+    array = cm / (
+        (cm.sum(0).reshape(1, -1) + 1e-9) if normalize else 1
+    )  # normalize columns
+    array[array < 0.005] = np.nan  # don't annotate (would appear as 0.00)
+
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9), tight_layout=True)
+    ticklabels = labels
+    vmax = 1.0 if normalize else None
+    sns.heatmap(
+        array,
+        ax=ax,
+        annot=True,
+        annot_kws={"size": 8},
+        cmap="Blues",
+        fmt=".2f" if normalize else ".0f",
+        square=True,
+        vmin=0.0,
+        vmax=vmax,
+        xticklabels=ticklabels,
+        yticklabels=ticklabels,
+    ).set_facecolor((1, 1, 1))
+
+    # title = "Confusion Matrix" + " Normalized" * normalize
+    # ax.set_title(title)
+    ax.set_xlabel("True")
+    ax.set_xticklabels(labels, rotation=90)
+    ax.set_ylabel("Predicted")
+    ax.set_yticklabels(labels, rotation=0)
+    if figpath is not None:
+        if normalize:
+            figpath = figpath.replace(".png", "") + "_normalized.png"
+        fig.savefig(figpath, bbox_inches="tight")
+    if on_plot:
+        plt.show()
+    plt.close(fig)
