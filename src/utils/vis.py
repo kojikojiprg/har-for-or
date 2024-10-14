@@ -482,7 +482,7 @@ def plot_mse(
     ax2.set_ylabel(f"Ratio (MSE > {th})")
 
     if figpath is not None:
-        plt.savefig(figpath, bbox_inches="tight")
+        plt.savefig(figpath, bbox_inches="tight", dpi=300)
     if is_show:
         plt.show()
     plt.close()
@@ -534,7 +534,7 @@ def plot_label_ratio_cumsum(
         c = cm(label)
         if label == 4:
             y1 = np.zeros((n_samples,))
-        ax1.fill_between(x, y1, val, facecolor=c, label=classes[label], alpha=0.5)
+        ax1.fill_between(x, y1, val, facecolor=c, label=classes[label], alpha=0.7)
         y1 = val
 
     ax1.set_xlim(0, n_samples)
@@ -555,7 +555,7 @@ def plot_label_ratio_cumsum(
     ax1.legend(handles, labels, bbox_to_anchor=(1.05, 1), loc="upper left")
 
     if figpath is not None:
-        plt.savefig(figpath, bbox_inches="tight")
+        plt.savefig(figpath, bbox_inches="tight", dpi=300)
     if is_show:
         plt.show()
     plt.close()
@@ -588,7 +588,7 @@ def plot_tsne(
     if legend:
         plt.legend(bbox_to_anchor=(1.01, 1), loc="upper left")
     if figpath is not None:
-        plt.savefig(figpath, bbox_inches="tight")
+        plt.savefig(figpath, bbox_inches="tight", dpi=300)
     if is_show:
         plt.show()
     plt.close()
@@ -624,7 +624,7 @@ def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
     if figpath is not None:
         if normalize:
             figpath = figpath.replace(".png", "") + "_normalized.png"
-        fig.savefig(figpath, bbox_inches="tight")
+        fig.savefig(figpath, bbox_inches="tight", dpi=300)
     if on_plot:
         plt.show()
     plt.close(fig)
