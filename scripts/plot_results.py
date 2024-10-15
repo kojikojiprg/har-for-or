@@ -130,6 +130,8 @@ if __name__ == "__main__":
     os.makedirs(mse_bbox_dir, exist_ok=True)
     mse_cls_dir = f"{img_dir}/clustering"
     os.makedirs(mse_cls_dir, exist_ok=True)
+    mse_lf_dir = f"{img_dir}/latent_feature"
+    os.makedirs(mse_lf_dir, exist_ok=True)
 
     for data_dir in tqdm(data_dirs, ncols=100):
         video_num = os.path.basename(os.path.dirname(data_dir))
@@ -144,6 +146,7 @@ if __name__ == "__main__":
         # collect preds
         mse_kps_dict = {}
         mse_bbox_dict = {}
+        mse_latent_feature_dict = {}
         label_counts = {i: {} for i in range(config.n_clusters)}
         max_n_frame = 0
         for result in results:
@@ -151,14 +154,16 @@ if __name__ == "__main__":
             n_frame = int(key.split("_")[1])
             if max_n_frame < n_frame:
                 max_n_frame = n_frame
-            label = result["id"]
+            _id = result["id"]
 
             # collect mse
-            if label not in mse_kps_dict:
-                mse_kps_dict[label] = {}
-                mse_bbox_dict[label] = {}
-            mse_kps_dict[label][n_frame] = result["mse_kps"]
-            mse_bbox_dict[label][n_frame] = result["mse_bbox"]
+            if _id not in mse_kps_dict:
+                mse_kps_dict[_id] = {}
+                mse_bbox_dict[_id] = {}
+                mse_latent_feature_dict[_id] = {}
+            mse_kps_dict[_id][n_frame] = result["mse_kps"]
+            mse_bbox_dict[_id][n_frame] = result["mse_bbox"]
+            mse_latent_feature_dict[_id][n_frame] = np.sum((result["ze"] - result["zq"]) ** 2)
 
             # label count
             label_pred = int(result["label"])
@@ -190,6 +195,19 @@ if __name__ == "__main__":
             mse_bbox_figpath,
             False,
             ylim=(0, 0.02),
+        )
+
+        mse_lf_figpath = f"{mse_lf_dir}/mse_latent_feature_{video_num}.png"
+        vis.plot_mse(
+            mse_latent_feature_dict,
+            max_n_frame,
+            stride,
+            7,
+            "MSE of Latent Feature",
+            10,
+            mse_lf_figpath,
+            False,
+            ylim=(0, 15),
         )
 
         mse_cls_figpath = f"{mse_cls_dir}/label_ratio_cumsum_{video_num}.png"
