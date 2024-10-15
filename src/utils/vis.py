@@ -417,14 +417,8 @@ def arange_book_idx_heatmaps(results, n_clusters, plot_figsize, book_size, vmax=
 
 def moving_average(vals, size):
     b = np.ones(size) / size
-    vals_mean = np.convolve(vals, b, mode="same")
-
-    n_conv = math.ceil(size / 2)
-
-    vals_mean[0] *= size / n_conv
-    for i in range(1, n_conv):
-        vals_mean[i] *= size / (i + n_conv)
-        vals_mean[-i] *= size / (i + n_conv - (size % 2))
+    vals_mean = np.full_like(vals, np.nan)
+    vals_mean[size - 1 :] = np.convolve(vals, b, mode="valid")
 
     return vals_mean
 
