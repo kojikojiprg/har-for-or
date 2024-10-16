@@ -158,7 +158,7 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size, range_points):
 
 
 def plot_attention_on_frame(
-    frame, results, idx_data, frame_size, range_points, vmax=0.5
+    frame, results, idx_data, frame_size, range_points, vmax=0.1
 ):
     for data in results:
         label = str(data["label"])
@@ -204,7 +204,7 @@ def plot_attention_on_frame(
 
 
 def arange_attention_heatmaps(
-    results, n_clusters, n_layers, plot_figsize, vmaxs=(0.5, 0.3, 0.1)
+    results, n_clusters, n_layers, plot_figsize, vmaxs=(0.2, 0.2, 0.1)
 ):
     fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
     axs = fig.subplots(n_clusters, n_layers)
@@ -248,7 +248,7 @@ def arange_attention_heatmaps(
 
 
 def plot_attention_clustering_on_frame(
-    frame, results, idx_data, frame_size, range_points, vmax=0.5
+    frame, results, idx_data, frame_size, range_points, vmax=0.2
 ):
     for data in results:
         label = str(data["label"])
@@ -293,7 +293,7 @@ def plot_attention_clustering_on_frame(
     return frame
 
 
-def arange_attention_clustering_heatmaps(results, n_clusters, plot_figsize, vmax=0.5):
+def arange_attention_clustering_heatmaps(results, n_clusters, plot_figsize, vmax=0.2):
     fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
     axs = fig.subplots(n_clusters, 1).ravel()
     for label in range(n_clusters):
