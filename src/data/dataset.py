@@ -5,7 +5,7 @@ import tarfile
 from glob import glob
 from math import ceil
 from types import SimpleNamespace
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 import webdataset as wds
 from torch.utils.data import DataLoader, Dataset
@@ -187,7 +187,7 @@ def individual_pred_dataloader(
     data_dir: str,
     dataset_type: str,
     config: SimpleNamespace,
-    gpu_ids: list,
+    gpu_ids: Optional[list],
     is_mapped: bool,
 ) -> Union[DataLoader, wds.WebLoader]:
     if is_mapped:
@@ -212,7 +212,9 @@ def individual_pred_dataloader(
             pin_memory=True,
             persistent_workers=True,
         )
-        n_batches = ceil(n_batches / len(gpu_ids) / config.batch_size)
+
+        ngpus = len(gpu_ids) if gpu_ids is not None else 1
+        n_batches = ceil(n_batches / ngpus / config.batch_size)
         dataloader.repeat(1, n_batches).with_length(n_batches)
 
     return dataloader

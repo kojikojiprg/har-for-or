@@ -1,103 +1,72 @@
 import argparse
+import os
+import pickle
 import sys
+from glob import glob
 
 import cv2
-import numpy as np
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 sys.path.append(".")
-from src.data import load_dataset_mapped
 from src.utils import video, vis, yaml_handler
-
-
-def plot_on_frame(frame, _id, bbox, kps, frame_size):
-    bbox = (bbox.copy() + 1) / 2 * frame_size
-
-    # id
-    pt = tuple(np.mean(bbox, axis=0).astype(int))
-    frame = cv2.putText(
-        frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
-    )
-
-    kps = (kps.copy() + 1) / 2 * (bbox[1] - bbox[0]) + bbox[0]
-    frame = vis.draw_skeleton(frame, kps, color=(0, 255, 0))
-
-    return frame
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
+    parser.add_argument(
+        "-mt", "--model_type", required=False, type=str, default="sqvae"
+    )
     args = parser.parse_args()
     data_root = args.data_root
-
-    # data_dirs = sorted(glob(os.path.join(data_root, "*/")))
-    data_dirs = [data_root]
-    data_dir = data_dirs[0]
+    model_type = args.model_type
 
     config = yaml_handler.load("configs/individual-sqvae.yaml")
     seq_len = config.seq_len
     stride = config.stride
 
-    # load dataset
-    dataset = load_dataset_mapped(data_dirs, "individual", config, False)
-    dataloader = DataLoader(dataset, num_workers=1, pin_memory=True)
+    # load results
+    paths = glob(os.path.join(data_root, f"pred_{model_type}", "*"))
+    results = []
+    for path in paths:
+        with open(path, "rb") as f:
+            results.append(pickle.load(f))
 
     # load video
-    video_path = f"{data_dir}.mp4"
+    video_path = f"{data_root}.mp4"
     cap = video.Capture(video_path)
     max_n_frame = cap.frame_count
     frame_size = cap.size
 
     # create writers
-    wrt = video.Writer(f"{data_dir}/vis_pose.mp4", cap.fps, cap.size)
+    wrt = video.Writer(f"{data_root}/vis_pose.mp4", cap.fps, cap.size)
 
-    pre_n_frame = seq_len
-    data_tmp = []
-    for batch in tqdm(dataloader, ncols=100):
-        keys, ids, kps, bbox, mask = batch
-        if kps.ndim == 5:
-            ids = ids[0]
-            kps = kps[0]
-            bbox = bbox[0]
+    for n_frame in tqdm(range(cap.frame_count), desc=f"{data_root[-2:]}", ncols=100):
+        _, frame = cap.read()
+        if n_frame < config.seq_len:
+            n_frame_result = config.seq_len
+            idx_data = n_frame
+        else:
+            n_frame_result = seq_len + ((n_frame - seq_len) // stride + 1) * stride
+            idx_data = seq_len - (n_frame_result - n_frame)
 
-        n_frame = int(keys[0].split("_")[1])
-        _id = ids.cpu().numpy()[0]
-        kps = kps.cpu().numpy()[0]
-        bbox = bbox.cpu().numpy()[0]
+        result_tmp = [
+            r for r in results if int(r["key"].split("_")[1]) == n_frame_result
+        ]
 
         # plot
-        if pre_n_frame < n_frame:
-            for i in range(stride):
-                n_frame_tmp = pre_n_frame - stride + i
-                idx_data = seq_len - stride + i
+        frame = cv2.putText(
+            frame,
+            f"frame:{n_frame}",
+            (10, 40),
+            cv2.FONT_HERSHEY_COMPLEX,
+            1.0,
+            (255, 255, 255),
+            1,
+        )
+        frame = vis.plot_true_bbox_kps_on_frame(
+            frame, result_tmp, idx_data, frame_size, config.range_points
+        )
 
-                frame = cap.read(n_frame_tmp)[1]
-                frame = cv2.putText(
-                    frame,
-                    f"frame:{n_frame_tmp}",
-                    (10, 40),
-                    cv2.FONT_HERSHEY_COMPLEX,
-                    1.0,
-                    (255, 255, 255),
-                    1,
-                )
-                for _id_tmp, kps_tmp, bbox_tmp in data_tmp:
-                    frame = plot_on_frame(
-                        frame,
-                        _id_tmp,
-                        bbox_tmp[idx_data],
-                        kps_tmp[idx_data],
-                        frame_size,
-                    )
-
-                wrt.write(frame)
-
-            data_tmp = []
-            pre_n_frame = n_frame
-
-        # add result in temporary result list
-        data_tmp.append((_id, kps, bbox))
+        wrt.write(frame)
 
     del cap, wrt

@@ -61,6 +61,32 @@ def draw_bbox(frame: np.array, bbox: np.array, color: tuple, thickness=2):
     return frame
 
 
+def plot_true_bbox_kps_on_frame(frame, results, idx_data, frame_size, range_points):
+    for data in results:
+        _id = data["id"]
+        bbox = data["bbox"][idx_data]
+        kps = data["kps"][idx_data]
+
+        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+
+        # id
+        pt = tuple(np.mean(bbox, axis=0).astype(int))
+        frame = cv2.putText(
+            frame, str(_id), pt, cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2
+        )
+
+        # bbox
+        frame = draw_bbox(frame, bbox, color=(0, 255, 0))
+        frame = cv2.circle(frame, bbox[0].astype(int), 3, (0, 255, 0), 1)
+        frame = cv2.circle(frame, bbox[1].astype(int), 3, (0, 255, 0), 1)
+
+        # keypoints
+        frame = draw_skeleton(frame, kps, color=(0, 255, 0))
+
+    return frame
+
+
 def plot_bbox_on_frame(frame, results, idx_data, frame_size, range_points):
     for data in results:
         _id = data["id"]
