@@ -283,16 +283,6 @@ class DecoderModule(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        # self.mlp = nn.Sequential(
-        #     MLP(config.latent_ndim, config.latent_ndim // 2),
-        #     nn.GroupNorm(1, config.seq_len),
-        #     nn.SiLU(),
-        #     MLP(config.latent_ndim // 2, config.latent_ndim // 4),
-        #     nn.GroupNorm(1, config.seq_len),
-        #     nn.SiLU(),
-        #     MLP(config.latent_ndim // 4, 1),
-        #     nn.Tanh(),
-        # )
         self.mlp = nn.Sequential(
             MLP(config.latent_ndim, 1),
             nn.Tanh(),
