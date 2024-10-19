@@ -210,6 +210,11 @@ if __name__ == "__main__":
             ylim=(0, 15),
         )
 
+        mse_cls_figpath = f"{mse_cls_dir}/label_counts_{video_num}.png"
+        vis.plot_label_counts(
+            label_counts, classes, max_n_frame, stride, 30, mse_cls_figpath, False
+        )
+
         mse_cls_figpath = f"{mse_cls_dir}/label_ratio_cumsum_{video_num}.png"
         vis.plot_label_ratio_cumsum(
             label_counts, classes, max_n_frame, stride, 30, mse_cls_figpath, False

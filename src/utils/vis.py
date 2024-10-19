@@ -506,6 +506,58 @@ def plot_mse(
     plt.close()
 
 
+def plot_label_counts(
+    label_counts,
+    classes,
+    frame_count,
+    stride,
+    mv_size=30,
+    figpath=None,
+    is_show=False,
+):
+    cm = plt.get_cmap("tab10")
+
+    vals_dict = {}
+    for label, count_dict in label_counts.items():
+        if len(count_dict) < 2:
+            continue
+        n_frames = np.array(list(count_dict.keys()))
+        counts = np.array(list(count_dict.values()))
+
+        idxs = n_frames // stride
+        n_samples = frame_count // stride + 1
+        vals = np.zeros((n_samples,), np.float32)
+        vals[idxs] = counts
+
+        vals_dict[label] = vals
+
+    labels = list(vals_dict.keys())
+    vals = np.array(list(vals_dict.values())).T
+
+    # moving average
+    for i in range(vals.shape[1]):
+        vals.T[i] = moving_average(vals.T[i], mv_size)
+
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 1, 1)
+    for label, val in zip(labels, vals.T):
+        c = cm(label)
+        ax1.plot(val, color=c, label=classes[label])
+
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("Minutes")
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
+    ax1.set_ylabel("Number of Individuals")
+    # ax1.set_ylim(0, 1)
+    ax1.legend(bbox_to_anchor=(1.01, 1), loc="upper left")
+
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight", dpi=300)
+    if is_show:
+        plt.show()
+    plt.close()
+
+
 def plot_label_ratio_cumsum(
     label_counts,
     classes,
@@ -532,7 +584,7 @@ def plot_label_ratio_cumsum(
 
         vals_dict[label] = vals
 
-    labels = list(vals_dict.keys())
+    labels = list(range(len(classes)))
     vals = np.array(list(vals_dict.values())).T
 
     # moving average
@@ -541,8 +593,7 @@ def plot_label_ratio_cumsum(
 
     # compute ratio
     sums = vals.sum(axis=1, keepdims=True)
-    sums[sums == 0] = 1
-    vals /= sums
+    vals /= sums + 1e-10
 
     fig = plt.figure(figsize=(12, 4))
     ax1 = fig.add_subplot(1, 1, 1)
@@ -550,7 +601,7 @@ def plot_label_ratio_cumsum(
     x = np.arange(n_samples)
     for label, val in zip(labels[::-1], vals_cumsum.T):
         c = cm(label)
-        if label == 4:
+        if label == len(classes) - 1:
             y1 = np.zeros((n_samples,))
         ax1.fill_between(x, y1, val, facecolor=c, label=classes[label], alpha=0.7)
         y1 = val
