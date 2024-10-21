@@ -514,6 +514,7 @@ def plot_label_counts(
     mv_size=30,
     figpath=None,
     is_show=False,
+    ylim=(0, 7),
 ):
     cm = plt.get_cmap("tab10")
 
@@ -548,8 +549,71 @@ def plot_label_counts(
     ax1.set_xlabel("Minutes")
     ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
     ax1.set_ylabel("Number of Individuals")
-    # ax1.set_ylim(0, 1)
+    ax1.set_ylim(ylim)
     ax1.legend(bbox_to_anchor=(1.01, 1), loc="upper left")
+
+    if figpath is not None:
+        plt.savefig(figpath, bbox_inches="tight", dpi=300)
+    if is_show:
+        plt.show()
+    plt.close()
+
+
+def plot_label_counts_cumsum(
+    label_counts,
+    classes,
+    frame_count,
+    stride,
+    mv_size=30,
+    figpath=None,
+    is_show=False,
+    ylim=(0, 10.5),
+):
+    cm = plt.get_cmap("tab10")
+
+    vals_dict = {}
+    for label, count_dict in label_counts.items():
+        if len(count_dict) < 2:
+            continue
+        n_frames = np.array(list(count_dict.keys()))
+        counts = np.array(list(count_dict.values()))
+
+        idxs = n_frames // stride
+        n_samples = frame_count // stride + 1
+        vals = np.zeros((n_samples,), np.float32)
+        vals[idxs] = counts
+
+        vals_dict[label] = vals
+
+    labels = list(range(len(classes)))
+    vals = np.array(list(vals_dict.values())).T
+
+    # moving average
+    for i in range(vals.shape[1]):
+        vals.T[i] = moving_average(vals.T[i], mv_size)
+
+    fig = plt.figure(figsize=(12, 4))
+    ax1 = fig.add_subplot(1, 1, 1)
+    vals_cumsum = np.cumsum(vals[:, ::-1], axis=1)
+    x = np.arange(n_samples)
+    for label, val in zip(labels[::-1], vals_cumsum.T):
+        c = cm(label)
+        if label == len(classes) - 1:
+            y1 = np.zeros((n_samples,))
+        ax1.fill_between(x, y1, val, facecolor=c, label=classes[label], alpha=0.7)
+        y1 = val
+
+    ax1.set_xlim(0, n_samples)
+    ax1.set_xlabel("Minutes")
+    ax1.set_xticks(np.arange(0, 1801, 60 * 3), np.arange(0, 1801, 60 * 3) // 60)
+    ax1.set_ylabel("Number of Individuals")
+    ax1.set_ylim(ylim)
+    ax1.set_yticks(np.arange(ylim[0], np.ceil(ylim[1]), 2))
+
+    ax1_handles, ax1_labels = ax1.get_legend_handles_labels()
+    handles = ax1_handles[::-1]
+    labels = ax1_labels[::-1]
+    ax1.legend(handles, labels, bbox_to_anchor=(1.01, 1), loc="upper left")
 
     if figpath is not None:
         plt.savefig(figpath, bbox_inches="tight", dpi=300)
@@ -566,7 +630,7 @@ def plot_label_ratio_cumsum(
     mv_size=30,
     figpath=None,
     is_show=False,
-    ylim_twinx=(0, 15),
+    ylim_twinx=(0, 11),
 ):
     cm = plt.get_cmap("tab10")
 
