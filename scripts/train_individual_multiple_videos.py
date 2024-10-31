@@ -16,7 +16,7 @@ from src.utils import yaml_handler
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_root", type=str)
+    parser.add_argument("data_root_lst", type=str, nargs="*")
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
     parser.add_argument(
         "-mt", "--model_type", required=False, type=str, default="sqvae"
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
     args = parser.parse_args()
-    data_root = args.data_root
+    data_root_lst = args.data_root_lst
     model_type = args.model_type
     unsupervised_training = args.unsupervised_training
     gpu_ids = args.gpu_ids
@@ -80,11 +80,14 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-{epoch}"
 
     # create annotation
-    annotations = load_annotation_train([data_root], checkpoint_dir, config)
+    annotations = load_annotation_train(data_root_lst, checkpoint_dir, config)
 
     # load dataset
+    train_data_root_lst = [
+        os.path.join(data_root, "train") for data_root in data_root_lst
+    ]
     dataloader = individual_train_dataloader(
-        [os.path.join(data_root, "train")],
+        train_data_root_lst,
         "individual",
         config,
         gpu_ids,
@@ -92,11 +95,12 @@ if __name__ == "__main__":
     )
 
     # create model
-    ann_path = f"{data_root}/annotation/role.txt"
     if model_type == "vae":
-        model = VAE(config, annotation_path=ann_path)
-        # model = VAE(config, n_batches)
+        # ann_path = f"{data_root}/annotation/role.txt"
+        # model = VAE(config, annotation_path=ann_path)
+        model = VAE(config)
         ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
+        raise NotImplementedError  # TODO: delete
     elif model_type == "sqvae":
         if unsupervised_training:
             ann_path = None

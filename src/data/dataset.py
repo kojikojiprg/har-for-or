@@ -5,7 +5,7 @@ import tarfile
 from glob import glob
 from math import ceil
 from types import SimpleNamespace
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import webdataset as wds
 from torch.utils.data import DataLoader, Dataset
@@ -145,13 +145,15 @@ def load_dataset_iterable(
 
 
 def individual_train_dataloader(
-    data_root: str,
+    data_root_lst: List[str],
     dataset_type: str,
     config: SimpleNamespace,
     gpu_ids: list,
     is_mapped: bool,
 ) -> Union[DataLoader, wds.WebLoader]:
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+    data_dirs = []
+    for data_root in data_root_lst:
+        data_dirs += sorted(glob(os.path.join(data_root, "*/")))
 
     if is_mapped:
         dataset = load_dataset_mapped(data_dirs, dataset_type, config)
