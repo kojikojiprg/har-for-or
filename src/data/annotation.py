@@ -2,6 +2,7 @@ import os
 import sys
 from glob import glob
 from types import SimpleNamespace
+from typing import List
 
 import numpy as np
 from torch.utils.data import DataLoader
@@ -12,7 +13,7 @@ from src.data.dataset import load_dataset_mapped
 
 
 def load_annotation_train(
-    data_root: str,
+    data_root_lst: List[str],
     checkpoint_dir: str,
     config: SimpleNamespace,
     seed: int = 42,
@@ -20,15 +21,21 @@ def load_annotation_train(
     np.random.seed(seed)
 
     # load annotation
-    path = f"{data_root}/annotation/role_train.txt"
-    annotation = np.loadtxt(path, str, skiprows=1)
 
-    counts_samples = count_samples(data_root, config)
+    annotation = []
+    n_samples_lst = []
+    for data_root in data_root_lst:
+        # load annotation
+        path = f"{data_root}/annotation/role_train.txt"
+        annotation += np.loadtxt(path, str, skiprows=1).tolist()
+
+        n_samples_lst += count_n_samples(data_root, config)
+    annotation = np.array(annotation)
 
     # count labels
     counts_dict = {i: {} for i in range(config.n_clusters)}
     total = 0
-    for key, count in counts_samples:
+    for key, count in n_samples_lst:
         count = int(count)
         ann = annotation[annotation.T[0] == key]
         total += count
@@ -81,7 +88,7 @@ def load_annotation_train(
     return np.array(used_annotation)
 
 
-def count_samples(data_root: str, config: SimpleNamespace):
+def count_n_samples(data_root: str, config: SimpleNamespace):
     path_counts = f"{data_root}/annotation/counts_train.txt"
 
     if os.path.exists(path_counts):
@@ -111,4 +118,4 @@ def count_samples(data_root: str, config: SimpleNamespace):
 
         np.savetxt(path_counts, counts, "%s", delimiter=" ")
 
-    return counts
+    return counts.tolist()
