@@ -45,7 +45,6 @@ class SharedShardWriter(wds.ShardWriter):
         self.write_que = deque()
         self.lock = Lock()
         self.finished = False
-        self.watch_dog_count = 0
         self.verbose = bool(verbose)
 
     def add_write_que(self, data):
@@ -69,12 +68,12 @@ class SharedShardWriter(wds.ShardWriter):
             while self.is_write_que_empty():
                 time.sleep(0.001)
 
-                self.watch_dog_count += 1
-                if self.watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
-                    raise RuntimeError(
-                        "The dog barked in SharedShardWriter.write_async process!"
-                    )
-            self.watch_dog_count = 0
+            #     self.watch_dog_count += 1
+            #     if self.watch_dog_count > 60 * 10 / 0.001:  # wait for 10 min
+            #         raise RuntimeError(
+            #             "The dog barked in SharedShardWriter.write_async process!"
+            #         )
+            # self.watch_dog_count = 0
 
             with self.lock:
                 data = self.write_que.popleft()

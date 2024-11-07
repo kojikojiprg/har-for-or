@@ -122,7 +122,7 @@ def write_shards(
         sink = swm.SharedShardWriter(shard_pattern, maxcount=shard_maxcount, verbose=0)
         ec = functools.partial(_error_callback, *("SharedShardWriter.write_async",))
         write_async_result = pool.apply_async(sink.write_async, error_callback=ec)
-        async_results.append(write_async_result)
+        # async_results.append(write_async_result)
         arr_write_que_async_f = functools.partial(
             _add_write_que_async,
             n_frames_que=n_frames_que,
@@ -149,14 +149,24 @@ def write_shards(
         )
         ec = functools.partial(_error_callback, *("_add_write_que_async",))
 
+        sleep_count = 0
         for n_frame in range(seq_len, frame_count + 1, stride):
             while not check_full_f():
                 async_results = _monitoring_async_tasks(async_results)
+                _monitoring_async_tasks([write_async_result])
                 time.sleep(0.01)
+                sleep_count += 1
+                if sleep_count > 60 * 3 / 0.01:
+                    break
+            sleep_count = 0
 
             while n_frame != n_frames_que[tail_ht.value] + 1:
                 async_results = _monitoring_async_tasks(async_results)
+                _monitoring_async_tasks([write_async_result])
                 time.sleep(0.1)  # waiting for shared memory has been updated
+                if sleep_count > 60 * 3 / 0.1:
+                    break
+            sleep_count = 0
             time.sleep(0.1)  # after delay
 
             # create and add data in write que
@@ -165,13 +175,14 @@ def write_shards(
             )
             async_results.append(result)
 
-            sleep_count = 0
             while check_full_f():
                 async_results = _monitoring_async_tasks(async_results)
+                _monitoring_async_tasks([write_async_result])
                 time.sleep(0.01)  # waiting for coping queue in _add_write_que_async
                 sleep_count += 1
                 if sleep_count > 60 * 3 / 0.01:
                     break  # exit infinite loop after 3 min
+            sleep_count = 0
 
         while [r.ready() for r in async_results].count(False) > 0:
             async_results = _monitoring_async_tasks(async_results)
@@ -180,7 +191,7 @@ def write_shards(
         # finish and waiting for complete writing
         sink.set_finish_writing()
         while not write_async_result.ready():
-            async_results = _monitoring_async_tasks(async_results)
+            _monitoring_async_tasks([write_async_result])
             time.sleep(0.01)
         sink.close()
 
