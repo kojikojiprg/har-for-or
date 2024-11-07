@@ -12,6 +12,7 @@ from src.model.individual.modules import (
     Decoder,
     Encoder,
     GaussianVectorQuantizer,
+    gumbel_softmax_relaxation,
 )
 
 
@@ -19,50 +20,72 @@ class SQVAE(LightningModule):
     def __init__(self, config: SimpleNamespace, annotations: Optional[NDArray] = None):
         super().__init__()
         self.config = config
+        self.latent_ndim = config.latent_ndim
+
+        self.n_clusters = config.n_clusters
+        self.temp_cls_init = config.temp_cls_init
+        self.temp_cls_decay = config.temp_cls_decay
+        self.temp_cls_min = config.temp_cls_min
+        self.temperature_cls = None
+
         self.temp_init = config.temp_init
         self.temp_decay = config.temp_decay
         self.temp_min = config.temp_min
-        self.latent_ndim = config.latent_ndim
-        self.n_clusters = config.n_clusters
+        self.temperature = None
 
+        self.cls_head = None
         self.encoder = None
         self.decoder = None
         self.quantizer = None
-        self.cls_head = None
         self.annotations = annotations
 
     def configure_model(self):
         if self.encoder is not None:
             return
+        self.cls_head = ClassificationHead(self.config)
         self.encoder = Encoder(self.config)
         self.decoder = Decoder(self.config)
         self.quantizer = GaussianVectorQuantizer(self.config)
-        self.cls_head = ClassificationHead(self.config)
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(self.parameters(), self.config.lr, self.config.betas)
-        sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
+        # sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
+        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, self.config.t_max, self.config.lr_min
+        )
         return [opt], [sch]
 
     def forward(self, kps, bbox, is_train):
         # kps (b, seq_len, n_pts, 2)
         # bbox (b, seq_len, n_pts, 2)
 
-        # encoding
-        ze, attn_w = self.encoder(kps, bbox, is_train)
-        c_logits, attn_w_cls = self.cls_head(ze, is_train)
-        c_prob = F.softmax(c_logits, dim=-1)
-        # ze (b, npts, latent_ndim)
+        # classification
+        c_logits, attn_w_cls = self.cls_head(kps, bbox, is_train)
+        if is_train:
+            c_probs = torch.zeros_like(c_logits)
+            for i, c_logit in enumerate(c_logits):
+                c_prob = gumbel_softmax_relaxation(c_logit, self.temperature_cls)
+                c_probs[i] = c_prob
+        else:
+            c_probs = F.softmax(c_logits, dim=-1)
         # c_prob (b, n_clusters)
 
+        # encoding
+        ze, attn_w = self.encoder(kps, bbox, c_probs, is_train)
+        # ze (b, npts, latent_ndim)
+
         # quantization
-        zq, precision_q, prob, log_prob = self.quantizer(ze, c_logits, is_train)
+        zq, precision_q, prob, log_prob = self.quantizer(
+            ze, c_probs, self.temperature, is_train
+        )
         # zq (b, npts, latent_ndim)
         # prob (b, npts, book_size)
 
         # reconstruction
         recon_kps, recon_bbox = self.decoder(kps, bbox, zq)
 
+        if is_train:
+            c_probs = F.softmax(c_logits, dim=-1)
         return (
             ze,
             zq,
@@ -73,14 +96,14 @@ class SQVAE(LightningModule):
             log_prob,
             recon_kps,
             recon_bbox,
-            c_prob,
+            c_probs,
         )
 
-    def calc_temperature(self):
+    def calc_temperature(self, temp_init, temp_decay, temp_min):
         return np.max(
             [
-                self.temp_init * np.exp(-self.temp_decay * self.global_step),
-                self.temp_min,
+                temp_init * np.exp(-temp_decay * self.global_step),
+                temp_min,
             ]
         )
 
@@ -121,8 +144,12 @@ class SQVAE(LightningModule):
         keys, ids, kps, bbox, mask = self.process_batch(batch)
 
         # update temperature of gumbel softmax
-        temp_cur = self.calc_temperature()
-        self.quantizer.temperature = temp_cur
+        self.temperature_cls = self.calc_temperature(
+            self.temp_cls_init, self.temp_cls_decay, self.temp_cls_min
+        )
+        self.temperature = self.calc_temperature(
+            self.temp_init, self.temp_decay, self.temp_min
+        )
 
         # forward
         (
@@ -149,7 +176,7 @@ class SQVAE(LightningModule):
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
-            log_param_q_cls=self.quantizer.log_param_q_cls.item(),
+            log_param_q_cls=self.cls_head.log_param_q_cls.item(),
         )
 
         # clustering loss
