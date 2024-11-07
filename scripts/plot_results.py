@@ -112,7 +112,7 @@ if __name__ == "__main__":
         [[c for _ in range(config.book_size)] for c in range(config.n_clusters)]
     ).ravel()
     path = f"{img_dir}/t-sen_codebooks.jpg"
-    vis.plot_tsne(X, labels, classes, 10, path, True, cmap="tab10")
+    vis.plot_tsne(X, labels, classes, 10, path, False, cmap="tab10")
 
     # ====================
     # Plot Graphs
