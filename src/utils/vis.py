@@ -209,7 +209,7 @@ def plot_attention_on_frame(
 
         # plot attention
         attn_w = attn_w.mean(axis=(1, 0))
-        attn_w = attn_w[0::2] + attn_w[1::2]  # sum x and y
+        # attn_w = attn_w[0::2] + attn_w[1::2]  # sum x and y
         attn_w = np.clip(attn_w, 0.0, vmax)  # (0.0, vmax)
         attn_w = attn_w * (1 / vmax)  # (0.0, 1.0)
         attn_w = (attn_w * 100).astype(int)
@@ -299,7 +299,7 @@ def plot_attention_clustering_on_frame(
 
         # plot attention
         attn_w_cls = attn_w_cls[0, 0, 1:]
-        attn_w_cls = attn_w_cls[0::2] + attn_w_cls[1::2]  # sum x and y
+        # attn_w_cls = attn_w_cls[0::2] + attn_w_cls[1::2]  # sum x and y
         attn_w_cls = np.clip(attn_w_cls, 0.0, vmax)  # (0.0, vmax)
         attn_w_cls = attn_w_cls * (1 / vmax)  # (0.0, 1.0)
         attn_w_cls = (attn_w_cls * 100).astype(int)
