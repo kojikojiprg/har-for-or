@@ -81,18 +81,15 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, kps, bbox, is_train):
-        # kps (b, seq_len, n_pts, 2)
-        # bbox (b, seq_len, n_pts, 2)
-
         # embedding
-        b, seq_len = kps.size()[:2]
         x = torch.cat([kps, bbox], dim=2)
         z = self.emb(x)
+        # z (b, n_pts, latent_ndim)
 
         # concat cls_token
-        cls_token = self.cls_token.repeat(b, 1, 1)
+        cls_token = self.cls_token.repeat(z.size(0), 1, 1)
         z = torch.cat([cls_token, z], dim=1)
-        # z (b, 1 + n_pts * 2, latent_ndim)
+        # z (b, 1 + n_pts, latent_ndim)
 
         # positional embedding
         z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
@@ -107,7 +104,7 @@ class ClassificationHead(nn.Module):
                 z, attn_w = layer(z, need_weights=True)
                 attn_w_lst.append(attn_w.unsqueeze(1))
             attn_w_tensor = torch.cat(attn_w_lst, dim=1)
-        # z (b, 1 + n_pts * 2, latent_ndim)
+        # z (b, 1 + n_pts, latent_ndim)
 
         logits = self.mlp(z[:, 0, :])  # (b, n_clusters)
 
@@ -135,23 +132,21 @@ class Encoder(nn.Module):
         )
         self.emb_c = MLP(config.n_clusters, config.latent_ndim)
 
-    def forward(self, kps, bbox, c_probs, is_train):
+    def forward(self, kps, bbox, c, is_train):
         # kps (b, seq_len, n_pts, 2)
         # bbox (b, seq_len, n_pts, 2)
 
         # embedding
-        b, seq_len = kps.size()[:2]
+        b = kps.size(0)
         x = torch.cat([kps, bbox], dim=2)
         z = self.emb(x)
         # z (b, n_pts, latent_ndim)
 
-        # add c
-        c = self.emb_c(c_probs)
-        z = z + c.view(b, 1, self.latent_ndim)
-        # z (b, n_pts, latent_ndim)
-
         # positional embedding
         z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
+
+        c = self.emb_c(c)
+        z = z + c.view(b, 1, self.latent_ndim)
 
         if is_train:
             for layer in self.encoders:

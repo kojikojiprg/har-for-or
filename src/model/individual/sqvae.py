@@ -54,6 +54,7 @@ class SQVAE(LightningModule):
             opt, self.config.t_max, self.config.lr_min
         )
         return [opt], [sch]
+        # return opt
 
     def forward(self, kps, bbox, is_train):
         # kps (b, seq_len, n_pts, 2)
@@ -69,10 +70,10 @@ class SQVAE(LightningModule):
         else:
             c_probs = F.softmax(c_logits, dim=-1)
         # c_prob (b, n_clusters)
+        # ze (b, npts, latent_ndim)
 
         # encoding
         ze, attn_w = self.encoder(kps, bbox, c_probs, is_train)
-        # ze (b, npts, latent_ndim)
 
         # quantization
         zq, precision_q, prob, log_prob = self.quantizer(
@@ -182,7 +183,6 @@ class SQVAE(LightningModule):
         # clustering loss
         c_prior = torch.full_like(c_prob, 1 / self.n_clusters)
         c_prob = torch.clamp(c_prob, min=1e-10)
-        # lc_psuedo = (c_prob * (c_prob.log() - c_prior.log())).mean()
         lc_psuedo = F.kl_div(c_prob.log(), c_prior)
         loss_dict["c_psuedo"] = lc_psuedo.item()
 
@@ -209,10 +209,10 @@ class SQVAE(LightningModule):
         else:
             lc_real = 0.0
 
-        lc = lc_real * 10 + lc_psuedo * 0.1
+        lc = lc_real + lc_psuedo * self.config.alpha_c
 
         loss_total = (
-            (lrc_kps + lrc_bbox) * self.config.lmd_lrc
+            (lrc_kps + lrc_bbox * self.config.alpha_lrc_bbox) * self.config.lmd_lrc
             + kl_continuous * self.config.lmd_klc
             + kl_discrete * self.config.lmd_kld
             + lc * self.config.lmd_c
