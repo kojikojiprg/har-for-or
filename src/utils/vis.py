@@ -727,13 +727,14 @@ def plot_tsne(
     plt.close()
 
 
-def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
+def plot_cm(cm, labels, figpath=None, normalize=False, cbar=True, on_plot=True):
     array = cm / (
         (cm.sum(0).reshape(1, -1) + 1e-9) if normalize else 1
     )  # normalize columns
     array[array < 0.005] = np.nan  # don't annotate (would appear as 0.00)
 
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6), tight_layout=True)
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4), tight_layout=True)
+    fig.set_dpi(150)
     ticklabels = labels
     vmax = 1.0 if normalize else None
     sns.heatmap(
@@ -742,6 +743,7 @@ def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
         annot=True,
         annot_kws={"size": 8},
         cmap="Blues",
+        cbar=cbar,
         fmt=".2f" if normalize else ".0f",
         square=True,
         vmin=0.0,
@@ -757,7 +759,7 @@ def plot_cm(cm, labels, figpath=None, normalize=False, on_plot=True):
     if figpath is not None:
         if normalize:
             figpath = figpath.replace(".png", "") + "_normalized.png"
-        fig.savefig(figpath, bbox_inches="tight", dpi=300)
+        fig.savefig(figpath, bbox_inches="tight")
     if on_plot:
         plt.show()
     plt.close(fig)
