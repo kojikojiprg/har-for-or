@@ -267,6 +267,23 @@ class Decoder(nn.Module):
 
         return recon_kps, recon_bbox
 
+    def sample_next_step(self, kps, bbox, zq):
+        zq = zq.unsqueeze(0)
+
+        recon_kps = torch.empty((1, 1, 0, 2)).to(kps.device)
+        for i in range((self.n_pts - 2)):
+            recon_x = self.decoder.sample_next_step(kps[:, :, i], zq[:, i, :])
+            recon_kps = torch.cat([recon_kps, recon_x], dim=2)
+        kps = torch.cat([kps, recon_kps], dim=1)
+
+        recon_bbox = torch.empty((1, 1, 0, 2)).to(bbox.device)
+        for i in range(2):
+            recon_x = self.decoder.sample_next_step(bbox[:, :, i], zq[:, (self.n_pts - 2) + i, :])
+            recon_bbox = torch.cat([recon_bbox, recon_x], dim=2)
+        bbox = torch.cat([bbox, recon_bbox], dim=1)
+
+        return kps, bbox
+
 
 class DecoderModule(nn.Module):
     def __init__(self, config: SimpleNamespace):
@@ -314,3 +331,21 @@ class DecoderModule(nn.Module):
         recon_x = self.mlp(x).view(b, seq_len, 1, 2)
 
         return recon_x
+
+    def sample_next_step(self, x, zq):
+        if x.size(1) == 0:  # seq_len == 0
+            x = self.x_start
+        else:
+            x = self.emb(x)
+            x = torch.cat([self.x_start, x], dim=1)
+
+        x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
+
+        zq = zq.unsqueeze(1).repeat(1, x.size(1), 1)
+        for layer in self.decoders:
+            x = layer(x, zq, is_sampling=True)
+        # x (b, seq_len, latent_ndim)
+
+        recon_x = self.mlp(x).view(1, -1, 1, 2)
+
+        return recon_x[:, -1:]

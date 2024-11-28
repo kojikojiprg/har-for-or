@@ -64,10 +64,13 @@ class TransformerDecoderBlock(nn.Module):
         self.ff = SwiGLU(ndim)
         self.dropout3 = nn.Dropout(dropout)
 
-    def forward(self, x, z, mask=None):
+    def forward(self, x, z, mask=None, is_sampling=False):
         b, seq_len = x.size()[:2]
         # x (b * seq_len, npatch, ndim)
-        tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads, x.device)
+        if not is_sampling:
+            tgt_mask = create_tgt_mask(mask, b, seq_len, self.nheads, x.device)
+        else:
+            tgt_mask = None
         x = self.norm1(x)
         x = x + self.attention_block1(x, tgt_mask)
 
