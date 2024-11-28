@@ -61,14 +61,14 @@ def draw_bbox(frame: np.array, bbox: np.array, color: tuple, thickness=2):
     return frame
 
 
-def plot_true_bbox_kps_on_frame(frame, results, idx_data, frame_size, range_points):
+def plot_true_bbox_kps_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
         kps = data["kps"][idx_data]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        kps = NormalizeKeypoints.reverse(kps, bbox)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -87,15 +87,15 @@ def plot_true_bbox_kps_on_frame(frame, results, idx_data, frame_size, range_poin
     return frame
 
 
-def plot_bbox_on_frame(frame, results, idx_data, frame_size, range_points):
+def plot_bbox_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
         mse_bbox = data["mse_bbox"]
         fake_bbox = data["recon_bbox"][idx_data]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        fake_bbox = NormalizeBbox.reverse(fake_bbox, frame_size, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        fake_bbox = NormalizeBbox.reverse(fake_bbox, frame_size)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -122,7 +122,7 @@ def plot_bbox_on_frame(frame, results, idx_data, frame_size, range_points):
     return frame
 
 
-def plot_kps_on_frame(frame, results, idx_data, frame_size, range_points):
+def plot_kps_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
@@ -130,9 +130,9 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size, range_points):
         fake_kps = data["recon_kps"][idx_data]
         mse_kps = data["mse_kps"]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
-        fake_kps = NormalizeKeypoints.reverse(fake_kps, bbox, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        kps = NormalizeKeypoints.reverse(kps, bbox)
+        fake_kps = NormalizeKeypoints.reverse(fake_kps, bbox)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -158,13 +158,13 @@ def plot_kps_on_frame(frame, results, idx_data, frame_size, range_points):
     return frame
 
 
-def plot_cluster_on_frame(frame, results, idx_data, frame_size, range_points):
+def plot_cluster_on_frame(frame, results, idx_data, frame_size):
     for data in results:
         _id = data["id"]
         bbox = data["bbox"][idx_data]
         label = str(data["label"])
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
 
         # id
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -183,17 +183,15 @@ def plot_cluster_on_frame(frame, results, idx_data, frame_size, range_points):
     return frame
 
 
-def plot_attention_on_frame(
-    frame, results, idx_data, frame_size, range_points, vmax=0.1
-):
+def plot_attention_on_frame(frame, results, idx_data, frame_size, vmax=0.1):
     for data in results:
         label = str(data["label"])
         bbox = data["bbox"][idx_data]
         kps = data["kps"][idx_data]
         attn_w = data["attn_w"]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        kps = NormalizeKeypoints.reverse(kps, bbox)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -273,17 +271,15 @@ def arange_attention_heatmaps(
     return img
 
 
-def plot_attention_clustering_on_frame(
-    frame, results, idx_data, frame_size, range_points, vmax=0.2
-):
+def plot_attention_clustering_on_frame(frame, results, idx_data, frame_size, vmax=0.2):
     for data in results:
         label = str(data["label"])
         bbox = data["bbox"][idx_data]
         kps = data["kps"][idx_data]
         attn_w_cls = data["attn_w_cls"]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        kps = NormalizeKeypoints.reverse(kps, bbox)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
@@ -319,35 +315,42 @@ def plot_attention_clustering_on_frame(
     return frame
 
 
-def arange_attention_clustering_heatmaps(results, n_clusters, plot_figsize, vmax=0.2):
+def arange_attention_clustering_heatmaps(
+    results, n_clusters, n_layers, plot_figsize, vmaxs=(0.2, 0.2, 0.1)
+):
     fig = plt.figure(figsize=(plot_figsize[0] / 100, plot_figsize[1] / 100))
-    axs = fig.subplots(n_clusters, 1).ravel()
+    axs = fig.subplots(n_clusters, n_layers)
     for label in range(n_clusters):
-        attn_w_cls = np.array([r["attn_w_cls"] for r in results if r["label"] == label])
-        if len(attn_w_cls) > 0:
-            attn_w_cls = attn_w_cls.mean(axis=0)
-            sns.heatmap(
-                attn_w_cls[0],
-                annot=False,
-                cmap="jet",
-                ax=axs[label],
-                cbar=False,
-                xticklabels=False,
-                yticklabels=False,
-                vmin=0.0,
-                vmax=vmax,
-            )
+        attn_w = np.array([r["attn_w"] for r in results if r["label"] == label])
+        if len(attn_w) > 0:
+            attn_w = attn_w.mean(axis=0)
+            for i in range(n_layers):
+                sns.heatmap(
+                    attn_w[i],
+                    annot=False,
+                    cmap="jet",
+                    ax=axs[label, i],
+                    cbar=False,
+                    xticklabels=False,
+                    yticklabels=False,
+                    vmin=0.0,
+                    vmax=vmaxs[i],
+                )
         else:
             # set blank
-            ax = axs[label]
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.tick_params(axis="both", color="w")
-            ax.spines[["left", "right", "bottom", "top"]].set_visible(False)
+            for i in range(n_layers):
+                ax = axs[label, i]
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.tick_params(axis="both", color="w")
+                ax.spines[["left", "right", "bottom", "top"]].set_visible(False)
 
     # set titles
+    for i in range(n_layers):
+        axs[0, i].set_xlabel(f"Layer {i}")
+        axs[0, i].xaxis.set_label_position("top")
     for i in range(n_clusters):
-        axs[i].set_ylabel(f"Label {i}")
+        axs[i, 0].set_ylabel(f"Label {i}")
 
     fig.tight_layout()
     fig.canvas.draw()
@@ -356,9 +359,7 @@ def arange_attention_clustering_heatmaps(results, n_clusters, plot_figsize, vmax
     return img
 
 
-def plot_book_idx_on_frame(
-    frame, results, idx_data, frame_size, book_size, range_points
-):
+def plot_book_idx_on_frame(frame, results, idx_data, frame_size, book_size):
     cm = plt.get_cmap("turbo", book_size)
     for data in results:
         label = str(data["label"])
@@ -366,8 +367,8 @@ def plot_book_idx_on_frame(
         kps = data["kps"][idx_data]
         book_idx = data["book_idx"]
 
-        bbox = NormalizeBbox.reverse(bbox, frame_size, range_points)
-        kps = NormalizeKeypoints.reverse(kps, bbox, range_points)
+        bbox = NormalizeBbox.reverse(bbox, frame_size)
+        kps = NormalizeKeypoints.reverse(kps, bbox)
 
         # clustering label
         pt = tuple(np.mean(bbox, axis=0).astype(int))
