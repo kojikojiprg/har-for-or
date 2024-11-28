@@ -32,7 +32,6 @@ if __name__ == "__main__":
     config = yaml_handler.load(config_path)
     seq_len = config.seq_len
     stride = config.stride
-    range_points = config.range_points
 
     # load model
     for data_dir in tqdm(data_dirs, ncols=100):
@@ -100,22 +99,22 @@ if __name__ == "__main__":
             if len(result_tmp) != 0:
                 # plot kps
                 frame_kps = vis.plot_kps_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
 
                 # plot bbo
                 frame_bbox = vis.plot_bbox_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
 
                 # plot cluster
                 frame_cluster = vis.plot_cluster_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
 
                 # plot attention
                 frame_attn = vis.plot_attention_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
                     img_heatmaps_attn = vis.arange_attention_heatmaps(
@@ -128,11 +127,14 @@ if __name__ == "__main__":
 
                 # plot attention
                 frame_attn_cls = vis.plot_attention_clustering_on_frame(
-                    frame.copy(), result_tmp, idx_data, frame_size, range_points
+                    frame.copy(), result_tmp, idx_data, frame_size
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
                     img_heatmaps_attn_cls = vis.arange_attention_clustering_heatmaps(
-                        result_tmp, config.n_clusters, size_heatmap_attn_cls
+                        result_tmp,
+                        config.n_clusters,
+                        config.nlayers,
+                        size_heatmap_attn_cls,
                     )
                     img_heatmaps_attn_cls = cv2.cvtColor(
                         img_heatmaps_attn_cls, cv2.COLOR_RGBA2BGR
@@ -143,12 +145,7 @@ if __name__ == "__main__":
 
                 # plot book indices
                 frame_book = vis.plot_book_idx_on_frame(
-                    frame.copy(),
-                    result_tmp,
-                    idx_data,
-                    frame_size,
-                    config.book_size,
-                    range_points,
+                    frame.copy(), result_tmp, idx_data, frame_size, config.book_size
                 )
                 if idx_data == seq_len - stride or n_frame == 0:
                     img_heatmaps_book = vis.arange_book_idx_heatmaps(
