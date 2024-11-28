@@ -6,28 +6,28 @@ from torchvision.transforms import Compose, Normalize
 
 
 class NormalizeBbox:
-    def __call__(self, bbox, frame_size, range_points):
+    def __call__(self, bbox, frame_size):
         bbox = bbox / np.array(frame_size)  # [0, 1]
-        bbox = (2 * range_points * bbox) - range_points  # [-range, range]
+        bbox = (2 * bbox) - 1  # [-range, range]
         return bbox
 
     @staticmethod
-    def reverse(bbox, frame_size, range_points):
-        return (bbox.copy() + range_points) / (2 * range_points) * frame_size
+    def reverse(bbox, frame_size):
+        return (bbox.copy() + 1) / 2 * frame_size
 
 
 class NormalizeKeypoints:
-    def __call__(self, kps, bbox, range_points):
+    def __call__(self, kps, bbox):
         seq_len = kps.shape[0]
         assert kps.ndim == 3, f"kps.shape = {kps.shape}"
         kps = kps - bbox[:, 0, :].reshape(seq_len, 1, 2)
         kps = kps / (bbox[:, 1, :] - bbox[:, 0, :]).reshape(seq_len, 1, 2)
-        kps = (2 * range_points * kps) - range_points
+        kps = (2 * kps) - 1
         return kps
 
     @staticmethod
-    def reverse(kps, bbox, range_points):
-        kps = (kps.copy() + range_points) / (2 * range_points)
+    def reverse(kps, bbox):
+        kps = (kps.copy() + 1) / 2
         kps = kps * (bbox[1] - bbox[0])
         kps = kps + bbox[0]
         return kps

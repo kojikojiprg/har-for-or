@@ -4,4 +4,3 @@ seq_len: 90
 stride: 30
 img_size: [256, 192]
 mask_leg: True
-range_points: 0.7

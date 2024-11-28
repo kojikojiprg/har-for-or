@@ -76,7 +76,6 @@ def load_dataset_mapped(
             bbox_transform=NormalizeBbox(),
             kps_transform=NormalizeKeypoints(),
             mask_leg=config.mask_leg,
-            range_points=config.range_points,
             load_frame_flow=False,  # avoid memory overflow
         )
         dataset = IndividualDatasetMapped(shard_paths, idv_npz_to_tensor)
@@ -126,7 +125,6 @@ def load_dataset_iterable(
             bbox_transform=NormalizeBbox(),
             kps_transform=NormalizeKeypoints(),
             mask_leg=config.mask_leg,
-            range_points=config.range_points,
             load_frame_flow=False,  # TODO: set True when use frame and flow
         )
         dataset = dataset.map(idv_npz_to_tensor)

@@ -108,7 +108,6 @@ def individual_npz_to_tensor(
     bbox_transform,
     kps_transform,
     mask_leg,
-    range_points,
     load_frame_flow=False,
 ):
     key = sample["__key__"]
@@ -145,16 +144,14 @@ def individual_npz_to_tensor(
     mask = torch.from_numpy(np.any(bboxs <= -1e9, axis=(1, 2))).to(torch.bool)
 
     kps[mask] = -1.0
-    kps[~mask] = kps_transform(kps[~mask], bboxs[~mask], range_points)
+    kps[~mask] = kps_transform(kps[~mask], bboxs[~mask])
     kps = interpolate_points(kps, mask).reshape(seq_len, 17, 2)
     if mask_leg:
         kps = kps[:, :-4, :]
     kps = torch.from_numpy(kps).to(torch.float32)
 
     bboxs[mask] = -1.0
-    bboxs[~mask] = bbox_transform(
-        bboxs[~mask], frame_size[::-1], range_points
-    )  # frame_size: (h, w)
+    bboxs[~mask] = bbox_transform(bboxs[~mask], frame_size[::-1])  # frame_size: (h, w)
     bboxs = interpolate_points(bboxs, mask).reshape(seq_len, 2, 2)
     bboxs = torch.from_numpy(bboxs).to(torch.float32)
 

@@ -63,9 +63,7 @@ if __name__ == "__main__":
             (255, 255, 255),
             1,
         )
-        frame = vis.plot_true_bbox_kps_on_frame(
-            frame, result_tmp, idx_data, frame_size, config.range_points
-        )
+        frame = vis.plot_true_bbox_kps_on_frame(frame, result_tmp, idx_data, frame_size)
 
         wrt.write(frame)
 

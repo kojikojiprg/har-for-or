@@ -3,7 +3,6 @@ max_shard_count: 100
 seq_len: 90
 stride: 30
 mask_leg: True
-range_points: 1.0
 
 # model
 ## clustering params
@@ -26,11 +25,11 @@ dropout: 0.1
 
 # optim
 lmd_lrc: 1
-alpha_lrc_bbox: 6.5
-lmd_klc: 1
+alpha_lrc_bbox: 1
+lmd_klc: 0.1
 lmd_kld: 1
-lmd_c: 10
-alpha_c: 0.01
+lmd_c: 4
+alpha_c: 0.1
 
 lr: 0.005
 betas: [0.9, 0.95]
