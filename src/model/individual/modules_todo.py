@@ -202,22 +202,23 @@ class GaussianVectorQuantizer(nn.Module):
         super().__init__()
         self.book_size = config.book_size
 
-        mu = []
-        for i in range(config.n_clusters):
-            mu.append(torch.randn(1, config.latent_ndim))
-        self.books = nn.ParameterList(
-            [
-                nn.Parameter(torch.randn(self.book_size, config.latent_ndim) + mu[i])
-                for i in range(config.n_clusters)
-            ]
-        )
-
-        # self.books = nn.ParameterList(
-        #     [
-        #         nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
-        #         for i in range(config.n_clusters)
-        #     ]
-        # )
+        if config.add_random_mu:
+            mu = []
+            for i in range(config.n_clusters):
+                mu.append(torch.randn(1, config.latent_ndim))
+            self.books = nn.ParameterList(
+                [
+                    nn.Parameter(torch.randn(self.book_size, config.latent_ndim) + mu[i])
+                    for i in range(config.n_clusters)
+                ]
+            )
+        else:
+            self.books = nn.ParameterList(
+                [
+                    nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
+                    for i in range(config.n_clusters)
+                ]
+            )
 
         log_param_q = np.log(config.param_q_init)
         self.log_param_q = nn.Parameter(torch.tensor(log_param_q, dtype=torch.float32))

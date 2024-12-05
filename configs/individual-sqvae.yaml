@@ -13,6 +13,7 @@ temp_cls_decay: 0.001
 temp_cls_min: 0.0000000001
 ## quantization params
 book_size: 1024
+add_random_mu: False
 param_q_init: 10
 temp_init: 1
 temp_decay: 0.00001
@@ -38,6 +39,7 @@ t_max: 20
 lr_min: 0.00001
 
 # training
+warmingup: False
 min_n_labeled_samples: 1000
 epochs: 100
 batch_size: 64

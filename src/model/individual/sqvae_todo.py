@@ -212,7 +212,7 @@ class SQVAE(LightningModule):
 
         lc = lc_real + lc_psuedo * self.config.alpha_c
 
-        if self.current_epoch < 5:
+        if self.config.warmingup and self.current_epoch < 5:
             loss_total = (
                 (lrc_kps + lrc_bbox) * 0.00001
                 + kl_continuous * 0.00001
