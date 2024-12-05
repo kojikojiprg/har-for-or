@@ -7,39 +7,39 @@ mask_leg: True
 # model
 ## clustering params
 n_clusters: 5
-param_q_cls_init: 0.5
-temp_cls_init: 1.0
+param_q_cls_init: 1.0
+temp_cls_init: 1
 temp_cls_decay: 0.001
-temp_cls_min: 0.0
+temp_cls_min: 0.0000000001
 ## quantization params
-book_size: 512
+book_size: 1024
 param_q_init: 10
-temp_init: 10.0
-temp_decay: 0.0001
-temp_min: 0.0
+temp_init: 1
+temp_decay: 0.00001
+temp_min: 0.0000000001
 ## network params
-latent_ndim: 16
+latent_ndim: 32
 nheads: 1
-nlayers: 3
+nlayers: 2
+nlayers_cls: 2
 dropout: 0.1
 
 # optim
 lmd_lrc: 1
-alpha_lrc_bbox: 1
-lmd_klc: 0.1
+lmd_klc: 1
 lmd_kld: 1
-lmd_c: 4
-alpha_c: 0.1
+lmd_c: 10
+alpha_c: 0.01
 
-lr: 0.005
+lr: 0.0005
 betas: [0.9, 0.95]
-# lr_gamma: 0.95
-t_max: 60
-lr_min: 0.0001
+lr_gamma: 0.95
+t_max: 20
+lr_min: 0.00001
 
 # training
 min_n_labeled_samples: 1000
-epochs: 300
+epochs: 100
 batch_size: 64
 accumulate_grad_batches: 1
 num_workers: 8
