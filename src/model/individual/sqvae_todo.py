@@ -50,10 +50,10 @@ class SQVAE(LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(self.parameters(), self.config.lr, self.config.betas)
-        sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
-        # sch = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #     opt, self.config.t_max, self.config.lr_min
-        # )
+        # sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
+        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, self.config.t_max, self.config.lr_min
+        )
         return [opt], [sch]
         # return opt
 

@@ -9,7 +9,7 @@ mask_leg: True
 n_clusters: 5
 param_q_cls_init: 1.0
 temp_cls_init: 1
-temp_cls_decay: 0.001
+temp_cls_decay: 0.0001
 temp_cls_min: 0.0000000001
 ## quantization params
 book_size: 1024
@@ -35,13 +35,13 @@ alpha_c: 0.01
 lr: 0.0005
 betas: [0.9, 0.95]
 lr_gamma: 0.95
-t_max: 20
-lr_min: 0.00001
+t_max: 40
+lr_min: 0.000001
 
 # training
 warmingup: False
 min_n_labeled_samples: 1000
-epochs: 100
+epochs: 200
 batch_size: 64
 accumulate_grad_batches: 1
 num_workers: 8
