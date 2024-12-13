@@ -121,13 +121,18 @@ class CSQVAE(LightningModule):
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
 
-    def loss_kl_discrete(self, prob, log_prob):
-        return torch.sum(prob * log_prob, dim=1).mean()
+    def loss_kl_discrete(self, logits, logits_sampled):
+        kl_discrete = F.kl_div(
+            logits.log_softmax(dim=-1),
+            logits_sampled.softmax(dim=-1),
+            reduction="batchmean",
+        )
+        return kl_discrete
 
     def loss_c_elbo(self, c_logits):
         prob = F.softmax(c_logits, dim=-1)
         log_prob = F.log_softmax(c_logits, dim=-1)
-        lc_elbo = torch.sum(prob * log_prob, dim=(0, 1)).mean()
+        lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
         return lc_elbo
 
     def loss_c_real(self, c_logits, keys, ids):
@@ -198,10 +203,20 @@ class CSQVAE(LightningModule):
         lrc_kps = self.loss_x(kps, recon_kps)
         lrc_bbox = self.loss_x(bbox, recon_bbox)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
-        # kl_discrete = self.loss_kl_discrete(prob, log_prob)
-        kl_discrete = F.kl_div(
-            logits.log_softmax(dim=-1), logits_sampled.softmax(dim=-1), reduce="sum"
-        ) / logits.size(0)
+        kl_discrete = self.loss_kl_discrete(logits, logits_sampled)
+
+        # clustering loss
+        lc_elbo = self.loss_c_elbo(c_logits)
+        lc_real = self.loss_c_real(c_logits, keys, ids)
+
+        loss_total = (
+            (lrc_kps + lrc_bbox) * self.config.lmd_lrc
+            + kl_continuous * self.config.lmd_klc
+            + kl_discrete * self.config.lmd_kld
+            + lc_elbo * self.config.lmd_c_elbo
+            + lc_real * self.config.lmd_c_real
+        )
+
         loss_dict = dict(
             kps=lrc_kps.item(),
             bbox=lrc_bbox.item(),
@@ -209,32 +224,10 @@ class CSQVAE(LightningModule):
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
             log_param_q_cls=self.cls_head.log_param_q_cls.item(),
+            c_elbo=lc_elbo.item(),
+            c_real=lc_real.item(),
+            total=loss_total.item(),
         )
-
-        # clustering loss
-        lc_elbo = self.loss_c_elbo(c_logits)
-        loss_dict["c_elbo"] = lc_elbo.item()
-        lc_real = self.loss_c_real(c_logits, keys, ids)
-        loss_dict["c_real"] = lc_real.item()
-
-        if self.config.warmingup and self.current_epoch < 10:
-            loss_total = (
-                (lrc_kps + lrc_bbox) * 0.00001
-                + kl_continuous * 0.00001
-                + kl_discrete * 0.00001
-                + lc_elbo * self.config.lmd_c_elbo
-                + lc_real * self.config.lmd_c_real
-            )
-        else:
-            loss_total = (
-                (lrc_kps + lrc_bbox) * self.config.lmd_lrc
-                + kl_continuous * self.config.lmd_klc
-                + kl_discrete * self.config.lmd_kld
-                + lc_elbo * self.config.lmd_c_elbo
-                + lc_real * self.config.lmd_c_real
-            )
-        loss_dict["total"] = loss_total.item()
-
         self.log_dict(loss_dict, prog_bar=True, logger=True)
 
         return loss_total
