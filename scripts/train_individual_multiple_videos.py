@@ -11,7 +11,9 @@ from lightning.pytorch.strategies import DDPStrategy
 
 sys.path.append(".")
 from src.data import individual_train_dataloader, load_annotation_train
-from src.model import SQVAE, VAE
+
+# TODO
+from src.model.individual.sqvae_todo import CSQVAE
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
@@ -98,13 +100,13 @@ if __name__ == "__main__":
     if model_type == "vae":
         # ann_path = f"{data_root}/annotation/role.txt"
         # model = VAE(config, annotation_path=ann_path)
-        model = VAE(config)
-        ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
+        # model = VAE(config)
+        # ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
         raise NotImplementedError  # TODO: delete
     elif model_type == "sqvae":
         if unsupervised_training:
             ann_path = None
-        model = SQVAE(config, annotations)
+        model = CSQVAE(config, annotations)
         ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 

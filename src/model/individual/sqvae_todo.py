@@ -13,11 +13,11 @@ from src.model.individual.modules_todo import (
     Decoder,
     Encoder,
     GaussianVectorQuantizer,
-    gumbel_softmax_relaxation,
+    gumbel_softmax_sample,
 )
 
 
-class SQVAE(LightningModule):
+class CSQVAE(LightningModule):
     def __init__(self, config: SimpleNamespace, annotations: Optional[NDArray] = None):
         super().__init__()
         self.config = config
@@ -50,10 +50,10 @@ class SQVAE(LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(self.parameters(), self.config.lr, self.config.betas)
-        # sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
-        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, self.config.t_max, self.config.lr_min
-        )
+        sch = torch.optim.lr_scheduler.ExponentialLR(opt, self.config.lr_gamma)
+        # sch = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     opt, self.config.t_max, self.config.lr_min
+        # )
         return [opt], [sch]
         # return opt
 
@@ -61,44 +61,40 @@ class SQVAE(LightningModule):
         # kps (b, seq_len, n_pts, 2)
         # bbox (b, seq_len, n_pts, 2)
 
+        # encoding
+        ze, attn_w = self.encoder(kps, bbox, is_train)
+        # ze (b, npts, latent_ndim)
+
+        # quantization
+        zq, precision_q, logits = self.quantizer(ze, self.temperature, is_train)
+        # zq (b, npts, latent_ndim)
+        # prob (b, npts, book_size)
+
         # classification
-        c_logits, attn_w_cls = self.cls_head(kps, bbox, is_train)
+        c_logits, attn_w_cls = self.cls_head(zq, is_train)
         if is_train:
-            c_probs = torch.zeros_like(c_logits)
-            for i, c_logit in enumerate(c_logits):
-                c_prob = gumbel_softmax_relaxation(c_logit, self.temperature_cls)
-                c_probs[i] = c_prob
+            c_probs = gumbel_softmax_sample(c_logits, self.temperature_cls)
         else:
             c_probs = F.softmax(c_logits, dim=-1)
         # c_prob (b, n_clusters)
 
-        # encoding
-        ze, attn_w = self.encoder(kps, bbox, c_probs, is_train)
-        # ze (b, npts, latent_ndim)
-
-        # quantization
-        zq, precision_q, prob, log_prob = self.quantizer(
-            ze, c_probs, self.temperature, is_train
-        )
-        # zq (b, npts, latent_ndim)
-        # prob (b, npts, book_size)
-
         # reconstruction
         recon_kps, recon_bbox = self.decoder(zq)
 
-        if is_train:
-            c_probs = F.softmax(c_logits, dim=-1)
+        # sampling
+        logits_sampled = self.quantizer.sample_logits_from_c(c_probs)
+
         return (
-            ze,
-            zq,
-            attn_w,
-            attn_w_cls,
-            precision_q,
-            prob,
-            log_prob,
             recon_kps,
             recon_bbox,
-            c_probs,
+            ze,
+            zq,
+            precision_q,
+            logits,
+            logits_sampled,
+            c_logits,
+            attn_w,
+            attn_w_cls,
         )
 
     def calc_temperature(self, temp_init, temp_decay, temp_min):
@@ -128,6 +124,37 @@ class SQVAE(LightningModule):
     def loss_kl_discrete(self, prob, log_prob):
         return torch.sum(prob * log_prob, dim=1).mean()
 
+    def loss_c_elbo(self, c_logits):
+        prob = F.softmax(c_logits, dim=-1)
+        log_prob = F.log_softmax(c_logits, dim=-1)
+        lc_elbo = torch.sum(prob * log_prob, dim=(0, 1)).mean()
+        return lc_elbo
+
+    def loss_c_real(self, c_logits, keys, ids):
+        c_prob = F.softmax(c_logits, dim=-1)
+        if self.annotations is not None:
+            keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
+            mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+            keys = keys[mask_supervised]
+            mask_supervised = torch.tensor(mask_supervised).to(self.device)
+            if torch.any(mask_supervised):
+                labels = []
+                for key in keys:
+                    if key in self.annotations.T[0]:
+                        label = self.annotations.T[1][key == self.annotations.T[0]]
+                        labels.append(int(label))
+                labels = torch.tensor(labels).to(self.device, torch.long)
+                lc_real = F.cross_entropy(
+                    c_prob[mask_supervised], labels, reduction="sum"
+                )
+                lc_real = lc_real / ids.size(0)
+            else:
+                lc_real = torch.Tensor([0.0]).to(self.device)
+        else:
+            lc_real = torch.Tensor([0.0]).to(self.device)
+
+        return lc_real
+
     def process_batch(self, batch):
         keys, ids, kps, bbox, mask = batch
         keys = np.array(keys).ravel()
@@ -155,23 +182,26 @@ class SQVAE(LightningModule):
 
         # forward
         (
-            ze,
-            zq,
-            attn_w,
-            attn_w_cls,
-            precision_q,
-            prob,
-            log_prob,
             recon_kps,
             recon_bbox,
-            c_prob,
+            ze,
+            zq,
+            precision_q,
+            logits,
+            logits_sampled,
+            c_logits,
+            attn_w,
+            attn_w_cls,
         ) = self(kps, bbox, True)
 
         # ELBO loss
         lrc_kps = self.loss_x(kps, recon_kps)
         lrc_bbox = self.loss_x(bbox, recon_bbox)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
-        kl_discrete = self.loss_kl_discrete(prob, log_prob)
+        # kl_discrete = self.loss_kl_discrete(prob, log_prob)
+        kl_discrete = F.kl_div(
+            logits.log_softmax(dim=-1), logits_sampled.softmax(dim=-1), reduce="sum"
+        ) / logits.size(0)
         loss_dict = dict(
             kps=lrc_kps.item(),
             bbox=lrc_bbox.item(),
@@ -182,49 +212,26 @@ class SQVAE(LightningModule):
         )
 
         # clustering loss
-        c_prior = torch.full_like(c_prob, 1 / self.n_clusters)
-        c_prob = torch.clamp(c_prob, min=1e-10)
-        lc_psuedo = F.kl_div(c_prob.log(), c_prior)
-        loss_dict["c_psuedo"] = lc_psuedo.item()
+        lc_elbo = self.loss_c_elbo(c_logits)
+        loss_dict["c_elbo"] = lc_elbo.item()
+        lc_real = self.loss_c_real(c_logits, keys, ids)
+        loss_dict["c_real"] = lc_real.item()
 
-        if self.annotations is not None:
-            keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
-            mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
-            keys = keys[mask_supervised]
-            mask_supervised = torch.tensor(mask_supervised).to(self.device)
-            if torch.any(mask_supervised):
-                labels = []
-                for key in keys:
-                    if key in self.annotations.T[0]:
-                        label = self.annotations.T[1][key == self.annotations.T[0]]
-                        labels.append(int(label))
-                labels = torch.tensor(labels).to(self.device, torch.long)
-                lc_real = F.cross_entropy(
-                    c_prob[mask_supervised], labels, reduction="sum"
-                )
-                lc_real = lc_real / ids.size(0)
-                loss_dict["c_real"] = lc_real.item()
-            else:
-                lc_real = 0.0
-                loss_dict["c_real"] = 0.0
-        else:
-            lc_real = 0.0
-
-        lc = lc_real + lc_psuedo * self.config.alpha_c
-
-        if self.config.warmingup and self.current_epoch < 5:
+        if self.config.warmingup and self.current_epoch < 10:
             loss_total = (
                 (lrc_kps + lrc_bbox) * 0.00001
                 + kl_continuous * 0.00001
                 + kl_discrete * 0.00001
-                + lc * 1
+                + lc_elbo * self.config.lmd_c_elbo
+                + lc_real * self.config.lmd_c_real
             )
         else:
             loss_total = (
                 (lrc_kps + lrc_bbox) * self.config.lmd_lrc
                 + kl_continuous * self.config.lmd_klc
                 + kl_discrete * self.config.lmd_kld
-                + lc * self.config.lmd_c
+                + lc_elbo * self.config.lmd_c_elbo
+                + lc_real * self.config.lmd_c_real
             )
         loss_dict["total"] = loss_total.item()
 
@@ -238,17 +245,20 @@ class SQVAE(LightningModule):
 
         # forward
         (
-            ze,
-            zq,
-            attn_w,
-            attn_w_cls,
-            precision_q,
-            prob,
-            log_prob,
             recon_kps,
             recon_bbox,
-            c_prob,
+            ze,
+            zq,
+            precision_q,
+            logits,
+            logits_sampled,
+            c_logits,
+            attn_w,
+            attn_w_cls,
         ) = self(kps, bbox, False)
+
+        prob = logits.softmax(dim=-1)
+        c_prob = c_logits.softmax(dim=-1)
 
         mse_kps = self.mse_x(kps, recon_kps, "mean")
         mse_bbox = self.mse_x(bbox, recon_bbox, "mean")

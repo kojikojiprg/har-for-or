@@ -16,11 +16,25 @@ def get_n_pts(config: SimpleNamespace):
     return n_pts
 
 
-def gumbel_softmax_relaxation(logits, temperature, eps=1e-10):
-    U = torch.rand(logits.shape, device=logits.device)
-    g = -torch.log(-torch.log(U + eps) + eps)
+def sample_gumbel(logits, eps=1e-10):
+    U = torch.rand_like(logits)
+    return -torch.log(-torch.log(U + eps) + eps)
+
+
+def gumbel_softmax_sample(logits, temperature):
+    g = sample_gumbel(logits)
     y = logits + g
     return F.softmax(y / temperature, dim=-1)
+
+
+def calc_distance(ze, book):
+    distances = (
+        torch.sum(ze**2, dim=-1, keepdim=True)
+        + torch.sum(book**2, dim=-1)
+        - 2 * torch.matmul(ze, book.t())
+    )
+
+    return distances
 
 
 class TransformerEncoderBlock(nn.Module):
@@ -37,7 +51,6 @@ class TransformerEncoderBlock(nn.Module):
         self.norm2 = nn.LayerNorm(ndim)
 
     def forward(self, x, need_weights=False):
-        b, seq_len = x.size()[:2]
         # x (b * seq_len, npatch, ndim)
         x_attn, attn_w = self.attention_block(x, need_weights)
         x = self.norm1(x + x_attn)
@@ -97,9 +110,6 @@ class Embedding(nn.Module):
 class ClassificationHead(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
-        self.emb_kps = Embedding(config, 13)
-        self.emb_bbox = Embedding(config, 2)
-
         self.cls_token = nn.Parameter(torch.randn(1, 1, config.latent_ndim))
         self.encoders = nn.ModuleList(
             [
@@ -116,16 +126,12 @@ class ClassificationHead(nn.Module):
             torch.tensor(log_param_q_cls, dtype=torch.float32)
         )
 
-    def forward(self, kps, bbox, is_train):
-        # embedding
-        kps = self.emb_kps(kps)
-        bbox = self.emb_bbox(bbox)
-        z = torch.cat([kps, bbox], dim=1)
-        # z (b, n_pts, latent_ndim)
+    def forward(self, zq, is_train):
+        # zq (b, n_pts, latent_ndim)
 
         # concat cls_token
-        cls_token = self.cls_token.repeat(z.size(0), 1, 1)
-        z = torch.cat([cls_token, z], dim=1)
+        cls_token = self.cls_token.repeat(zq.size(0), 1, 1)
+        z = torch.cat([cls_token, zq], dim=1)
         # z (b, 1 + n_pts, latent_ndim)
 
         if is_train:
@@ -142,8 +148,7 @@ class ClassificationHead(nn.Module):
 
         logits = self.mlp(z[:, 0, :])  # (b, n_clusters)
 
-        # param_q = 1 + self.log_param_q_cls.exp()
-        param_q = self.log_param_q_cls.exp()  # NOTE
+        param_q = self.log_param_q_cls.exp()
         precision_q_cls = 0.5 / torch.clamp(param_q, min=1e-10)
         logits = logits * precision_q_cls
 
@@ -157,8 +162,6 @@ class Encoder(nn.Module):
         # self.emb = Embedding(config)
         self.emb_kps = Embedding(config, 13)
         self.emb_bbox = Embedding(config, 2)
-        self.emb_c = MLP(config.n_clusters, config.latent_ndim)
-        self.norm_c = nn.LayerNorm(config.latent_ndim)
 
         self.encoders = nn.ModuleList(
             [
@@ -169,18 +172,12 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, kps, bbox, c_probs, is_train):
+    def forward(self, kps, bbox, is_train):
         # embedding
-        # x = torch.cat([kps, bbox], dim=2)
-        # z = self.emb(x)
         kps = self.emb_kps(kps)
         bbox = self.emb_bbox(bbox)
         z = torch.cat([kps, bbox], dim=1)
         # z (b, n_pts, latent_ndim)
-
-        # add c_probs
-        c_probs = self.emb_c(c_probs).view(-1, 1, self.latent_ndim)
-        z = self.norm_c(z + c_probs)
 
         if is_train:
             for layer in self.encoders:
@@ -200,116 +197,75 @@ class Encoder(nn.Module):
 class GaussianVectorQuantizer(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
+        self.n_clusters = config.n_clusters
         self.book_size = config.book_size
+        self.ndim = config.latent_ndim
+        self.npts = get_n_pts(config)
 
-        if config.add_random_mu:
-            mu = []
-            for i in range(config.n_clusters):
-                mu.append(torch.randn(1, config.latent_ndim))
-            self.books = nn.ParameterList(
-                [
-                    nn.Parameter(torch.randn(self.book_size, config.latent_ndim) + mu[i])
-                    for i in range(config.n_clusters)
-                ]
-            )
-        else:
-            self.books = nn.ParameterList(
-                [
-                    nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
-                    for i in range(config.n_clusters)
-                ]
-            )
+        self.book = nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
+        self.weights = nn.ParameterList(
+            [
+                nn.Parameter(torch.randn(self.npts, self.book_size))
+                for _ in range(config.n_clusters)
+            ]
+        )
 
         log_param_q = np.log(config.param_q_init)
         self.log_param_q = nn.Parameter(torch.tensor(log_param_q, dtype=torch.float32))
 
-    def calc_distance(self, z, book):
-        distances = (
-            torch.sum(z**2, dim=1, keepdim=True)
-            + torch.sum(book**2, dim=1)
-            - 2 * torch.matmul(z, book.t())
-        )
-        return distances
+    def forward(self, ze, temperature, is_train):
+        b = ze.size(0)
 
-    def forward(self, ze, c_probs, temperature, is_train):
-        # ze (b, n_pts, latent_ndim)
-        b, n_pts, latent_ndim = ze.size()
-
-        # param_q = 1 + self.log_param_q.exp()
-        param_q = self.log_param_q.exp()  # NOTE
+        param_q = self.log_param_q.exp()
         precision_q = 0.5 / torch.clamp(param_q, min=1e-10)
-
-        # if is_train:
-        #     logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
-        #     zq = torch.empty((0, n_pts, latent_ndim)).to(ze.device)
-        #     books = torch.cat(list(self.books.parameters()), dim=0)
-        #     books = books.view(-1, self.book_size, latent_ndim)
-        #     for batch_idx, idx in enumerate(c_probs.argmax(dim=-1)):
-        #         # compute logits and zq of all books
-        #         zei = ze[batch_idx]
-        #         logit = -self.calc_distance(zei, books[idx]) * precision_q
-        #         encoding = gumbel_softmax_relaxation(logit, temperature)
-        #         zqi = torch.matmul(encoding, books[idx])
-
-        #         logits = torch.cat(
-        #             [logits, logit.view(1, n_pts, self.book_size)], dim=0
-        #         )
-        #         zq = torch.cat([zq, zqi.view(1, n_pts, latent_ndim)], dim=0)
-        #         # mean_prob = torch.mean(prob.detach(), dim=0)
+        logits = -calc_distance(ze.view(-1, self.ndim), self.book) * precision_q
 
         if is_train:
-            logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
-            zq = torch.empty((0, n_pts, latent_ndim)).to(ze.device)
-            books = torch.cat(list(self.books.parameters()), dim=0)
-            books = books.view(-1, self.book_size, latent_ndim)
-            for batch_idx, c_prob in enumerate(c_probs):
-                # compute logits and zq of all books
-                zei = ze[batch_idx]
-                zqi = torch.zeros_like(zei)
-                logit = torch.zeros((n_pts, self.book_size)).to(ze.device)
-                for j, book in enumerate(books):
-                    logitj = -self.calc_distance(zei, book) * precision_q
-                    logit = logit + logitj * c_prob[j]
-                    encoding = gumbel_softmax_relaxation(logitj, temperature)
-                    zqi = zqi + torch.matmul(encoding, book) * c_prob[j]
-
-                logits = torch.cat(
-                    [logits, logit.view(1, n_pts, self.book_size)], dim=0
-                )
-                zq = torch.cat([zq, zqi.view(1, n_pts, latent_ndim)], dim=0)
-                # mean_prob = torch.mean(prob.detach(), dim=0)
+            encodings = gumbel_softmax_sample(logits, temperature)
+            zq = torch.mm(encodings, self.book)
         else:
-            logits = torch.empty((0, n_pts, self.book_size)).to(ze.device)
-            books = torch.empty((0, self.book_size, latent_ndim)).to(ze.device)
-            for batch_idx, idx in enumerate(c_probs.argmax(dim=-1)):
-                book = self.books[idx]
-                logit = -self.calc_distance(ze[batch_idx], book) * precision_q
+            indices = torch.argmax(logits, dim=-1).unsqueeze(1)
+            encodings = torch.zeros(b * self.npts, self.book_size).to(ze.device)
+            encodings.scatter_(1, indices, 1)
+            zq = torch.mm(encodings, self.book)
 
-                logits = torch.cat(
-                    [logits, logit.view(1, n_pts, self.book_size)], dim=0
-                )
-                books = torch.cat(
-                    [books, book.view(1, self.book_size, latent_ndim)], dim=0
-                )
+        logits = logits.view(b, -1, self.book_size)
+        zq = zq.view(b, -1, self.ndim)
 
-            indices = torch.argmax(logits, dim=2).unsqueeze(2)
-            encodings = torch.zeros(
-                indices.shape[0],
-                indices.shape[1],
-                self.book_size,
-                device=indices.device,
-            )
-            encodings.scatter_(2, indices, 1)
-            zq = torch.matmul(encodings, books)
-            # mean_prob = torch.mean(encodings, dim=0)
-        # zq (b, npts, latent_ndim)
+        return zq, precision_q, logits
 
-        prob = torch.softmax(logits, dim=-1)
-        prob = prob.view(b, n_pts, self.book_size)
-        log_prob = torch.log_softmax(logits, dim=-1)
-        log_prob = log_prob.view(b, n_pts, self.book_size)
+    def sample_logits_from_c(self, c_probs):
+        weights = torch.cat([w.unsqueeze(0) for w in self.weights], dim=0)
+        # weights (n_clusters, npts, ndim)
 
-        return zq, precision_q, prob, log_prob
+        b = c_probs.size(0)
+        logits = weights.unsqueeze(0).repeat(b, 1, 1, 1) * c_probs.view(
+            b, self.n_clusters, 1, 1
+        )
+        logits = logits.sum(dim=1)
+
+        return logits
+
+    def sample_zq_from_c(self, c_probs, add_random):
+        b = c_probs.size(0)
+        logits = self.sample_logits_from_c(c_probs)
+        logits = logits.view(-1, self.book_size)
+
+        if add_random:
+            logits = logits + torch.randn_like(logits)
+
+        indices = torch.argmax(logits, dim=-1).unsqueeze(1)
+        encodings = torch.zeros(b * self.npts, self.book_size).to(c_probs.device)
+        encodings.scatter_(1, indices, 1)
+        zq = torch.mm(encodings, self.book)
+
+        # if add_random:
+        #     zq = zq + torch.randn_like(zq)
+
+        logits = logits.view(b, -1, self.book_size)
+        zq = zq.view(b, -1, self.ndim)
+
+        return zq, logits
 
 
 class Reconstruction(nn.Module):

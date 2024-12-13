@@ -38,6 +38,9 @@ if __name__ == "__main__":
         if data_dir[-1] == "/":
             data_dir = data_dir[:-1]
 
+        if int(data_dir[-2:]) != 7:
+            continue
+
         # load results
         paths = glob(os.path.join(data_dir, f"pred_{model_type}", "*"))
         results = []
