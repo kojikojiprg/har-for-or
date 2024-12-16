@@ -13,7 +13,7 @@ sys.path.append(".")
 from src.data import individual_train_dataloader, load_annotation_train
 
 # TODO
-from model.individual.sqvae import CSQVAE
+from model.individual.csqvae import CSQVAE
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
