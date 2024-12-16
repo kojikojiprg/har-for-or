@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 sys.path.append(".")
 from src.data import individual_pred_dataloader
-from src.model import SQVAE, VAE
+from src.model import CSQVAE, VAE
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     if model_type == "vae":
         model = VAE(config)
     elif model_type == "sqvae":
-        model = SQVAE(config)
+        model = CSQVAE(config)
     else:
         raise ValueError
     model.configure_model()

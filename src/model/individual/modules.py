@@ -204,10 +204,8 @@ class GaussianVectorQuantizer(nn.Module):
 
         self.book = nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
 
-        # mu = [torch.randn(1, config.latent_ndim) for _ in range(config.n_clusters)]
         self.mu = nn.ParameterList(
             [
-                # nn.Parameter(torch.randn(self.npts, config.latent_ndim) + mu[i])
                 nn.Parameter(torch.randn(self.npts, config.latent_ndim))
                 for i in range(config.n_clusters)
             ]

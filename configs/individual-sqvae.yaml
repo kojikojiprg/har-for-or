@@ -9,7 +9,7 @@ mask_leg: True
 n_clusters: 5
 param_q_cls_init: 1.0
 temp_cls_init: 1
-temp_cls_decay: 0.001
+temp_cls_decay: 0.0001
 temp_cls_min: 0.0000000001
 ## quantization params
 book_size: 512
@@ -27,8 +27,8 @@ dropout: 0.1
 # optim
 lmd_lrc: 1
 lmd_klc: 1
-lmd_kld: 0.0001
-lmd_c_elbo: 0.01
+lmd_kld: 0.1
+lmd_c_elbo: 1
 lmd_c_real: 10
 
 lr: 0.0005
