@@ -55,7 +55,6 @@ class CSQVAE(LightningModule):
         #     opt, self.config.t_max, self.config.lr_min
         # )
         return [opt], [sch]
-        # return opt
 
     def forward(self, kps, bbox, is_train):
         # kps (b, seq_len, n_pts, 2)
@@ -82,7 +81,16 @@ class CSQVAE(LightningModule):
         recon_kps, recon_bbox = self.decoder(zq)
 
         # sampling
-        logits_sampled = self.quantizer.sample_logits_from_c(c_probs)
+        if is_train:
+            zq_sampled, logits_sampled, mu_sampled = self.quantizer.sample_from_c(
+                c_probs, self.temperature, is_train
+            )
+            # zq_sampled = zq_sampled.view(b, h, w, ndim)
+            # zq_sampled = zq_sampled.permute(0, 3, 1, 2)
+        else:
+            # zq_sampled = None
+            logits_sampled = None
+            # mu_sampled = None
 
         return (
             recon_kps,
@@ -121,13 +129,12 @@ class CSQVAE(LightningModule):
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
 
-    def loss_kl_discrete(self, logits, logits_sampled):
-        kl_discrete = F.kl_div(
-            logits.log_softmax(dim=-1),
-            logits_sampled.softmax(dim=-1),
-            reduction="batchmean",
-        )
-        return kl_discrete
+    def loss_kl_discrete(self, logits, logits_sampled, log_eps=-1e10):
+        p = logits_sampled.softmax(dim=-1)
+        p_log = torch.clamp(logits_sampled.log_softmax(dim=-1), log_eps)
+        q_log = torch.clamp(logits.log_softmax(dim=-1), log_eps)
+        kl = torch.sum(p * (p_log - q_log), dim=(1, 2)).mean()
+        return kl
 
     def loss_c_elbo(self, c_logits):
         prob = F.softmax(c_logits, dim=-1)
@@ -275,6 +282,29 @@ class CSQVAE(LightningModule):
                 "book_idx": prob[i].cpu().numpy().argmax(axis=1),
                 "label_prob": c_prob[i].cpu().numpy(),
                 "label": c_prob[i].cpu().numpy().argmax(),
+            }
+            results.append(data)
+
+        return results
+
+    def sample(self, c_probs: torch.Tensor):
+        c_probs = c_probs.to(self.device)
+        b = c_probs.size(0)
+        # sample zq from book
+        zq, logits, mu = self.quantizer.sample_from_c(c_probs, self.temperature, False)
+
+        # generate samples
+        h, w = self.latent_size
+        zq = zq.view(b, h, w, self.latent_ndim)
+        generated_x = self.decoder(zq.permute(0, 3, 1, 2))
+        generated_x = generated_x.permute(0, 2, 3, 1)
+
+        results = []
+        for i in range(b):
+            data = {
+                "gen_x": generated_x[i].detach().cpu().numpy(),
+                "zq": zq[i].detach().cpu().numpy(),
+                "gt": c_probs[i].argmax(dim=-1).cpu(),
             }
             results.append(data)
 
