@@ -27,7 +27,11 @@ if __name__ == "__main__":
     gpu_id = args.gpu_id
     device = f"cuda:{gpu_id}"
 
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+    data_dirs = [
+        d
+        for d in sorted(glob(os.path.join(data_root, "*/")))
+        if os.path.basename(d[:-1]).isnumeric()
+    ]
 
     checkpoint_dir = f"models/individual/{model_type}/version_{v}"
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
@@ -60,7 +64,7 @@ if __name__ == "__main__":
         )
 
         # pred
-        save_dir = os.path.join(data_dir, f"pred_{model_type}")
+        save_dir = os.path.join(data_dir, f"pred_{model_type}_v{v}")
         os.makedirs(save_dir, exist_ok=True)
 
         model.eval()
