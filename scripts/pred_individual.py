@@ -16,7 +16,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="sqvae"
+        "-mt", "--model_type", required=False, type=str, default="csqvae"
     )
     parser.add_argument("-v", "--version", type=int, default=0)
     parser.add_argument("-g", "--gpu_id", type=int, default=None)
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # load model
     if model_type == "vae":
         model = VAE(config)
-    elif model_type == "sqvae":
+    elif model_type == "csqvae":
         model = CSQVAE(config)
     else:
         raise ValueError

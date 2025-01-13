@@ -27,19 +27,19 @@ dropout: 0.1
 # optim
 lmd_lrc: 1
 lmd_klc: 1
-lmd_kld: 0.1
-lmd_c_elbo: 1
+lmd_kld: 1
+lmd_c_elbo: 0.1
 lmd_c_real: 10
 
 lr: 0.0005
 betas: [0.9, 0.95]
 lr_gamma: 0.99
-# t_max: 20
-# lr_min: 0.0001
+t_max: 100
+lr_min: 0.0001
 
 # training
 min_n_labeled_samples: 1000
 epochs: 100
-batch_size: 64
+batch_size: 128
 accumulate_grad_batches: 1
 num_workers: 8

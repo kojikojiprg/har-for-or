@@ -11,14 +11,14 @@ from sklearn.metrics import classification_report, confusion_matrix
 from tqdm import tqdm
 
 sys.path.append(".")
-from src.model import SQVAE
+from src.model import CSQVAE
 from src.utils import vis, yaml_handler
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="sqvae"
+        "-mt", "--model_type", required=False, type=str, default="csqvae"
     )
     parser.add_argument("-v", "--version", type=int, default=0)
     args = parser.parse_args()
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     # tSNE of codebooks
     # ====================
     print("plotting scatter of codebooks using tSNE")
-    model = SQVAE(config)
+    model = CSQVAE(config)
     model.configure_model()
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
     checkpoint = torch.load(checkpoint_path)

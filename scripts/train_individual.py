@@ -19,7 +19,7 @@ if __name__ == "__main__":
     parser.add_argument("data_root_lst", type=str, nargs="*")
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
     parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="sqvae"
+        "-mt", "--model_type", required=False, type=str, default="csqvae"
     )
     parser.add_argument(
         "-ut",
@@ -101,7 +101,7 @@ if __name__ == "__main__":
         # model = VAE(config)
         # ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
         raise NotImplementedError  # TODO: delete
-    elif model_type == "sqvae":
+    elif model_type == "csqvae":
         if unsupervised_training:
             ann_path = None
         model = CSQVAE(config, annotations)

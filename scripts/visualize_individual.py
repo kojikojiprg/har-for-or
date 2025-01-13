@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="sqvae"
+        "-mt", "--model_type", required=False, type=str, default="csqvae"
     )
     parser.add_argument("-v", "--version", type=int, default=0)
     args = parser.parse_args()

@@ -14,13 +14,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
     parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="sqvae"
+        "-mt", "--model_type", required=False, type=str, default="csqvae"
     )
     args = parser.parse_args()
     data_root = args.data_root
     model_type = args.model_type
 
-    config = yaml_handler.load("configs/individual-sqvae.yaml")
+    config = yaml_handler.load("configs/individual-csqvae.yaml")
     seq_len = config.seq_len
     stride = config.stride
 

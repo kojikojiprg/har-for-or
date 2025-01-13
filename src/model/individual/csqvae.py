@@ -63,18 +63,18 @@ class CSQVAE(LightningModule):
         ze, attn_w = self.encoder(kps, bbox, is_train)
         # ze (b, npts, latent_ndim)
 
-        # quantization
-        zq, precision_q, logits = self.quantizer(ze, self.temperature, is_train)
-        # zq (b, npts, latent_ndim)
-        # prob (b, npts, book_size)
-
         # classification
-        c_logits, attn_w_cls = self.cls_head(zq, is_train)
+        c_logits, attn_w_cls = self.cls_head(ze, is_train)
         if is_train:
             c_probs = gumbel_softmax_sample(c_logits, self.temperature_cls)
         else:
             c_probs = F.softmax(c_logits, dim=-1)
         # c_prob (b, n_clusters)
+
+        # quantization
+        zq, precision_q, logits = self.quantizer(ze, self.temperature, is_train)
+        # zq (b, npts, latent_ndim)
+        # prob (b, npts, book_size)
 
         # reconstruction
         recon_kps, recon_bbox = self.decoder(zq)
