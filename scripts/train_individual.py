@@ -120,3 +120,5 @@ if __name__ == "__main__":
         benchmark=True,
     )
     trainer.fit(model, train_dataloaders=dataloader, ckpt_path=pre_checkpoint_path)
+
+    print("complete")

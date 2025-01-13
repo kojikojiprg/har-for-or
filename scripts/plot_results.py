@@ -26,7 +26,11 @@ if __name__ == "__main__":
     model_type = args.model_type
     v = args.version
 
-    data_dirs = sorted(glob(os.path.join(data_root, "*/")))
+    data_dirs = [
+        d
+        for d in sorted(glob(os.path.join(data_root, "*/")))
+        if os.path.basename(d[:-1]).isnumeric()
+    ]
 
     checkpoint_dir = f"models/individual/{model_type}/version_{v}"
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
@@ -163,7 +167,9 @@ if __name__ == "__main__":
                 mse_latent_feature_dict[_id] = {}
             mse_kps_dict[_id][n_frame] = result["mse_kps"]
             mse_bbox_dict[_id][n_frame] = result["mse_bbox"]
-            mse_latent_feature_dict[_id][n_frame] = np.sum((result["ze"] - result["zq"]) ** 2)
+            mse_latent_feature_dict[_id][n_frame] = np.sum(
+                (result["ze"] - result["zq"]) ** 2
+            )
 
             # label count
             label_pred = int(result["label"])
@@ -224,3 +230,5 @@ if __name__ == "__main__":
         vis.plot_label_ratio_cumsum(
             label_counts, classes, max_n_frame, stride, 30, mse_cls_figpath, False
         )
+
+    print("complete")

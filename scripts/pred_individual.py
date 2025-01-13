@@ -75,3 +75,5 @@ if __name__ == "__main__":
                 path = os.path.join(save_dir, f"{key}.pkl")
                 with open(path, "wb") as f:
                     pickle.dump(result, f)
+
+    print("complete")
