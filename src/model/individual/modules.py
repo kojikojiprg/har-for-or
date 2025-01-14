@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from rotary_embedding_torch import RotaryEmbedding
 
 from src.model.layers import MLP  # , TransformerEncoderBlock
 
@@ -111,6 +112,7 @@ class ClassificationHead(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.cls_token = nn.Parameter(torch.randn(1, 1, config.latent_ndim))
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=False)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -121,18 +123,20 @@ class ClassificationHead(nn.Module):
         )
         self.mlp = MLP(config.latent_ndim, config.n_clusters)
 
-        # log_param_q_cls = np.log(config.param_q_cls_init)
-        # self.log_param_q_cls = nn.Parameter(
-        #     torch.tensor(log_param_q_cls, dtype=torch.float32)
-        # )
+        log_param_q_cls = np.log(config.param_q_cls_init)
+        self.log_param_q_cls = nn.Parameter(
+            torch.tensor(log_param_q_cls, dtype=torch.float32)
+        )
 
-    def forward(self, zq, is_train):
+    def forward(self, ze, is_train):
         # zq (b, n_pts, latent_ndim)
 
         # concat cls_token
-        cls_token = self.cls_token.repeat(zq.size(0), 1, 1)
-        z = torch.cat([cls_token, zq], dim=1)
+        cls_token = self.cls_token.repeat(ze.size(0), 1, 1)
+        z = torch.cat([cls_token, ze], dim=1)
         # z (b, 1 + n_pts, latent_ndim)
+
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
         if is_train:
             for layer in self.encoders:
@@ -148,9 +152,9 @@ class ClassificationHead(nn.Module):
 
         logits = self.mlp(z[:, 0, :])  # (b, n_clusters)
 
-        # param_q = self.log_param_q_cls.exp()
-        # precision_q_cls = 0.5 / torch.clamp(param_q, min=1e-10)
-        # logits = logits * precision_q_cls
+        param_q = self.log_param_q_cls.exp()
+        precision_q_cls = 0.5 / torch.clamp(param_q, min=1e-10)
+        logits = logits * precision_q_cls
 
         return logits, attn_w_tensor
 
@@ -162,7 +166,7 @@ class Encoder(nn.Module):
         # self.emb = Embedding(config)
         self.emb_kps = Embedding(config, 13)
         self.emb_bbox = Embedding(config, 2)
-
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=False)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -178,6 +182,8 @@ class Encoder(nn.Module):
         bbox = self.emb_bbox(bbox)
         z = torch.cat([kps, bbox], dim=1)
         # z (b, n_pts, latent_ndim)
+
+        z = self.pe.rotate_queries_or_keys(z, seq_dim=1)
 
         if is_train:
             for layer in self.encoders:
@@ -198,10 +204,12 @@ class GaussianVectorQuantizer(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.book_size = config.book_size
+
+        mu = [torch.randn(1, config.latent_ndim) for _ in range(config.n_clusters)]
         self.books = nn.ParameterList(
             [
-                nn.Parameter(torch.randn(self.book_size, config.latent_ndim))
-                for _ in range(config.n_clusters)
+                nn.Parameter(torch.randn(self.book_size, config.latent_ndim) + mu[i])
+                for i in range(config.n_clusters)
             ]
         )
 
@@ -268,7 +276,7 @@ class GaussianVectorQuantizer(nn.Module):
             encodings.scatter_(2, indices, 1)
             zq = torch.matmul(encodings, books)
             # mean_prob = torch.mean(encodings, dim=0)
-        # zq (b, npts, latent_ndim)
+            # zq (b, npts, latent_ndim)
 
         logits = logits.view(b, -1, self.book_size)
 
@@ -319,6 +327,7 @@ class Reconstruction(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
+        self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=False)
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -332,6 +341,8 @@ class Decoder(nn.Module):
         self.recon_bbox = Reconstruction(config, 2)
 
     def forward(self, zq):
+        zq = self.pe.rotate_queries_or_keys(zq, seq_dim=1)
+
         # zq (b, n_pts, latent_ndim)
         for layer in self.encoders:
             zq, attn_w = layer(zq)

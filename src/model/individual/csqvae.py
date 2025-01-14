@@ -23,10 +23,10 @@ class CSQVAE(LightningModule):
         self.latent_ndim = config.latent_ndim
 
         self.n_clusters = config.n_clusters
-        # self.temp_cls_init = config.temp_cls_init
-        # self.temp_cls_decay = config.temp_cls_decay
-        # self.temp_cls_min = config.temp_cls_min
-        # self.temperature_cls = None
+        self.temp_cls_init = config.temp_cls_init
+        self.temp_cls_decay = config.temp_cls_decay
+        self.temp_cls_min = config.temp_cls_min
+        self.temperature_cls = None
 
         self.temp_init = config.temp_init
         self.temp_decay = config.temp_decay
@@ -64,15 +64,16 @@ class CSQVAE(LightningModule):
 
         # classification
         c_logits, attn_w_cls = self.cls_head(ze, is_train)
-        # if is_train:
-        #     c_probs = gumbel_softmax_sample(c_logits, self.temperature_cls)
-        # else:
-        c_probs = F.softmax(c_logits, dim=-1)
+        if is_train:
+            # c_probs = gumbel_softmax_sample(c_logits, self.temperature_cls)
+            c_probs = F.softmax(c_logits / self.temperature_cls, dim=-1)
+        else:
+            c_probs = F.softmax(c_logits, dim=-1)
         # c_prob (b, n_clusters)
 
         # quantization
         zq, precision_q, logits = self.quantizer(
-            ze, c_probs, self.temperature, is_train
+            ze, c_probs.detach(), self.temperature, is_train
         )
         # zq (b, npts, latent_ndim)
         # logits (b, npts, book_size)
@@ -152,14 +153,51 @@ class CSQVAE(LightningModule):
         lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
         return lc_elbo
 
-    def loss_c_real(self, c_logits, keys, ids):
-        c_prob = F.softmax(c_logits, dim=-1)
+    # def loss_c_real(self, c_logits, keys, ids):
+    #     c_prob = F.softmax(c_logits, dim=-1)
+    #     if self.annotations is not None:
+    #         keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
+    #         mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+    #         keys = keys[mask_supervised]
+    #         mask_supervised = torch.tensor(mask_supervised).to(self.device)
+    #         if torch.any(mask_supervised):
+    #             labels = []
+    #             for key in keys:
+    #                 if key in self.annotations.T[0]:
+    #                     label = self.annotations.T[1][key == self.annotations.T[0]]
+    #                     labels.append(int(label))
+    #             labels = torch.tensor(labels).to(self.device, torch.long)
+    #             lc_real = F.cross_entropy(
+    #                 c_prob[mask_supervised], labels, reduction="sum"
+    #             )
+    #             lc_real = lc_real / ids.size(0)
+    #         else:
+    #             lc_real = torch.Tensor([0.0]).to(self.device)
+    #     else:
+    #         lc_real = torch.Tensor([0.0]).to(self.device)
+
+    #     return lc_real
+
+    # def loss_c_elbo(self, c_logits):
+    #     prob = F.softmax(c_logits, dim=-1)
+    #     log_prob = F.log_softmax(c_logits, dim=-1)
+    #     lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
+    #     return lc_elbo
+
+    def loss_c(self, c_logits, keys, ids):
         if self.annotations is not None:
             keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
             mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
+
             keys = keys[mask_supervised]
             mask_supervised = torch.tensor(mask_supervised).to(self.device)
             if torch.any(mask_supervised):
+                prob = F.softmax(c_logits, dim=-1)
+                log_prob = F.log_softmax(c_logits, dim=-1)
+                lc_elbo = torch.sum(
+                    prob[~mask_supervised] * log_prob[~mask_supervised], dim=1
+                ).mean()
+
                 labels = []
                 for key in keys:
                     if key in self.annotations.T[0]:
@@ -167,15 +205,23 @@ class CSQVAE(LightningModule):
                         labels.append(int(label))
                 labels = torch.tensor(labels).to(self.device, torch.long)
                 lc_real = F.cross_entropy(
-                    c_prob[mask_supervised], labels, reduction="sum"
+                    prob[mask_supervised], labels, reduction="sum"
                 )
-                lc_real = lc_real / ids.size(0)
+                lc_real = lc_real / len(labels)
             else:
+                prob = F.softmax(c_logits, dim=-1)
+                log_prob = F.log_softmax(c_logits, dim=-1)
+                lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
+
                 lc_real = torch.Tensor([0.0]).to(self.device)
         else:
+            prob = F.softmax(c_logits, dim=-1)
+            log_prob = F.log_softmax(c_logits, dim=-1)
+            lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
+
             lc_real = torch.Tensor([0.0]).to(self.device)
 
-        return lc_real
+        return lc_elbo, lc_real
 
     def process_batch(self, batch):
         keys, ids, kps, bbox, mask = batch
@@ -195,9 +241,9 @@ class CSQVAE(LightningModule):
         keys, ids, kps, bbox, mask = self.process_batch(batch)
 
         # update temperature of gumbel softmax
-        # self.temperature_cls = self.calc_temperature(
-        #     self.temp_cls_init, self.temp_cls_decay, self.temp_cls_min
-        # )
+        self.temperature_cls = self.calc_temperature(
+            self.temp_cls_init, self.temp_cls_decay, self.temp_cls_min
+        )
         self.temperature = self.calc_temperature(
             self.temp_init, self.temp_decay, self.temp_min
         )
@@ -224,8 +270,9 @@ class CSQVAE(LightningModule):
         # kl_discrete = self.loss_kl_discrete(logits, logits_sampled)
 
         # clustering loss
-        lc_elbo = self.loss_c_elbo(c_logits)
-        lc_real = self.loss_c_real(c_logits, keys, ids)
+        # lc_elbo = self.loss_c_elbo(c_logits)
+        # lc_real = self.loss_c_real(c_logits, keys, ids)
+        lc_elbo, lc_real = self.loss_c(c_logits, keys, ids)
 
         loss_total = (
             (lrc_kps + lrc_bbox) * self.config.lmd_lrc
@@ -252,9 +299,7 @@ class CSQVAE(LightningModule):
 
     def on_train_epoch_end(self):
         epochs = self.config.epochs
-        print(
-            f"\n{self.train_stage}: Epoch {self.current_epoch} / {epochs} Done. Device {self.device}.\n"
-        )
+        print(f"\nEpoch {self.current_epoch} / {epochs} Done. Device {self.device}.\n")
 
     @torch.no_grad()
     def predict_step(self, batch):
@@ -268,7 +313,7 @@ class CSQVAE(LightningModule):
             zq,
             precision_q,
             logits,
-            logits_sampled,
+            # logits_sampled,
             c_logits,
             attn_w,
             attn_w_cls,
