@@ -8,7 +8,7 @@ mask_leg: True
 # model
 ## clustering params
 n_clusters: 5
-param_q_cls_init: 0.5
+param_q_cls_init: 1.0
 temp_cls_init: 1
 temp_cls_decay: 0.0001
 temp_cls_min: 0.0000000001
@@ -27,17 +27,17 @@ dropout: 0.1
 
 # optim
 lmd_lrc: 1
-lmd_klc: 0.01
+lmd_klc: 1
 lmd_kld: 1
 lmd_c_elbo: 0.01
 lmd_c_real: 10
 
 # training
-epochs: 300
+epochs: 100
 batch_size: 128
 lr: 0.0005
 betas: [0.9, 0.95]
-t_max: 300
+t_max: 100
 lr_min: 0.0001
 accumulate_grad_batches: 1
 num_workers: 8
