@@ -7,12 +7,11 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from numpy.typing import NDArray
 
-from src.model.individual.modules import (
+from src.model.individual.modules import (  # gumbel_softmax_sample,
     ClassificationHead,
     Decoder,
     Encoder,
     GaussianVectorQuantizer,
-    gumbel_softmax_sample,
 )
 
 
@@ -288,7 +287,7 @@ class CSQVAE(LightningModule):
             kl_discrete=kl_discrete.item(),
             kl_continuous=kl_continuous.item(),
             log_param_q=self.quantizer.log_param_q.item(),
-            # log_param_q_cls=self.cls_head.log_param_q_cls.item(),
+            log_param_q_cls=self.cls_head.log_param_q_cls.item(),
             c_elbo=lc_elbo.item(),
             c_real=lc_real.item(),
             total=loss_total.item(),
