@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from rotary_embedding_torch import RotaryEmbedding
 
-from src.model.layers import MLP  # , TransformerEncoderBlock
+from src.model.layers import MLP, TransformerEncoderBlock
 
 
 def get_n_pts(config: SimpleNamespace):
@@ -36,37 +36,6 @@ def calc_distance(ze, book):
     )
 
     return distances
-
-
-class TransformerEncoderBlock(nn.Module):
-    def __init__(self, ndim, nheads, dropout):
-        super().__init__()
-        self.nheads = nheads
-        self.attn = nn.MultiheadAttention(
-            ndim, nheads, dropout=dropout, batch_first=True
-        )
-        self.norm1 = nn.LayerNorm(ndim)
-
-        self.ff = MLP(ndim)
-        self.dropout2 = nn.Dropout(dropout)
-        self.norm2 = nn.LayerNorm(ndim)
-
-    def forward(self, x, need_weights=False):
-        # x (b * seq_len, npatch, ndim)
-        x_attn, attn_w = self.attention_block(x, need_weights)
-        x = self.norm1(x + x_attn)
-        x = self.norm2(x + self.feed_forward_block(x))
-
-        return x, attn_w
-
-    def attention_block(self, x, need_weights):
-        x, attn_w = self.attn(x, x, x, need_weights=need_weights)
-        return x, attn_w
-
-    def feed_forward_block(self, x):
-        x = self.ff(x)
-        x = self.dropout2(x)
-        return x
 
 
 class Embedding(nn.Module):
@@ -336,7 +305,6 @@ class Decoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        # self.recon = Reconstruction(config)
         self.recon_kps = Reconstruction(config, 13)
         self.recon_bbox = Reconstruction(config, 2)
 
@@ -347,8 +315,6 @@ class Decoder(nn.Module):
         for layer in self.encoders:
             zq, attn_w = layer(zq)
 
-        # x = self.recon(zq)
-        # recon_kps, recon_bbox = x[:, :, :-2], x[:, :, -2:]
         recon_kps = self.recon_kps(zq[:, :13, :])
         recon_bbox = self.recon_bbox(zq[:, 13:, :])
 

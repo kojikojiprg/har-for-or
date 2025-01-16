@@ -1,2 +1,2 @@
 from .feedforward import MLP, SwiGLU
-from .transformer import TransformerDecoderBlock, TransformerEncoderBlock
+from .transformer import TransformerEncoderBlock

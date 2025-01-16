@@ -96,11 +96,7 @@ if __name__ == "__main__":
 
     # create model
     if model_type == "vae":
-        # ann_path = f"{data_root}/annotation/role.txt"
-        # model = VAE(config, annotation_path=ann_path)
-        # model = VAE(config)
-        # ddp = DDPStrategy(find_unused_parameters=True, process_group_backend="nccl")
-        raise NotImplementedError  # TODO: delete
+        raise NotImplementedError
     elif model_type == "csqvae":
         if unsupervised_training:
             ann_path = None

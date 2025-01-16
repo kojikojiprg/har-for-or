@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 sys.path.append(".")
 from src.data import individual_pred_dataloader
-from src.model import CSQVAE, VAE
+from src.model import CSQVAE
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     # load model
     if model_type == "vae":
-        model = VAE(config)
+        raise NotImplementedError
     elif model_type == "csqvae":
         model = CSQVAE(config)
     else:
@@ -59,9 +59,12 @@ if __name__ == "__main__":
             data_dir = data_dir[:-1]
 
         # load dataset
-        dataloader = individual_pred_dataloader(
+        dataloader, n_samples = individual_pred_dataloader(
             data_dir, "individual", config, [gpu_id], False
         )
+        if n_samples == 0:
+            print(f"Skip predicting {data_dir}")
+            continue
 
         # pred
         save_dir = os.path.join(data_dir, f"pred_{model_type}_v{v}")

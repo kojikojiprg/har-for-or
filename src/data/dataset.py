@@ -200,7 +200,7 @@ def individual_pred_dataloader(
             pin_memory=True,
         )
     else:
-        dataset, n_batches = load_dataset_iterable(
+        dataset, n_samples = load_dataset_iterable(
             [data_dir], dataset_type, config, False
         )
         dataset = dataset.batched(config.batch_size, partial=True)
@@ -214,10 +214,10 @@ def individual_pred_dataloader(
         )
 
         ngpus = len(gpu_ids) if gpu_ids is not None else 1
-        n_batches = ceil(n_batches / ngpus / config.batch_size)
+        n_batches = ceil(n_samples / ngpus / config.batch_size)
         dataloader.repeat(1, n_batches).with_length(n_batches)
 
-    return dataloader
+    return dataloader, n_samples
 
 
 def _node_splitter(src):
