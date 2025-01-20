@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from numpy.typing import NDArray
 
-from src.model.individual.modules import (  # gumbel_softmax_sample,
+from src.model.individual.modules import (
     ClassificationHead,
     Decoder,
     Encoder,
@@ -48,10 +48,7 @@ class CSQVAE(LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.AdamW(self.parameters(), self.config.lr, self.config.betas)
-        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, self.config.t_max, self.config.lr_min
-        )
-        return [opt], [sch]
+        return opt
 
     def forward(self, kps, bbox, is_train):
         # kps (b, seq_len, n_pts, 2)
@@ -79,18 +76,6 @@ class CSQVAE(LightningModule):
 
         # reconstruction
         recon_kps, recon_bbox = self.decoder(zq)
-
-        # sampling
-        # if is_train:
-        #     zq_sampled, logits_sampled, mu_sampled = self.quantizer.sample_from_c(
-        #         c_probs, self.temperature, is_train
-        #     )
-        #     # zq_sampled = zq_sampled.view(b, h, w, ndim)
-        #     # zq_sampled = zq_sampled.permute(0, 3, 1, 2)
-        # else:
-        #     # zq_sampled = None
-        #     logits_sampled = None
-        #     # mu_sampled = None
 
         return (
             recon_kps,
@@ -129,17 +114,6 @@ class CSQVAE(LightningModule):
     def loss_kl_continuous(self, ze, zq, precision_q):
         return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
 
-    # def loss_kl_discrete(self, logits, logits_sampled, log_eps=-1e10):
-    #     p = logits_sampled.softmax(dim=-1)
-    #     p_log = torch.clamp(logits_sampled.log_softmax(dim=-1), log_eps)
-    #     q_log = torch.clamp(logits.log_softmax(dim=-1), log_eps)
-    #     kl = torch.sum(p * (p_log - q_log), dim=(1, 2)).mean()
-    #     if torch.isnan(kl):
-    #         print("p", p.max(), p.min())
-    #         print("p log", p_log.max(), p_log.min())
-    #         print("q log", q_log.max(), q_log.min())
-    #         raise KeyError
-    #     return kl
     def loss_kl_discrete(self, logits):
         prob = F.softmax(logits, dim=-1)
         log_prob = F.log_softmax(logits, dim=-1)
@@ -151,37 +125,6 @@ class CSQVAE(LightningModule):
         log_prob = F.log_softmax(c_logits, dim=-1)
         lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
         return lc_elbo
-
-    # def loss_c_real(self, c_logits, keys, ids):
-    #     c_prob = F.softmax(c_logits, dim=-1)
-    #     if self.annotations is not None:
-    #         keys = np.array(["{}_{}".format(*key.split("_")[0::2]) for key in keys])
-    #         mask_supervised = np.isin(keys, self.annotations.T[0]).ravel()
-    #         keys = keys[mask_supervised]
-    #         mask_supervised = torch.tensor(mask_supervised).to(self.device)
-    #         if torch.any(mask_supervised):
-    #             labels = []
-    #             for key in keys:
-    #                 if key in self.annotations.T[0]:
-    #                     label = self.annotations.T[1][key == self.annotations.T[0]]
-    #                     labels.append(int(label))
-    #             labels = torch.tensor(labels).to(self.device, torch.long)
-    #             lc_real = F.cross_entropy(
-    #                 c_prob[mask_supervised], labels, reduction="sum"
-    #             )
-    #             lc_real = lc_real / ids.size(0)
-    #         else:
-    #             lc_real = torch.Tensor([0.0]).to(self.device)
-    #     else:
-    #         lc_real = torch.Tensor([0.0]).to(self.device)
-
-    #     return lc_real
-
-    # def loss_c_elbo(self, c_logits):
-    #     prob = F.softmax(c_logits, dim=-1)
-    #     log_prob = F.log_softmax(c_logits, dim=-1)
-    #     lc_elbo = torch.sum(prob * log_prob, dim=1).mean()
-    #     return lc_elbo
 
     def loss_c(self, c_logits, keys, ids):
         if self.annotations is not None:
@@ -232,7 +175,6 @@ class CSQVAE(LightningModule):
             ids = ids[0]
             kps = kps[0]
             bbox = bbox[0]
-            # mask = mask[0]
 
         return keys, ids, kps, bbox, mask
 
@@ -266,11 +208,8 @@ class CSQVAE(LightningModule):
         lrc_bbox = self.loss_x(bbox, recon_bbox)
         kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(logits)
-        # kl_discrete = self.loss_kl_discrete(logits, logits_sampled)
 
         # clustering loss
-        # lc_elbo = self.loss_c_elbo(c_logits)
-        # lc_real = self.loss_c_real(c_logits, keys, ids)
         lc_elbo, lc_real = self.loss_c(c_logits, keys, ids)
 
         loss_total = (
