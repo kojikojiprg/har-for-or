@@ -23,6 +23,7 @@ latent_ndim: 32
 nheads: 4
 nlayers: 3
 nlayers_cls: 3
+input_cls: "kps"  # "all", "bbox" or "kps"
 dropout: 0.1
 
 # optim

@@ -81,6 +81,7 @@ class ClassificationHead(nn.Module):
     def __init__(self, config: SimpleNamespace):
         super().__init__()
         self.cls_token = nn.Parameter(torch.randn(1, 1, config.latent_ndim))
+        self.input_type = config.input_cls
         self.pe = RotaryEmbedding(config.latent_ndim, learned_freq=False)
         self.encoders = nn.ModuleList(
             [
@@ -97,8 +98,19 @@ class ClassificationHead(nn.Module):
             torch.tensor(log_param_q_cls, dtype=torch.float32)
         )
 
+    def select_input(self, ze):
+        if self.input_type == "all":
+            return ze
+        elif self.input_type == "bbox":
+            return ze[:, 2:, :]
+        elif self.input_type == "kps":
+            return ze[:, :2, :]
+        else:
+            raise ValueError
+
     def forward(self, ze, is_train):
-        # zq (b, n_pts, latent_ndim)
+        # ze (b, n_pts, latent_ndim)
+        ze = self.select_input(ze)
 
         # concat cls_token
         cls_token = self.cls_token.repeat(ze.size(0), 1, 1)
