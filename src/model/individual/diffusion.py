@@ -168,11 +168,9 @@ class Diffusion(LightningModule):
 
     @torch.no_grad()
     def sample(self, c_probs):
-        self.send_sigma_to_device(c_probs.device)
-
         b = c_probs.size(0)
 
-        z = torch.randn((b, self.npts[0] * self.npts[1], self.latent_dim))
+        z = torch.randn((b, self.npts, self.latent_dim))
         z = z.to(c_probs.device)
 
         for i in tqdm(list(reversed(range(1, self.noise_steps)))):
@@ -190,7 +188,12 @@ class Diffusion(LightningModule):
                 alpha
             ) + torch.sqrt(beta) * noise
 
-        return z
+        zq, precision_q, logits = self.csqvae.quantizer(
+            z, c_probs, None, False
+        )
+        kps, bbox = self.csqvae.decoder(zq)
+
+        return kps, bbox
 
 
 class DiffusionModel(nn.Module):

@@ -284,26 +284,3 @@ class CSQVAE(LightningModule):
             results.append(data)
 
         return results
-
-    def sample(self, c_probs: torch.Tensor):
-        c_probs = c_probs.to(self.device)
-        b = c_probs.size(0)
-        # sample zq from book
-        zq, logits, mu = self.quantizer.sample_from_c(c_probs, self.temperature, False)
-
-        # generate samples
-        h, w = self.latent_size
-        zq = zq.view(b, h, w, self.latent_dim)
-        generated_x = self.decoder(zq.permute(0, 3, 1, 2))
-        generated_x = generated_x.permute(0, 2, 3, 1)
-
-        results = []
-        for i in range(b):
-            data = {
-                "gen_x": generated_x[i].detach().cpu().numpy(),
-                "zq": zq[i].detach().cpu().numpy(),
-                "gt": c_probs[i].argmax(dim=-1).cpu(),
-            }
-            results.append(data)
-
-        return results
