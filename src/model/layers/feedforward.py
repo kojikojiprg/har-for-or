@@ -18,16 +18,24 @@ class SwiGLU(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_ndim: int, out_ndim: int = None, dropout: float = 0.1):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int = None,
+        hidden_dim: int = None,
+        act_layer: nn.Module = nn.SiLU(),
+        dropout: float = 0.1,
+    ):
         super().__init__()
-        if out_ndim is None:
-            out_ndim = in_ndim
-        hdim = int(in_ndim * 4 * (2 / 3))
+        if out_dim is None:
+            out_dim = in_dim
+        if hidden_dim is None:
+            hidden_dim = int(in_dim * 4 * (2 / 3))
         self.mlp = nn.Sequential(
-            nn.Linear(in_ndim, hdim),
-            nn.SiLU(),
+            nn.Linear(in_dim, hidden_dim),
+            act_layer,
             nn.Dropout(dropout),
-            nn.Linear(hdim, out_ndim),
+            nn.Linear(hidden_dim, out_dim),
         )
 
     def forward(self, x):
