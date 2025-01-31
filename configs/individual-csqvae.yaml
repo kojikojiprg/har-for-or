@@ -19,11 +19,11 @@ temp_init: 1
 temp_decay: 0.00001
 temp_min: 0.0000000001
 ## network params
-latent_ndim: 32
+latent_dim: 32
 nheads: 4
 nlayers: 3
 nlayers_cls: 3
-input_cls: "kps"  # "all", "bbox" or "kps"
+input_cls: "all"  # "all", "bbox" or "kps"
 dropout: 0.1
 
 # optim
