@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
     # load preds
     data_root_test = f"{data_root}/test/{video_num:02d}"
-    paths = glob(os.path.join(data_root_test, f"pred_{model_type}", "*"))
+    paths = glob(os.path.join(data_root_test, f"pred_{model_type}_v{v}", "*"))
     results = []
     for path in paths:
         with open(path, "rb") as f:
@@ -111,7 +111,7 @@ if __name__ == "__main__":
     checkpoint = torch.load(checkpoint_path)
     model.load_state_dict(checkpoint["state_dict"])
     books = {i: book.detach().numpy() for i, book in enumerate(model.quantizer.books)}
-    X = np.array([book for book in books.values()]).reshape(-1, config.latent_ndim)
+    X = np.array([book for book in books.values()]).reshape(-1, config.latent_dim)
     labels = np.array(
         [[c for _ in range(config.book_size)] for c in range(config.n_clusters)]
     ).ravel()
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         video_num = os.path.basename(os.path.dirname(data_dir))
 
         # load preds
-        paths = glob(os.path.join(data_dir, f"pred_{model_type}", "*"))
+        paths = glob(os.path.join(data_dir, f"pred_{model_type}_v{v}", "*"))
         results = []
         for path in paths:
             with open(path, "rb") as f:
