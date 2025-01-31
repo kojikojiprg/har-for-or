@@ -1,0 +1,15 @@
+# diffusion
+noise_steps: 1000
+beta_start: 0.0001
+beta_end: 0.02
+latent_dim_diffusion: 256
+n_blocks_dit: 6
+n_heads_dit: 16
+
+# training
+epochs: 100
+batch_size: 128
+lr: 0.0001
+betas: [0.9, 0.95]
+accumulate_grad_batches: 1
+num_workers: 8
