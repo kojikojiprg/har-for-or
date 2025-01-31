@@ -170,7 +170,7 @@ class CSQVAE(LightningModule):
         if kps.device != self.device:
             kps = kps.to(self.device)
             bbox = bbox.to(self.device)
-        if kps.dim == 5:
+        if kps.ndim == 5:
             ids = ids[0]
             kps = kps[0]
             bbox = bbox[0]
