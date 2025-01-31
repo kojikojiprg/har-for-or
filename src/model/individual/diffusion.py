@@ -21,7 +21,7 @@ class Diffusion(LightningModule):
         self.npts = get_n_pts(config.csqvae)
         self.csqvae_chkp = csqvae_checkpoint_path
 
-        self.latent_dim = config.csqvae.latent_ndim
+        self.latent_dim = config.csqvae.latent_dim
         self.noise_steps = config.noise_steps
         self.beta = torch.linspace(config.beta_start, config.beta_end, self.noise_steps)
         self.alpha = 1.0 - self.beta
@@ -103,7 +103,7 @@ class Diffusion(LightningModule):
         if kps.device != self.device:
             kps = kps.to(self.device)
             bbox = bbox.to(self.device)
-        if kps.ndim == 5:
+        if kps.dim == 5:
             ids = ids[0]
             kps = kps[0]
             bbox = bbox[0]
@@ -197,7 +197,7 @@ class DiffusionModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dim = config.latent_dim_diffusion
-        self.latent_dim = config.csqvae.latent_ndim
+        self.latent_dim = config.csqvae.latent_dim
 
         self.emb_x = nn.Linear(self.latent_dim, self.dim)
         self.rotary_emb = RotaryEmbedding(self.dim)

@@ -19,7 +19,7 @@ class CSQVAE(LightningModule):
     def __init__(self, config: SimpleNamespace, annotations: Optional[NDArray] = None):
         super().__init__()
         self.config = config
-        self.latent_ndim = config.latent_ndim
+        self.latent_dim = config.latent_dim
 
         self.n_clusters = config.n_clusters
         self.temp_cls_init = config.temp_cls_init
@@ -55,11 +55,11 @@ class CSQVAE(LightningModule):
         # bbox (b, seq_len, n_pts, 2)
 
         # encoding
-        ze, attn_w = self.encoder(kps, bbox, is_train)
-        # ze (b, npts, latent_ndim)
+        z, attn_w = self.encoder(kps, bbox, is_train)
+        # z (b, npts, latent_dim)
 
         # classification
-        c_logits, attn_w_cls = self.cls_head(ze, is_train)
+        c_logits, attn_w_cls = self.cls_head(z, is_train)
         if is_train:
             # c_probs = gumbel_softmax_sample(c_logits, self.temperature_cls)
             c_probs = F.softmax(c_logits / self.temperature_cls, dim=-1)
@@ -69,9 +69,9 @@ class CSQVAE(LightningModule):
 
         # quantization
         zq, precision_q, logits = self.quantizer(
-            ze, c_probs.detach(), self.temperature, is_train
+            z, c_probs.detach(), self.temperature, is_train
         )
-        # zq (b, npts, latent_ndim)
+        # zq (b, npts, latent_dim)
         # logits (b, npts, book_size)
 
         # reconstruction
@@ -80,11 +80,10 @@ class CSQVAE(LightningModule):
         return (
             recon_kps,
             recon_bbox,
-            ze,
+            z,
             zq,
             precision_q,
             logits,
-            # logits_sampled,
             c_logits,
             attn_w,
             attn_w_cls,
@@ -111,8 +110,8 @@ class CSQVAE(LightningModule):
         mses = self.mse_x(x, recon_x, "sum")
         return mses.mean()
 
-    def loss_kl_continuous(self, ze, zq, precision_q):
-        return torch.sum(((ze - zq) ** 2) * precision_q, dim=(1, 2)).mean()
+    def loss_kl_continuous(self, z, zq, precision_q):
+        return torch.sum(((z - zq) ** 2) * precision_q, dim=(1, 2)).mean()
 
     def loss_kl_discrete(self, logits):
         prob = F.softmax(logits, dim=-1)
@@ -171,7 +170,7 @@ class CSQVAE(LightningModule):
         if kps.device != self.device:
             kps = kps.to(self.device)
             bbox = bbox.to(self.device)
-        if kps.ndim == 5:
+        if kps.dim == 5:
             ids = ids[0]
             kps = kps[0]
             bbox = bbox[0]
@@ -193,11 +192,10 @@ class CSQVAE(LightningModule):
         (
             recon_kps,
             recon_bbox,
-            ze,
+            z,
             zq,
             precision_q,
             logits,
-            # logits_sampled,
             c_logits,
             attn_w,
             attn_w_cls,
@@ -206,7 +204,7 @@ class CSQVAE(LightningModule):
         # ELBO loss
         lrc_kps = self.loss_x(kps, recon_kps)
         lrc_bbox = self.loss_x(bbox, recon_bbox)
-        kl_continuous = self.loss_kl_continuous(ze, zq, precision_q)
+        kl_continuous = self.loss_kl_continuous(z, zq, precision_q)
         kl_discrete = self.loss_kl_discrete(logits)
 
         # clustering loss
@@ -247,7 +245,7 @@ class CSQVAE(LightningModule):
         (
             recon_kps,
             recon_bbox,
-            ze,
+            z,
             zq,
             precision_q,
             logits,
@@ -274,7 +272,7 @@ class CSQVAE(LightningModule):
                 "bbox": bbox[i].cpu().numpy(),
                 "recon_bbox": recon_bbox[i].cpu().numpy(),
                 "mse_bbox": mse_bbox[i].item(),
-                "ze": ze[i].cpu().numpy(),
+                "z": z[i].cpu().numpy(),
                 "zq": zq[i].cpu().numpy(),
                 "attn_w": attn_w[i].cpu().numpy(),
                 "attn_w_cls": attn_w_cls[i].cpu().numpy(),
@@ -295,7 +293,7 @@ class CSQVAE(LightningModule):
 
         # generate samples
         h, w = self.latent_size
-        zq = zq.view(b, h, w, self.latent_ndim)
+        zq = zq.view(b, h, w, self.latent_dim)
         generated_x = self.decoder(zq.permute(0, 3, 1, 2))
         generated_x = generated_x.permute(0, 2, 3, 1)
 
