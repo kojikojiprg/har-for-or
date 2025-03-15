@@ -17,32 +17,20 @@ from src.utils import yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root_lst", type=str, nargs="*")
-    parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
-    parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="csqvae"
-    )
-    parser.add_argument(
-        "-ut",
-        "--unsupervised_training",
-        required=False,
-        action="store_true",
-        default=False,
-    )
     parser.add_argument("-ckpt", "--checkpoint", required=False, type=str, default=None)
+    parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
     args = parser.parse_args()
     data_root_lst = args.data_root_lst
-    model_type = args.model_type
-    unsupervised_training = args.unsupervised_training
     gpu_ids = args.gpu_ids
     pre_checkpoint_path = args.checkpoint
 
     # load config
-    config_path = f"configs/individual-{model_type}.yaml"
+    config_path = "configs/individual-csqvae.yaml"
     config = yaml_handler.load(config_path)
 
     if "WORLD_SIZE" not in os.environ:
         # create checkpoint directory of this version
-        checkpoint_dir = f"models/individual/{model_type}"
+        checkpoint_dir = "models/individual/csqvae"
         ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
         ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
         if len(ckpt_dirs) > 0:
@@ -59,17 +47,17 @@ if __name__ == "__main__":
 
         # copy config
         os.makedirs(checkpoint_dir, exist_ok=False)
-        copy_config_path = os.path.join(checkpoint_dir, f"individual-{model_type}.yaml")
+        copy_config_path = os.path.join(checkpoint_dir, "individual-csqvae.yaml")
         shutil.copyfile(config_path, copy_config_path)
     else:
-        checkpoint_dir = f"models/individual/{model_type}"
+        checkpoint_dir = "models/individual/csqvae"
         ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
         ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
         checkpoint_dir = ckpt_dirs[-1]
 
     # model checkpoint callback
     # h, w = config.img_size
-    filename = f"{model_type}-seq_len{config.seq_len}-stride{config.stride}"
+    filename = f"csqvae-seq_len{config.seq_len}-stride{config.stride}"
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
         filename=filename + "-best-{epoch}",
@@ -95,16 +83,11 @@ if __name__ == "__main__":
     )
 
     # create model
-    if model_type == "vae":
-        raise NotImplementedError
-    elif model_type == "csqvae":
-        if unsupervised_training:
-            ann_path = None
-        model = CSQVAE(config, annotations)
-        ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
+    model = CSQVAE(config, annotations)
+    ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
     accumulate_grad_batches = config.accumulate_grad_batches
 
-    logger = TensorBoardLogger("logs/individual", name=model_type)
+    logger = TensorBoardLogger("logs/individual", name="csqvae")
     trainer = Trainer(
         accelerator="cuda",
         strategy=ddp,
