@@ -86,12 +86,12 @@ positional arguments:
   - data_root: The root directory of the dataset for predict role classes of individiauls.
 
 options:
-  - -v, --version VERSION: The model version
+  - -v, --version VERSION: The model version.
   - -g, --gpu_id GPU_ID:  
     The id of gpu which you want to use.
 
 # Reference
-The paper of Categorical SQ-VAE for individual activity recognition is accepted by International Journal of Activity and Behaviour Computing.
+The paper of Categorical SQ-VAE for individual activity recognition was accepted by International Journal of Activity and Behavior Computing.
 Coming soon!
 ```
 
