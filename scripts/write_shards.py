@@ -27,7 +27,7 @@ if __name__ == "__main__":
         default="configs/human_tracking.yaml",
     )
     parser.add_argument("-np", "--n_processes", type=int, required=False, default=None)
-    parser.add_argument("-g", "--gpu", type=int, required=False, default=1)
+    parser.add_argument("-g", "--gpu_id", type=int, required=False, default=0)
     args = parser.parse_args()
 
     video_paths = sorted(glob(os.path.join(args.data_root, "*.mp4")))
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     cfg_path = os.path.join(args.config_dir, f"{dataset_type}-dataset.yaml")
     config = yaml_handler.load(cfg_path)
     config_ht = yaml_handler.load(args.config_human_tracking_path)
-    device = f"cuda:{args.gpu}"
+    device = f"cuda:{args.gpu_id}"
     n_processes = args.n_processes
 
     model_ht = HumanTracking(config_ht, device)

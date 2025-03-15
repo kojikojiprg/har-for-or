@@ -15,14 +15,10 @@ from src.utils import yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_root", type=str)
-    parser.add_argument(
-        "-mt", "--model_type", required=False, type=str, default="csqvae"
-    )
     parser.add_argument("-v", "--version", type=int, default=0)
     parser.add_argument("-g", "--gpu_id", type=int, default=None)
     args = parser.parse_args()
     data_root = args.data_root
-    model_type = args.model_type
     v = args.version
     gpu_id = args.gpu_id
     device = f"cuda:{gpu_id}"
@@ -33,22 +29,17 @@ if __name__ == "__main__":
         if os.path.basename(d[:-1]).isnumeric()
     ]
 
-    checkpoint_dir = f"models/individual/{model_type}/version_{v}"
+    checkpoint_dir = f"models/individual/csqvae/version_{v}"
     checkpoint_path = sorted(glob(f"{checkpoint_dir}/*.ckpt"))[-1]
 
     # load config
-    config_path = f"{checkpoint_dir}/individual-{model_type}.yaml"
+    config_path = f"{checkpoint_dir}/individual-csqvae.yaml"
     config = yaml_handler.load(config_path)
     seq_len = config.seq_len
     stride = config.stride
 
     # load model
-    if model_type == "vae":
-        raise NotImplementedError
-    elif model_type == "csqvae":
-        model = CSQVAE(config)
-    else:
-        raise ValueError
+    model = CSQVAE(config)
     model.configure_model()
     model = model.to(device)
     checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -67,7 +58,7 @@ if __name__ == "__main__":
             continue
 
         # pred
-        save_dir = os.path.join(data_dir, f"pred_{model_type}_v{v}")
+        save_dir = os.path.join(data_dir, f"pred_csqvae_v{v}")
         os.makedirs(save_dir, exist_ok=True)
 
         model.eval()
